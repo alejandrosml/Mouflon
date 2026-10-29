@@ -403,6 +403,12 @@ impl App {
                 "horloge de l'écran : jusqu'à {:.0} images par seconde",
                 clock.max_fps()
             );
+            if let Some(stats) = &self.stats {
+                stats.note(format_args!(
+                    "horloge de l'écran, {:.0} i/s au plus",
+                    clock.max_fps()
+                ));
+            }
         }
     }
 
@@ -446,6 +452,15 @@ impl App {
         if dock != self.dock_frame {
             self.dock_frame = dock;
             self.refresh_screens(event_loop);
+        }
+        if let Some(stats) = &self.stats
+            && snapshot.windows.len() != self.os_windows.len()
+        {
+            stats.note(format_args!(
+                "fenêtres des autres apps : {} → {}",
+                self.os_windows.len(),
+                snapshot.windows.len()
+            ));
         }
         self.os_windows = snapshot.windows;
         self.refresh_windows(now);
@@ -638,9 +653,13 @@ impl App {
         if let Some(stats) = &self.stats {
             stats.note(format_args!("fenêtre ouverte pour {name} (n° {id})"));
         }
-        let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
+        // Les collisions partent quand les dessins se touchent.
+        let Some(pet) = self.flock.get_mut(id) else {
             return;
         };
+        if let Some((front, back)) = art.reach() {
+            pet.set_reach(front, back);
+        }
         let canvas = art.canvas();
         let ground = pet.position();
         let origin = ground - canvas.anchor;
@@ -779,20 +798,20 @@ impl App {
     }
 
     /// Joue les sons que les animaux viennent de faire (s'ils ont la parole),
-    /// et vide la liste de leurs événements.
+    /// et vide la liste de leurs événements (notés au journal d'un essai).
     fn play_sounds(&mut self) {
         let audible = self.settings.sounds && !self.paused;
         for pet in self.flock.pets_mut() {
             for event in pet.take_events() {
+                if let Some(stats) = &self.stats {
+                    stats.note(format_args!("n° {} {}", pet.id(), describe(&event, pet)));
+                }
                 if let PetEvent::Sound { sound, clip } = event
                     && audible
                     && let Some(sound) = pet.def().sounds.get(sound)
                     && let Some(data) = sound.clips.get(clip)
                 {
                     platform::play_sound(data, sound.volume * VOLUME);
-                    if let Some(stats) = &self.stats {
-                        stats.note(format_args!("son {} ({})", sound.name, clip + 1));
-                    }
                 }
             }
         }
@@ -894,6 +913,11 @@ impl App {
                 continue;
             };
             pw.canvas = art.canvas();
+            if let Some((front, back)) = art.reach()
+                && let Some(pet) = self.flock.get_mut(pw.pet)
+            {
+                pet.set_reach(front, back);
+            }
             pw.art = art;
             let requested =
                 LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));
@@ -917,6 +941,9 @@ impl App {
     }
 
     fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!("menu {action:?}"));
+        }
         // Ce que l'on vient de choisir se voit tout de suite.
         self.next_frame = None;
         match action {
@@ -1103,6 +1130,9 @@ impl App {
         let settling = self.settle_until.is_some_and(|until| now < until);
         if !settling && self.settle_until.take().is_some() {
             log::info!("mise en route terminée : les animaux arrivent");
+            if let Some(stats) = &self.stats {
+                stats.note("mise en route terminée");
+            }
         }
 
         let input = self.input();
@@ -1120,6 +1150,12 @@ impl App {
         {
             pet.grab(start, &self.world);
             self.pointer.dragging = Some(id);
+            if let Some(stats) = &self.stats {
+                stats.note(format_args!(
+                    "n° {id} attrapé en {:.0},{:.0}",
+                    start.x, start.y
+                ));
+            }
         }
         if let (Some(id), Some(c)) = (self.pointer.dragging, cursor)
             && let Some(pet) = self.flock.get_mut(id)
@@ -1238,15 +1274,28 @@ impl App {
         self.schedule(event_loop, now, settling);
 
         if let Some(stats) = &mut self.stats {
-            stats.follow(
-                self.flock
-                    .pets()
-                    .iter()
-                    .map(|p| (p.id(), p.def().meta.name.as_str(), p.behavior_name())),
-            );
-            stats.record(now, shown_at.is_some(), phases);
+            let pets = self.flock.pets().iter().map(|p| {
+                let view = p.view(alpha);
+                crate::stats::PetLine {
+                    id: p.id(),
+                    name: p.def().meta.name.as_str(),
+                    behavior: p.behavior_name(),
+                    frame: view.sprite_frame,
+                    x: view.ground.x,
+                    y: view.ground.y,
+                    vx: p.velocity().x,
+                    vy: p.velocity().y,
+                    support: match p.support() {
+                        mouflon_core::Support::Ground { .. } => 's',
+                        mouflon_core::Support::Air => 'a',
+                        mouflon_core::Support::Held => 't',
+                    },
+                    roll: view.pose.roll,
+                }
+            });
+            stats.record(now, shown_at.is_some(), phases, pets);
             if self.trial_end.is_some_and(|end| now >= end) {
-                log::info!("essai terminé : {}", stats.report());
+                log::info!("essai terminé : {}", stats.finish());
                 event_loop.exit();
             }
         }
@@ -1301,6 +1350,25 @@ impl App {
     }
 }
 
+/// Un événement d'un animal, pour le journal d'un essai.
+fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
+    match event {
+        PetEvent::Landed { impact } => format!("atterrit à {impact:.0} pt/s"),
+        PetEvent::Poked => "touché du bout de la souris".to_owned(),
+        PetEvent::Thrown { speed } => format!("lancé à {speed:.0} pt/s"),
+        PetEvent::Bumped { speed } => format!("heurté, repart à {speed:.0} pt/s"),
+        PetEvent::Met { other } => format!("rencontre n° {other}"),
+        PetEvent::Sound { sound, clip } => format!(
+            "son {} ({})",
+            pet.def()
+                .sounds
+                .get(*sound)
+                .map_or("?", |s| s.name.as_str()),
+            clip + 1
+        ),
+    }
+}
+
 /// Temps écoulé depuis `mark`, qui passe à maintenant.
 fn lap(mark: &mut Instant) -> Duration {
     let now = Instant::now();
@@ -1328,6 +1396,29 @@ impl ApplicationHandler<UserEvent> for App {
         }
         self.started = true;
         let begun = Instant::now();
+        // Essai (MOUFLON_ESSAI) : journal complet dès le début.
+        let trial = crate::stats::trial();
+        if let Some(duration) = trial {
+            let stats = crate::stats::FrameStats::new(begun).with_journal();
+            stats.raw(format!(
+                "ESSAI Mouflon {} ({} s)",
+                env!("CARGO_PKG_VERSION"),
+                duration.as_secs_f32()
+            ));
+            if crate::stats::trial_collisions() {
+                self.flock.set_collisions(true);
+            }
+            stats.raw(format!(
+                "REGLAGES taille {} sons {} collisions {} premier_plan {} dock {} animaux {:?}",
+                self.settings.size_factor(),
+                self.settings.sounds,
+                self.flock.collisions(),
+                self.settings.frontmost_only,
+                self.settings.walk_under_dock,
+                crate::stats::trial_pets(),
+            ));
+            self.stats = Some(stats);
+        }
         // Le relevé des fenêtres (et du Dock) commence tout de suite, à côté.
         let watcher = Watcher::start(
             self.settings.walk_under_dock,
@@ -1363,8 +1454,23 @@ impl ApplicationHandler<UserEvent> for App {
         let index = self
             .library
             .default_index(self.settings.default_pet.as_deref());
-        if let Some(entry) = self.library.pets.get(index) {
-            let _ = entry.art();
+        // Animaux du lancement : ceux de l'essai s'il en demande, sinon le préféré.
+        let mut starters: Vec<usize> = Vec::new();
+        if trial.is_some() {
+            for id in crate::stats::trial_pets() {
+                match self.library.pets.iter().position(|e| e.def.meta.id == id) {
+                    Some(i) => starters.push(i),
+                    None => log::warn!("essai : animal « {id} » introuvable"),
+                }
+            }
+        }
+        if starters.is_empty() {
+            starters = vec![index; self.settings.start_count.clamp(1, 32) as usize];
+        }
+        for &i in &starters {
+            if let Some(entry) = self.library.pets.get(i) {
+                let _ = entry.art();
+            }
         }
         steps.push(("dessins", lap(&mut mark)));
         if self.settings.sounds {
@@ -1379,8 +1485,8 @@ impl ApplicationHandler<UserEvent> for App {
             None => self.refresh_windows(Instant::now()),
         }
         steps.push(("relevé des fenêtres", lap(&mut mark)));
-        for _ in 0..self.settings.start_count.clamp(1, 32) {
-            self.spawn(event_loop, index);
+        for &i in &starters {
+            self.spawn(event_loop, i);
         }
         steps.push(("fenêtres et programmes du GPU", lap(&mut mark)));
         self.warm_up_gpu();
@@ -1397,10 +1503,26 @@ impl ApplicationHandler<UserEvent> for App {
             begun.elapsed().as_millis(),
             detail.join(", ")
         );
-        if let Some(duration) = crate::stats::trial() {
+        if let Some(duration) = trial {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
-            self.stats = Some(crate::stats::FrameStats::new(Instant::now()));
+            if let Some(stats) = &self.stats {
+                for (i, screen) in self.world.screens().iter().enumerate() {
+                    stats.raw(format!(
+                        "ECRAN {i} {:.0}x{:.0} en {:.0},{:.0} echelle {}",
+                        screen.frame.w,
+                        screen.frame.h,
+                        screen.frame.x,
+                        screen.frame.y,
+                        screen.scale
+                    ));
+                }
+                stats.raw(format!(
+                    "PRECHARGEMENT {} ms ({})",
+                    begun.elapsed().as_millis(),
+                    detail.join(", ")
+                ));
+            }
         }
     }
 
@@ -1450,9 +1572,18 @@ impl ApplicationHandler<UserEvent> for App {
                     self.pointer.window = Some(window_id);
                     self.pointer.pressed = self.cursor();
                     self.next_frame = None;
+                    if let Some(stats) = &self.stats {
+                        stats.note(format_args!(
+                            "souris appuyée sur n° {:?}",
+                            self.pet_of(window_id)
+                        ));
+                    }
                 }
                 ElementState::Released => {
                     self.next_frame = None;
+                    if let Some(stats) = &self.stats {
+                        stats.note("souris relâchée");
+                    }
                     let input = self.input();
                     if let Some(id) = self.pointer.dragging.take() {
                         if let Some(pet) = self.flock.get_mut(id) {

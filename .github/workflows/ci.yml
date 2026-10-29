@@ -62,16 +62,26 @@ jobs:
           name: Mouflon-macos-arm64
           path: dist/*.zip
 
-      # Essai de lancement : l'app précharge, anime ses animaux quelques
-      # secondes, note la régularité de ses images et quitte. Un plantage
-      # (ou un blocage : 90 s au plus) fait échouer la construction ; l'app,
-      # déjà envoyée, reste téléchargeable.
-      - name: Essai de lancement
+      # Essai de cinq minutes : deux Lainou et deux Pelote en mode collisions.
+      # L'app note chaque image et chaque événement dans un journal, puis
+      # quitte. Un plantage (ou un blocage : 7 minutes au plus) fait échouer
+      # la construction ; l'app, déjà envoyée, reste téléchargeable.
+      - name: Essai de cinq minutes
         run: |
-          export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info,vello=debug
-          MOUFLON_ESSAI=10 perl -e 'alarm 90; exec @ARGV' \
+          export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info
+          MOUFLON_ESSAI=300 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
+            MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=essai-journal.log \
+            perl -e 'alarm 420; exec @ARGV' \
             dist/Mouflon.app/Contents/MacOS/mouflon 2>&1 | tee essai.log
           grep -q "essai terminé" essai.log
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: essai-journal
+          path: |
+            essai.log
+            essai-journal.log
 
       - name: Publier la version
         if: startsWith(github.ref, 'refs/tags/')

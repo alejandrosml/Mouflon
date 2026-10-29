@@ -10,7 +10,9 @@ al., licence MIT) estime le mouvement ; l'outil applique ce mouvement aux
 quatre canaux de l'image (couleur et transparence ensemble), pour une ou
 plusieurs images intermédiaires. Les paires trop différentes (un demi-tour
 de profil à face, une transformation) donneraient un fondu à deux têtes :
-elles restent sans image intermédiaire.
+elles restent sans image intermédiaire. Une culbute dessinée (chaque image
+est la précédente tournée) se dédoublerait aussi : l'outil la reconnaît et
+fait tourner le dessin lui-même.
 
     pip install numpy pillow opencv-python-headless onnx onnxruntime
     # modèle : https://huggingface.co/walterlow/RIFE_fp32_timestep (MIT)
@@ -168,7 +170,79 @@ def inbetweens(rife, a, b, count, args):
         image, ghost = rife.tween(a, b, j / (count + 1))
         images.append(image)
         worst = ghost.worst(worst)
-    return (None if worst.too_much(args) else images), worst
+    if not worst.too_much(args):
+        return images, worst
+    # Le réseau ne sait pas faire tourner un dessin : une culbute dessinée
+    # image par image se dédouble. On essaie alors de la tourner nous-mêmes.
+    turned, turn = rotation_tweens(a, b, count, args)
+    if turned is not None:
+        return turned, turn
+    return None, worst
+
+
+# ---------------------------------------------------------------- culbutes
+
+# Une image suivante est une rotation de la précédente quand, tournée,
+# l'image de départ en explique l'essentiel : il en reste au plus cette part
+# de différence, pour un quart de tour au moins.
+MAX_ROTATION_RESIDUE = 0.35
+MIN_TURN = 10.0
+
+
+def centroid(rgba):
+    alpha = rgba[..., 3]
+    total = max(float(alpha.sum()), 1e-6)
+    ys, xs = np.mgrid[0:alpha.shape[0], 0:alpha.shape[1]]
+    return np.array([(xs * alpha).sum() / total, (ys * alpha).sum() / total])
+
+
+def turn(rgba, degrees, centre, to):
+    """L'image (prémultipliée) tournée autour de `centre`, posée en `to`."""
+    m = cv2.getRotationMatrix2D((float(centre[0]), float(centre[1])), float(degrees), 1.0)
+    m[:, 2] += to - centre
+    return cv2.warpAffine(premul(rgba).astype(np.float32), m, (rgba.shape[1], rgba.shape[0]),
+                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def disagreement(p, q):
+    alpha = np.maximum(p[..., 3], q[..., 3])
+    return float((np.abs(p - q).max(axis=-1) * alpha).sum() / max(float(alpha.sum()), 1.0))
+
+
+def rotation_tweens(a, b, count, args):
+    """Images intermédiaires d'une culbute dessinée : b est a tourné (et un peu
+    déplacé). Chaque image intermédiaire tourne a, et b en sens inverse, de la
+    part voulue de l'angle ; si les deux dessins ne sont pas tout à fait le
+    même tourné, on prend le plus proche, tourné, sans fondu."""
+    ca, cb = centroid(a), centroid(b)
+    pb = premul(b)
+    base = disagreement(turn(a, 0.0, ca, cb), pb)
+    if base <= 1e-6:
+        return None, None
+    angle, error = 0.0, base
+    for coarse in np.arange(-180.0, 180.0, 3.0):
+        e = disagreement(turn(a, coarse, ca, cb), pb)
+        if e < error:
+            angle, error = coarse, e
+    for fine in np.arange(angle - 3.0, angle + 3.0, 0.25):
+        e = disagreement(turn(a, fine, ca, cb), pb)
+        if e < error:
+            angle, error = fine, e
+    if abs(angle) < MIN_TURN or error / base > MAX_ROTATION_RESIDUE:
+        return None, None
+    pairs, worst = [], None
+    for j in range(1, count + 1):
+        t = j / (count + 1)
+        at = ca + (cb - ca) * t
+        from_a = turn(a, angle * t, ca, at)
+        from_b = turn(b, -angle * (1 - t), cb, at)
+        worst = Ghost(from_a, from_b, np.full(from_a.shape[:2] + (1,), 1 - t, np.float32)).worst(worst)
+        pairs.append((from_a, from_b, t))
+    if worst.too_much(args):
+        images = [unpremul(from_a if t <= 0.5 else from_b) for from_a, from_b, t in pairs]
+    else:
+        images = [unpremul(from_a * (1 - t) + from_b * t) for from_a, from_b, t in pairs]
+    return images, worst
 
 
 # ---------------------------------------------------------------- images
@@ -273,7 +347,8 @@ def number(text, default):
 
 def desktoppet_pairs(xml_path):
     """Paires d'images qui se suivent dans les animations, avec la plus longue
-    durée de pas où elles se suivent (secondes)."""
+    tenue de la première avant la seconde (secondes). desktopPet double
+    souvent ses images (66, 66, 67, 67…) : c'est la tenue entière qui compte."""
     root = ET.parse(xml_path).getroot()
     for el in root.iter():
         el.tag = el.tag.split('}')[-1]
@@ -290,12 +365,15 @@ def desktoppet_pairs(xml_path):
         interval = max(number(start.findtext('interval') if start is not None else None, 0.1 * 1000),
                        number(end.findtext('interval') if end is not None else None, 0.1 * 1000)) / 1000
         repeat_from = int(number(seq.get('repeatfrom'), 0))
-        steps = list(zip(frames, frames[1:]))
         # Une animation qui boucle (ou qu'on tient) revient de la dernière image à sa reprise.
-        steps.append((frames[-1], frames[min(repeat_from, len(frames) - 1)]))
-        for a, b in steps:
-            if a != b:
-                pairs[(a, b)] = max(pairs.get((a, b), 0.0), interval)
+        following = frames[1:] + [frames[min(repeat_from, len(frames) - 1)]]
+        held = 1
+        for a, b in zip(frames, following):
+            if a == b:
+                held += 1
+                continue
+            pairs[(a, b)] = max(pairs.get((a, b), 0.0), interval * held)
+            held = 1
     return pairs
 
 

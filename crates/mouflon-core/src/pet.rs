@@ -72,6 +72,11 @@ const MEET_COOLDOWN: f32 = 2.5;
 
 /// Durée d'affichage d'une image intermédiaire, au plus (secondes).
 const INBETWEEN_TIME: f32 = 0.08;
+/// Pas d'une même image regardés, au plus, pour répartir un passage.
+const MAX_HELD_STEPS: usize = 32;
+/// Élan gardé au plus après un atterrissage (points par seconde) : lancé de
+/// loin, il glisse de quelques dizaines de points, pas d'un bout à l'autre.
+const MAX_SLIDE: f32 = 260.0;
 /// Lissage de la vitesse d'un animal tenu (secondes) : l'élan qu'il garde au
 /// lâcher est celui des derniers centièmes de seconde du geste.
 const THROW_SMOOTHING: f32 = 0.06;
@@ -314,8 +319,15 @@ pub struct Pet {
     children: Vec<ChildRequest>,
     /// Envoyé en arrière par une collision : il se pose sans se retourner.
     knocked: bool,
+    /// Élan qui reste après un atterrissage (points par seconde) : l'animal
+    /// glisse un peu avant de s'arrêter, même quand ses images le figent.
+    slide: f32,
     /// Temps avant de pouvoir être heurté de nouveau.
     bump_cooldown: f32,
+    /// Distance du point d'appui au bout de son dessin, devant et derrière
+    /// (points) : les collisions partent quand les dessins se touchent.
+    /// Sans elle, la moitié de la largeur de l'animal, des deux côtés.
+    reach: Option<(f32, f32)>,
     /// Temps avant de pouvoir rencontrer un autre animal.
     meet_cooldown: f32,
     /// En train de dire au revoir.
@@ -565,7 +577,9 @@ impl Pet {
             finished: false,
             children: Vec::new(),
             knocked: false,
+            slide: 0.0,
             bump_cooldown: 0.0,
+            reach: None,
             meet_cooldown: 0.0,
             leaving: None,
             anim,
@@ -753,6 +767,9 @@ impl Pet {
         self.def = def;
         self.vel *= ratio;
         self.script = [self.script[0] * ratio, self.script[1] * ratio];
+        self.reach = self
+            .reach
+            .map(|(front, back)| (front * ratio, back * ratio));
         if let Some(hold) = &mut self.hold {
             hold.offset *= ratio;
         }
@@ -763,6 +780,27 @@ impl Pet {
     pub fn face(&mut self, facing: f32) {
         self.facing = if facing < 0.0 { -1.0 } else { 1.0 };
         self.anim.flip = self.facing;
+    }
+
+    /// Donne la place réelle de son dessin, devant et derrière son point
+    /// d'appui (points) : il heurte ou rencontre un autre animal quand leurs
+    /// dessins se touchent, pas avant ni après.
+    pub fn set_reach(&mut self, front: f32, back: f32) {
+        self.reach = (front > 0.0 && back > 0.0).then_some((front, back));
+    }
+
+    /// Distance du point d'appui au bout de son dessin, du côté `side`
+    /// (1 : vers la droite, -1 : vers la gauche).
+    fn reach_toward(&self, side: f32) -> f32 {
+        let (front, back) = self.reach.unwrap_or_else(|| {
+            let half = self.def.physics.width * 0.5;
+            (half, half)
+        });
+        if self.facing * side > 0.0 {
+            front
+        } else {
+            back
+        }
     }
 
     /// Peut-il être heurté par un autre animal (mode collisions) ?
@@ -997,6 +1035,8 @@ impl Pet {
     }
 
     fn step_ground(&mut self, dt: f32, world: &World, input: &Input, surface_id: SurfaceId) {
+        // Ici, c'est sa vitesse qui porte l'élan.
+        self.slide = 0.0;
         let p = self.def.physics;
         let Some(surface) = world.surface(surface_id).copied() else {
             self.lift_off(world, input);
@@ -1073,6 +1113,7 @@ impl Pet {
     }
 
     fn step_air(&mut self, dt: f32, world: &World, input: &Input) {
+        self.slide = 0.0;
         let p = self.def.physics;
         self.vel.y = (self.vel.y + p.gravity * dt).min(p.terminal_velocity);
         self.vel.x *= (-p.air_drag * dt).exp();
@@ -1117,6 +1158,7 @@ impl Pet {
     }
 
     fn step_held(&mut self, dt: f32) {
+        self.slide = 0.0;
         let Some(hold) = &self.hold else {
             self.support = Support::Air;
             return;
@@ -1165,6 +1207,7 @@ impl Pet {
         }
         self.vel.y = 0.0;
         self.vel.x *= 0.5;
+        self.slide = self.vel.x.clamp(-MAX_SLIDE, MAX_SLIDE);
         self.set_ground(surface);
         let def = Arc::clone(&self.def);
         let own = &def.behaviors[self.behavior].on_land;
@@ -1770,20 +1813,37 @@ impl Pet {
             return frame;
         };
         // Pas de pas suivant : la séquence s'arrête (ou garde sa dernière image).
-        if step != self.clip_step || (!looping && step + 1 >= self.clip_total.max(1)) {
+        let total = self.clip_total.max(1);
+        let last = |s: usize| !looping && s + 1 >= total;
+        if step != self.clip_step || last(step) {
             return frame;
         }
-        let next = clip.frame_at(step + 1);
+        // Une image tenue plusieurs pas (desktopPet double souvent ses images) :
+        // le passage vers la suivante se répartit sur toute la tenue, pas
+        // seulement sur son dernier pas.
+        let mut end = step;
+        while end - step < MAX_HELD_STEPS && !last(end) && clip.frame_at(end + 1) == frame {
+            end += 1;
+        }
+        if last(end) {
+            return frame;
+        }
+        let next = clip.frame_at(end + 1);
         let Some((first, count)) = (next != frame)
             .then(|| sheet.inbetween(frame, next))
             .flatten()
         else {
             return frame;
         };
+        let mut start = step;
+        while step - start < MAX_HELD_STEPS && start > 0 && clip.frame_at(start - 1) == frame {
+            start -= 1;
+        }
         let interval = self.clip_interval();
+        let hold = interval * (end - start + 1) as f32;
         let n = count as f32;
-        let span = (interval * n / (n + 1.0)).min(n * INBETWEEN_TIME);
-        let into = self.clip_timer - (interval - span);
+        let span = (hold * n / (n + 1.0)).min(n * INBETWEEN_TIME);
+        let into = (step - start) as f32 * interval + self.clip_timer - (hold - span);
         if into < 0.0 || span <= 0.0 {
             return frame;
         }
@@ -1896,16 +1956,16 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
     }
     let (pa, pb) = (a.def.physics, b.def.physics);
     let dx = b.pos.x - a.pos.x;
-    // Les corps se touchent (museaux un peu écrasés), à la même hauteur.
-    if dx.abs() >= 0.47 * (pa.width + pb.width) {
+    // Ils se rapprochent : l'un au moins va vers l'autre (`side` : côté de b).
+    let side = if dx == 0.0 { -a.facing } else { dx.signum() };
+    // Les dessins se touchent, à la même hauteur.
+    if dx.abs() >= a.reach_toward(side) + b.reach_toward(-side) {
         return None;
     }
     let (a_top, b_top) = (a.pos.y - pa.height * 0.8, b.pos.y - pb.height * 0.8);
     if a.pos.y <= b_top || b.pos.y <= a_top {
         return None;
     }
-    // Ils se rapprochent : l'un au moins va vers l'autre.
-    let side = if dx == 0.0 { -a.facing } else { dx.signum() };
     let closing = (a.vel.x - b.vel.x) * side;
     let airborne = a.support == Support::Air || b.support == Support::Air;
     if closing < if airborne { 40.0 } else { 6.0 } {
@@ -1930,8 +1990,9 @@ fn meeting(a: &Pet, b: &Pet) -> bool {
     if dx == 0.0 || a.vel.x * dx.signum() <= 1.0 {
         return false;
     }
-    // Ils se touchent à ce pas-ci (corps côte à côte, de leur largeur).
-    let reach = 0.5 * (a.def.physics.width + b.def.physics.width);
+    // Leurs dessins se touchent à ce pas-ci.
+    let side = dx.signum();
+    let reach = a.reach_toward(side) + b.reach_toward(-side);
     let before = (b.prev_pos.x - a.prev_pos.x).abs();
     dx.abs() <= reach && before > reach
 }
@@ -2411,6 +2472,38 @@ mod tests {
     }
 
     #[test]
+    fn inbetweens_spread_over_held_frames() {
+        let world = world();
+        let mut def = parse_pet_toml(
+            &crate::format::tests::strips_with_inbetweens(),
+            crate::format::tests::inbetweens_resolve,
+        )
+        .unwrap();
+        // Chaque image tenue deux pas, comme desktopPet le fait souvent : le
+        // passage vers la suivante se prend sur toute la tenue (0,2 s), pas
+        // seulement sur la fin du second pas.
+        let walk = def.behavior_index("marche").unwrap();
+        def.behaviors[walk].clip.as_mut().unwrap().frames = vec![4, 4, 5, 5, 6, 6, 7, 7];
+        let mut pet = standing(Arc::new(def), &world, 700.0, -1.0, "marche");
+        let mut shown: Vec<(u32, usize)> = Vec::new();
+        for _ in 0..(0.8 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            let frame = pet.view(1.0).sprite_frame.unwrap();
+            match shown.last_mut() {
+                Some((f, n)) if *f == frame => *n += 1,
+                _ => shown.push((frame, 1)),
+            }
+        }
+        let frames: Vec<u32> = shown.iter().map(|(f, _)| *f).collect();
+        assert_eq!(&frames[..6], &[4, 34, 5, 35, 6, 36], "{shown:?}");
+        // 0,08 s pour l'image intermédiaire (le plus long passage), 0,12 s
+        // pour l'image tenue ; avant, 0,05 et 0,15 s.
+        let ticks = |frame: u32| shown.iter().find(|(f, _)| *f == frame).unwrap().1;
+        assert!((9..=10).contains(&ticks(34)), "{shown:?}");
+        assert!((14..=15).contains(&ticks(5)), "{shown:?}");
+    }
+
+    #[test]
     fn behaviors_play_their_sounds() {
         let world = world();
         let def = Arc::new(
@@ -2784,9 +2877,16 @@ mod tests {
     fn lainou_lives_a_long_life() {
         // Sans collisions, les Lainou se rencontrent et se saluent.
         let (def, seconds_in) = long_life("lainou", 30.0, 40.0, false);
+        // Tenu, lancé, heurté, sonné par une grosse chute ou en partance :
+        // il y faut la main de l'utilisateur, ou une chute de très haut.
         let never: Vec<&str> = never_played(&def, &seconds_in)
             .into_iter()
-            .filter(|n| !matches!(*n, "tenu" | "tombe" | "au_revoir" | "culbute"))
+            .filter(|n| {
+                !matches!(
+                    *n,
+                    "tenu" | "tombe" | "au_revoir" | "culbute" | "atterrit_sonne" | "etourdi"
+                )
+            })
             .collect();
         assert!(never.len() <= 3, "jamais joués : {never:?}");
         assert!(

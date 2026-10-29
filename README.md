@@ -82,13 +82,17 @@ the others, and it is the one that appears.
 cargo run --release -- path/to/esheep64
 ```
 
-To check that the animation is smooth, `MOUFLON_ESSAI=10` runs Mouflon for ten
-seconds, then logs how regular its images were (the gaps between them, and the
-time spent preparing each one) before quitting. The CI does it on every Mac
-build.
+To check that the animation is smooth, `MOUFLON_ESSAI=300` runs Mouflon for
+five minutes and writes a full journal (`mouflon-essai.log` in the current
+folder, or the file named by `MOUFLON_JOURNAL`): every image (gap, time spent
+in each part, state of each pet), every event (collisions, landings, sounds,
+windows, menu), a summary every ten seconds and a report at the end.
+`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses the pets of the trial and
+`MOUFLON_ESSAI_COLLISIONS=1` turns collisions on. The CI runs such a trial on
+every Mac build.
 
 ```sh
-MOUFLON_ESSAI=10 cargo run --release
+MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 ```
 
 The `essais/` and `animaux/` folders are ignored by git: keep test pets and
@@ -303,13 +307,18 @@ argument : il est chargé en plus des autres, et c'est lui qui apparaît.
 cargo run --release -- chemin/vers/esheep64
 ```
 
-Pour vérifier que l'animation est fluide, `MOUFLON_ESSAI=10` lance Mouflon pour
-dix secondes, puis note au journal la régularité de ses images (les écarts
-entre elles et le temps passé à préparer chacune) avant de quitter.
-L'intégration continue le fait à chaque construction pour Mac.
+Pour vérifier que l'animation est fluide, `MOUFLON_ESSAI=300` lance Mouflon
+pour cinq minutes et écrit un journal complet (`mouflon-essai.log` dans le
+dossier courant, ou le fichier que nomme `MOUFLON_JOURNAL`) : chaque image
+(écart, temps passé dans chaque partie, état de chaque animal), chaque
+événement (collisions, atterrissages, sons, fenêtres, menu), un résumé toutes
+les dix secondes et un bilan à la fin. `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote`
+choisit les animaux de l'essai et `MOUFLON_ESSAI_COLLISIONS=1` met le mode
+collisions. L'intégration continue fait un tel essai à chaque construction
+pour Mac.
 
 ```sh
-MOUFLON_ESSAI=10 cargo run --release
+MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 ```
 
 Les dossiers `essais/` et `animaux/` sont ignorés par git : on y garde les

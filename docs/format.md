@@ -186,7 +186,8 @@ duration = "forever"
 Sans `motion`, un comportement avance image par image ; avec `motion =
 "fall"` ou `"held"`, ses images tournent en boucle pendant la chute ou
 pendant qu'on le tient. La séquence dure ses images fois ses passages, puis
-l'animal passe à la suite. `loop_from = 3` fait reprendre les passages
+l'animal passe à la suite. `fps = [20, 8]` change de rythme le long de la
+séquence : un atterrissage vif au début, plus posé à la fin. `loop_from = 3` fait reprendre les passages
 suivants à la quatrième image (une entrée, puis une boucle).
 
 Un animal en images vérifie à chaque pas qu'il a encore un appui (sinon il

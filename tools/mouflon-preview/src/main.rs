@@ -132,6 +132,15 @@ fn main() -> Result<(), Error> {
 
 // ---------------------------------------------------------------- rencontre
 
+/// Comme l'app : les animaux se touchent quand leurs dessins se touchent.
+fn give_reach(flock: &mut Flock, art: &PetArt) {
+    if let Some((front, back)) = art.reach() {
+        for pet in flock.pets_mut() {
+            pet.set_reach(front, back);
+        }
+    }
+}
+
 /// Deux animaux qui se rentrent dedans (mode collisions), puis un lancer.
 fn render_meeting(
     def: &Arc<mouflon_core::PetDef>,
@@ -146,6 +155,7 @@ fn render_meeting(
     flock.set_collisions(true);
     let a = flock.spawn(Arc::clone(def), 3, &world, Some(400.0));
     let b = flock.spawn(Arc::clone(def), 5, &world, Some(580.0));
+    give_reach(&mut flock, art);
     let duration = 11.0;
     let frames = (duration * RATE as f32) as u32;
     let mut grabbed_at: Option<Vec2> = None;
@@ -276,6 +286,7 @@ fn render_greeting(
     let a = flock.spawn(Arc::clone(def), 3, &world, Some(250.0));
     let b = flock.spawn(Arc::clone(def), 5, &world, Some(430.0));
     let c = flock.spawn(Arc::clone(def), 8, &world, Some(600.0));
+    give_reach(&mut flock, art);
     let input = Input {
         cursor: None,
         local_hour: 15.0,

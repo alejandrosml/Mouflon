@@ -313,17 +313,19 @@ fps = 10
 duration = "forever"
 on_land = "atterrit_sonne"
 
+# Le choc d'abord, vite (20 images par seconde), puis il se remet plus
+# lentement (8).
 [[behavior]]
 name = "atterrit"
 sound = { name = "pose", chance = 0.8 }
-fps = 10
+fps = [20, 8]
 next = "repos"
 
 [[behavior]]
 name = "atterrit_sonne"
 sound = [{ name = "pose" }, { name = "bele", chance = 0.5 }]
 strip = "atterrit"
-fps = 10
+fps = [20, 8]
 next = "etourdi"
 
 [[behavior]]

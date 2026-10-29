@@ -129,6 +129,47 @@ impl SpriteFrames {
         })
     }
 
+    /// Place du dessin autour de son point d'appui, devant et derrière
+    /// (points) : la médiane sur les images de la planche principale. Les
+    /// cases desktopPet ont souvent de larges marges vides : c'est le
+    /// dessin qui compte quand deux animaux se touchent.
+    #[must_use]
+    pub fn reach(&self) -> Option<(f32, f32)> {
+        let mut fronts = Vec::new();
+        let mut backs = Vec::new();
+        for index in 0..self.regular.min(self.frames.len() as u32) {
+            let frame = &self.frames[index as usize];
+            if frame.bitmap.width <= 1 {
+                continue;
+            }
+            let faces_right = match self.facings {
+                Facings::Left => false,
+                Facings::Right => true,
+                Facings::Both => index % self.skin_block >= self.skin_block / 2,
+            };
+            let anchor = if self.facings == Facings::Both && faces_right {
+                self.tile_width as f32 - self.anchor.0
+            } else {
+                self.anchor.0
+            };
+            let left = frame.x;
+            let right = frame.x + frame.bitmap.width as f32 * frame.texel;
+            let (front, back) = if faces_right {
+                (right - anchor, anchor - left)
+            } else {
+                (anchor - left, right - anchor)
+            };
+            fronts.push(front * self.scale);
+            backs.push(back * self.scale);
+        }
+        let median = |values: &mut Vec<f32>| {
+            values.sort_by(f32::total_cmp);
+            values.get(values.len() / 2).copied()
+        };
+        let (front, back) = (median(&mut fronts)?, median(&mut backs)?);
+        (front > 0.0 && back > 0.0).then_some((front, back))
+    }
+
     #[must_use]
     pub fn frame(&self, index: u32) -> Option<&SpriteFrame> {
         self.frames.get(index as usize)

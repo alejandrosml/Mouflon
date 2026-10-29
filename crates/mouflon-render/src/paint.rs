@@ -82,6 +82,16 @@ impl PetArt {
         }
     }
 
+    /// Place du dessin devant et derrière son point d'appui (points), pour
+    /// un animal en images ; un dessin vectoriel suit sa largeur physique.
+    #[must_use]
+    pub fn reach(&self) -> Option<(f32, f32)> {
+        match &self.look {
+            Look::Sprites(frames) => frames.reach(),
+            Look::Rig(_) => None,
+        }
+    }
+
     /// Fenêtre assez grande pour l'écrasement, les oreilles, les bulles,
     /// l'ombre et une culbute.
     #[must_use]

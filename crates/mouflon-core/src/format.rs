@@ -933,8 +933,9 @@ struct BehaviorToml {
     strip: Option<String>,
     /// Images jouées : numéros dans la bande (ou dans la planche unique).
     frames: Option<Vec<u32>>,
-    /// Images par seconde.
-    fps: Option<f32>,
+    /// Images par seconde : un nombre, ou `[début, fin]` pour un rythme qui
+    /// change le long de la séquence (un choc vif, puis un retour plus lent).
+    fps: Option<FpsToml>,
     /// Nombre de passages : un nombre, ou `[min, max]` tiré au hasard.
     loops: Option<LoopsToml>,
     /// Les passages suivants reprennent à cette image (numéro dans `frames`).
@@ -1009,11 +1010,17 @@ impl BehaviorToml {
         if frames.is_empty() {
             return Err(bad("aucune image".into()));
         }
-        let fps = self.fps.unwrap_or(10.0);
-        if !(fps > 0.0 && fps.is_finite()) {
+        let (fps_start, fps_end) = match self.fps {
+            None => (10.0, 10.0),
+            Some(FpsToml::Fixed(fps)) => (fps, fps),
+            Some(FpsToml::Ramp([start, end])) => (start, end),
+        };
+        if ![fps_start, fps_end]
+            .iter()
+            .all(|fps| *fps > 0.0 && fps.is_finite())
+        {
             return Err(bad("`fps` doit être positif".into()));
         }
-        let interval = 1.0 / fps;
         let (repeat, repeat_expr) = match self.loops {
             None => (0, None),
             Some(LoopsToml::Fixed(n)) => (n.max(1) - 1, None),
@@ -1038,8 +1045,8 @@ impl BehaviorToml {
         }
         Ok(Some(SpriteClip {
             frames,
-            interval_start: interval,
-            interval_end: interval,
+            interval_start: 1.0 / fps_start,
+            interval_end: 1.0 / fps_end,
             repeat,
             repeat_expr,
             // Les passages suivants rejouent les images à partir de `loop_from`.
@@ -1118,6 +1125,13 @@ impl BehaviorToml {
             }
         })
     }
+}
+
+#[derive(Deserialize, Clone, Copy)]
+#[serde(untagged)]
+enum FpsToml {
+    Fixed(f32),
+    Ramp([f32; 2]),
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -1563,6 +1577,27 @@ pub(crate) mod tests {
             _ if name.starts_with('e') => Err(LoadError::Format(format!("{name} absent"))),
             _ => strips_resolve(name),
         }
+    }
+
+    #[test]
+    fn a_behavior_can_speed_up_or_slow_down() {
+        // Un choc vif (20 images par seconde), puis un retour plus lent (8).
+        let toml = STRIPS.replace(
+            "name = \"cogne\"\n        strip = \"marche\"",
+            "name = \"cogne\"\n        fps = [20, 8]\n        strip = \"marche\"",
+        );
+        let def = parse_pet_toml(&toml, strips_resolve).unwrap();
+        let clip = def.behaviors[def.behavior_index("cogne").unwrap()]
+            .clip
+            .as_ref()
+            .unwrap();
+        assert!((clip.interval_start - 0.05).abs() < 1e-6);
+        assert!((clip.interval_end - 0.125).abs() < 1e-6);
+        let bad = STRIPS.replace(
+            "name = \"repos\"\n        fps = 8",
+            "name = \"repos\"\n        fps = [8, 0]",
+        );
+        assert!(parse_pet_toml(&bad, strips_resolve).is_err());
     }
 
     #[test]
