@@ -2185,6 +2185,18 @@ impl Flock {
         }
     }
 
+    /// Un animal de cette espèce (identifiant de sa définition) dit au
+    /// revoir : le dernier arrivé parmi ceux qui ne partent pas déjà (les
+    /// personnages secondaires finissent leur rôle d'eux-mêmes). Renvoie son
+    /// numéro, s'il y en avait un.
+    pub fn leave_one(&mut self, species: &str, world: &World, input: &Input) -> Option<u32> {
+        let pet = self.pets.iter_mut().rev().find(|p| {
+            !p.is_child() && !p.is_leaving() && !p.is_finished() && p.def.meta.id == species
+        })?;
+        pet.leave(world, input);
+        Some(pet.id())
+    }
+
     /// Tous ensemble : chaque animal libre joue son comportement `together`.
     /// Renvoie le nombre d'animaux qui le jouent.
     pub fn together(&mut self, world: &World, input: &Input) -> usize {
@@ -3134,6 +3146,28 @@ mod tests {
         );
         advance(&mut flock, &world, 1.2);
         assert!(flock.pets().is_empty(), "il est parti");
+    }
+
+    #[test]
+    fn one_pet_of_a_species_says_goodbye_the_latest_first() {
+        let world = world();
+        let mut flock = Flock::new();
+        let first = flock.spawn(def(), 1, &world, None);
+        let other = flock.spawn(social(), 2, &world, None);
+        let latest = flock.spawn(def(), 3, &world, None);
+        put(&mut flock, &world, first, 300.0, 1.0, "stand");
+        put(&mut flock, &world, other, 600.0, 1.0, "stand");
+        put(&mut flock, &world, latest, 900.0, 1.0, "stand");
+        let input = Input::default();
+        assert_eq!(flock.leave_one("t", &world, &input), Some(latest));
+        assert_eq!(flock.leave_one("t", &world, &input), Some(first));
+        assert_eq!(flock.leave_one("t", &world, &input), None, "plus aucun");
+        assert_eq!(flock.leave_one("inconnu", &world, &input), None);
+        let still = flock.pets().iter().find(|p| p.id() == other).unwrap();
+        assert!(!still.is_leaving(), "l'autre espèce reste");
+        advance(&mut flock, &world, 1.5);
+        let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
+        assert_eq!(ids, vec![other]);
     }
 
     #[test]

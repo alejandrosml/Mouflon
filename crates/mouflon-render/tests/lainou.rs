@@ -28,8 +28,9 @@ fn lainou_loads_and_paints_both_ways() {
         panic!("Lainou est fait d'images")
     };
     // 245 images par sens, 256 px réduits à 192 (96 points sur un écran
-    // Retina), puis autant d'images intermédiaires.
-    assert_eq!(frames.frames.len(), 980);
+    // Retina), puis autant d'images intermédiaires, et deux de plus après
+    // chacune des quatre images de la chute (rapide).
+    assert_eq!(frames.frames.len(), 2 * 245 + 2 * (245 + 4 * 2));
     assert_eq!((art.width, art.height), (96.0, 96.0));
     let bytes: usize = frames
         .frames

@@ -64,9 +64,11 @@ cargo run --release
 
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
 `animaux/` folder: Poete drops onto your frontmost window if it is there,
-Pelote otherwise. The menu bar icon adds pets, gets them all to play together,
-says goodbye to them, pauses, turns collisions on, lets them walk under the
-Dock, changes their size, opens the pets folder and shows *About Mouflon*.
+Pelote otherwise. The menu bar icon adds pets (the same one as many times as
+you like: each kind shows how many are on screen), gets them all to play
+together, says goodbye to all of them or to one of a kind, pauses, mutes them
+and turns collisions on; its *Settings* change their size, let them walk under
+the Dock and open the pets folder. It also shows *About Mouflon*.
 
 Pets walk on the Dock. With *Walk Under the Dock*, they go down to the bottom of
 the screen, pass behind the Dock and can jump onto it. To know where the Dock
@@ -89,10 +91,13 @@ in each part, state of each pet), every event (collisions, landings, sounds,
 windows, menu), a summary every ten seconds and a report at the end.
 `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses the pets of the trial and
 `MOUFLON_ESSAI_COLLISIONS=1` turns collisions on. The CI runs such a trial on
-every Mac build.
+every Mac build. `tools/essai/analyse.py` reads the journal and lists what
+went wrong: hitches and their cause, the slowest images, animations short of
+images for a fast movement, position jumps, each collision step by step.
 
 ```sh
 MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
+python3 tools/essai/analyse.py mouflon-essai.log
 ```
 
 The `essais/` and `animaux/` folders are ignored by git: keep test pets and
@@ -181,6 +186,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
+| `tools/essai` | reads the journal of a trial (`MOUFLON_ESSAI`) and lists what went wrong (Python script) | — |
 
 All the app's code is Rust. Only the boundary with macOS contains `unsafe`, in
 `mouflon-platform`, with a justification for each block. The rest of the
@@ -287,10 +293,12 @@ cargo run --release
 
 Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du
 dossier `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est,
-sinon Pelote. L'icône de la barre des menus ajoute des animaux, les fait jouer
-tous ensemble, leur dit au revoir, met en pause, active les collisions, les
-fait marcher sous le Dock, change leur taille, ouvre le dossier des animaux et
-affiche « À propos de Mouflon ».
+sinon Pelote. L'icône de la barre des menus ajoute des animaux (le même autant
+de fois qu'on veut : chaque espèce dit combien des siens sont à l'écran), les
+fait jouer tous ensemble, dit au revoir à tous ou à un seul d'une espèce, met
+en pause, coupe les sons et active les collisions ; ses « Réglages » changent
+leur taille, les font marcher sous le Dock et ouvrent le dossier des animaux.
+Elle affiche aussi « À propos de Mouflon ».
 
 Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
@@ -315,10 +323,14 @@ dossier courant, ou le fichier que nomme `MOUFLON_JOURNAL`) : chaque image
 les dix secondes et un bilan à la fin. `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote`
 choisit les animaux de l'essai et `MOUFLON_ESSAI_COLLISIONS=1` met le mode
 collisions. L'intégration continue fait un tel essai à chaque construction
-pour Mac.
+pour Mac. `tools/essai/analyse.py` lit le journal et dit ce qui cloche : les
+à-coups et leur cause, les images les plus longues à préparer, les animations
+qui manquent d'images pour un mouvement rapide, les sauts de position, chaque
+collision pas à pas.
 
 ```sh
 MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
+python3 tools/essai/analyse.py mouflon-essai.log
 ```
 
 Les dossiers `essais/` et `animaux/` sont ignorés par git : on y garde les
@@ -409,6 +421,7 @@ ses comportements : [docs/format.md](docs/format.md).
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |
+| `tools/essai` | lit le journal d'un essai (`MOUFLON_ESSAI`) et dit ce qui cloche (script Python) | — |
 
 Tout le code de l'app est en Rust. Seule la frontière avec macOS contient de
 l'`unsafe`, dans `mouflon-platform`, avec une justification pour chaque bloc.

@@ -606,9 +606,10 @@ fn load_inbetweens(
         return Ok(out);
     };
 
-    // Bandes : une par animation et par sens, `count` images après chaque image.
-    let count = file.count.unwrap_or(1);
-    if count == 0 {
+    // Bandes : une par animation et par sens, `count` images après chaque
+    // image (ou le nombre propre à l'animation, dans `[counts]`).
+    let default_count = file.count.unwrap_or(1);
+    if default_count == 0 || file.counts.values().any(|c| *c == 0) {
         return Err(bad("`count` doit valoir au moins 1".into()));
     }
     let patterns: Vec<&String> = [&file.strips_left, &file.strips_right]
@@ -630,6 +631,11 @@ fn load_inbetweens(
         if frames < 2 {
             continue;
         }
+        let count = file
+            .counts
+            .get(name.as_str())
+            .copied()
+            .unwrap_or(default_count);
         // Une bande sans ses images intermédiaires (dans un sens ou l'autre)
         // n'en a pas : elle reste telle qu'elle est dessinée.
         let Ok(found) = patterns
@@ -836,8 +842,12 @@ struct AppearanceToml {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InbetweensToml {
-    /// Bandes : nombre d'images intermédiaires après chaque image.
+    /// Bandes : nombre d'images intermédiaires après chaque image…
     count: Option<u32>,
+    /// … sauf pour ces animations, qui en ont un nombre à elles (une chute
+    /// rapide en veut davantage).
+    #[serde(default)]
+    counts: BTreeMap<String, u32>,
     /// Bandes d'images intermédiaires, `{name}` remplacé par le nom de l'animation.
     strips_left: Option<String>,
     strips_right: Option<String>,
@@ -1630,6 +1640,36 @@ pub(crate) mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("ed/marche.png"), "{err}");
+    }
+
+    #[test]
+    fn a_fast_strip_can_have_more_inbetweens() {
+        // La marche en a deux après chaque image, le repos une seule.
+        let resolve = |name: &str| match name {
+            "entre.toml" => Ok(br#"
+                count = 1
+                strips_left = "eg/{name}.png"
+                strips_right = "ed/{name}.png"
+                skip = { marche = [3] }
+                counts = { marche = 2 }
+            "#
+            .to_vec()),
+            "eg/marche.png" | "ed/marche.png" => Ok(png_header(64 * 8, 64)),
+            _ => inbetweens_resolve(name),
+        };
+        let def = parse_pet_toml(&strips_with_inbetweens(), resolve).unwrap();
+        let sheet = def.sprites().unwrap();
+        assert_eq!(sheet.inbetween(0, 1), Some((30, 1)));
+        assert_eq!(sheet.inbetween(4, 5), Some((34, 2)));
+        assert_eq!(sheet.inbetween(6, 7), Some((38, 2)));
+        assert_eq!(sheet.inbetween(7, 4), None, "image sautée");
+
+        // Une bande à deux images par image doit les avoir toutes.
+        let short = |name: &str| match name {
+            "eg/marche.png" | "ed/marche.png" => Ok(png_header(64 * 4, 64)),
+            _ => resolve(name),
+        };
+        assert!(parse_pet_toml(&strips_with_inbetweens(), short).is_err());
     }
 
     #[test]

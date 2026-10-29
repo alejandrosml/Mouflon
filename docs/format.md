@@ -228,6 +228,9 @@ count = 1
 strips_left = "entre-deux/gauche/{name}.png"
 strips_right = "entre-deux/droite/{name}.png"
 
+[counts]
+tombe = 3                     # une chute rapide : trois images après chaque image
+
 [skip]
 demi_tour = [0, 1, 2]         # pas d'image intermédiaire après ces images
 ```

@@ -304,12 +304,15 @@ fps = 10
 duration = "forever"
 on_land = "atterrit"
 
-# Heurté par un autre animal (mode collisions) : il culbute et se relève sonné.
+# Heurté par un autre animal (mode collisions) : il culbute et se relève
+# sonné. La clochette sonne au choc ; les premières images passent vite (20
+# par seconde), le temps qu'il s'envole, puis la chute reprend son rythme.
 [[behavior]]
 name = "culbute"
+sound = { name = "clochette" }
 strip = "tombe"
 motion = "fall"
-fps = 10
+fps = [20, 10]
 duration = "forever"
 on_land = "atterrit_sonne"
 

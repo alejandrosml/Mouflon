@@ -70,8 +70,11 @@ fn locale_of(tag: &str) -> Option<&'static str> {
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub struct Texts {
     pub add_pet: String,
-    pub add_menu: String,
-    pub remove_all: String,
+    /// « Ajouter Lainou » : `{name}` est remplacé par le nom de l'animal préféré.
+    pub add_named: String,
+    /// Sous-menu « Dire au revoir », et son premier article (« À tous »).
+    pub goodbye: String,
+    pub goodbye_all: String,
     pub together: String,
     pub pause: String,
     pub sounds: String,
@@ -81,6 +84,7 @@ pub struct Texts {
     /// Article « ⓘ » sous « Marcher sous le Dock » et son explication.
     pub dock_info: String,
     pub dock_info_text: String,
+    pub settings: String,
     pub size: String,
     pub size_small: String,
     pub size_normal: String,
@@ -141,8 +145,9 @@ mod tests {
                 toml::from_str(source).unwrap_or_else(|e| panic!("locales/{code}.toml : {e}"));
             for text in [
                 &texts.add_pet,
-                &texts.add_menu,
-                &texts.remove_all,
+                &texts.add_named,
+                &texts.goodbye,
+                &texts.goodbye_all,
                 &texts.together,
                 &texts.pause,
                 &texts.sounds,
@@ -151,6 +156,7 @@ mod tests {
                 &texts.walk_under_dock,
                 &texts.dock_info,
                 &texts.dock_info_text,
+                &texts.settings,
                 &texts.size,
                 &texts.size_small,
                 &texts.size_normal,
@@ -166,6 +172,10 @@ mod tests {
                 assert!(!text.trim().is_empty(), "{code} : texte vide");
             }
             assert!(texts.about.contains("Mouflon") && texts.quit.contains("Mouflon"));
+            assert!(
+                texts.add_named.contains("{name}"),
+                "{code} : add_named sans {{name}}"
+            );
         }
     }
 

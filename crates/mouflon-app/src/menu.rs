@@ -7,8 +7,10 @@
 pub enum Action {
     /// Ajoute l'animal préféré (le dernier choisi).
     AddDefault,
-    /// Ajoute cet animal de la bibliothèque, qui devient le préféré.
+    /// Ajoute cet animal de la bibliothèque (un de plus), qui devient le préféré.
     Add(usize),
+    /// Dit au revoir à un animal de cette espèce (le dernier arrivé).
+    RemoveOne(usize),
     RemoveAll,
     /// Tous les animaux jouent ensemble (`sync` de desktopPet).
     Together,
@@ -28,6 +30,16 @@ pub enum Action {
     Quit,
 }
 
+/// Une espèce dans le menu : son nom, suivi du nombre d'animaux à l'écran.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn counted(name: &str, count: usize) -> String {
+    if count == 0 {
+        name.to_owned()
+    } else {
+        format!("{name} ({count})")
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native {
     use tray_icon::menu::{
@@ -35,14 +47,25 @@ mod native {
     };
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-    use super::Action;
+    use super::{Action, counted};
     use crate::library::Library;
 
+    /// Le menu de l'icône de Mouflon :
+    ///
+    /// - « Ajouter Lainou » (le préféré), « Ajouter un animal ▸ » (chaque espèce,
+    ///   avec le nombre d'animaux déjà à l'écran : un clic en ajoute un de plus),
+    ///   « Dire au revoir ▸ » (à tous, ou à un animal d'une espèce),
+    ///   « Tous ensemble » ;
+    /// - « Pause », « Sons », « Collisions entre animaux » ;
+    /// - « Réglages ▸ » : taille, app au premier plan, Dock, dossier des animaux ;
+    /// - « À propos », « Quitter ».
     pub struct TrayMenu {
         _tray: TrayIcon,
-        add: Vec<(MenuId, usize)>,
-        add_default: MenuId,
-        remove_all: MenuId,
+        add_favorite: MenuItem,
+        add: Vec<(MenuItem, usize)>,
+        goodbye_all: MenuItem,
+        goodbye: Vec<(MenuItem, usize)>,
+        names: Vec<String>,
         together: MenuId,
         pause: CheckMenuItem,
         sounds: CheckMenuItem,
@@ -73,39 +96,49 @@ mod native {
         ) -> Result<Self, Box<dyn std::error::Error>> {
             let t = crate::i18n::texts();
             let menu = Menu::new();
-            let mut add = Vec::new();
+            let names: Vec<String> = library
+                .pets
+                .iter()
+                .map(|entry| entry.def.meta.name.clone())
+                .collect();
 
-            let first = MenuItem::new(&t.add_pet, true, None);
-            menu.append(&first)?;
-            if library.pets.len() > 1 {
-                let submenu = Submenu::new(&t.add_menu, true);
-                for (i, entry) in library.pets.iter().enumerate() {
-                    let item = MenuItem::new(&entry.def.meta.name, true, None);
-                    add.push((item.id().clone(), i));
-                    submenu.append(&item)?;
-                }
-                menu.append(&submenu)?;
+            // Les animaux.
+            let add_favorite = MenuItem::new(&t.add_pet, true, None);
+            menu.append(&add_favorite)?;
+            let add_menu = Submenu::new(&t.add_pet, true);
+            let mut add = Vec::new();
+            for (i, name) in names.iter().enumerate() {
+                let item = MenuItem::new(name, true, None);
+                add_menu.append(&item)?;
+                add.push((item, i));
             }
+            menu.append(&add_menu)?;
+            let goodbye_menu = Submenu::new(&t.goodbye, true);
+            let goodbye_all = MenuItem::new(&t.goodbye_all, false, None);
+            goodbye_menu.append(&goodbye_all)?;
+            goodbye_menu.append(&PredefinedMenuItem::separator())?;
+            let mut goodbye = Vec::new();
+            for (i, name) in names.iter().enumerate() {
+                let item = MenuItem::new(name, false, None);
+                goodbye_menu.append(&item)?;
+                goodbye.push((item, i));
+            }
+            menu.append(&goodbye_menu)?;
             let together = MenuItem::new(&t.together, true, None);
             menu.append(&together)?;
-            let remove_all = MenuItem::new(&t.remove_all, true, None);
-            menu.append(&remove_all)?;
             menu.append(&PredefinedMenuItem::separator())?;
 
+            // Ce qu'on change souvent.
             let pause = CheckMenuItem::new(&t.pause, true, false, None);
             menu.append(&pause)?;
             let sounds = CheckMenuItem::new(&t.sounds, true, sounds_on, None);
             menu.append(&sounds)?;
-            let frontmost = CheckMenuItem::new(&t.frontmost_only, true, frontmost_only, None);
-            menu.append(&frontmost)?;
             let collisions = CheckMenuItem::new(&t.collisions, true, collisions_on, None);
             menu.append(&collisions)?;
-            let walk_under_dock =
-                CheckMenuItem::new(&t.walk_under_dock, true, walk_under_dock_on, None);
-            menu.append(&walk_under_dock)?;
-            // Juste dessous, « ⓘ » : pourquoi il faut l'autorisation d'Accessibilité.
-            let dock_info = info_item(&t.dock_info);
-            menu.append(&dock_info)?;
+            menu.append(&PredefinedMenuItem::separator())?;
+
+            // Réglages.
+            let settings = Submenu::new(&t.settings, true);
             let size_menu = Submenu::new(&t.size, true);
             let mut sizes = Vec::new();
             for (i, label) in [&t.size_small, &t.size_normal, &t.size_large, &t.size_huge]
@@ -116,9 +149,19 @@ mod native {
                 size_menu.append(&item)?;
                 sizes.push(item);
             }
-            menu.append(&size_menu)?;
+            settings.append(&size_menu)?;
+            let frontmost = CheckMenuItem::new(&t.frontmost_only, true, frontmost_only, None);
+            settings.append(&frontmost)?;
+            let walk_under_dock =
+                CheckMenuItem::new(&t.walk_under_dock, true, walk_under_dock_on, None);
+            settings.append(&walk_under_dock)?;
+            // Juste dessous, « ⓘ » : pourquoi il faut l'autorisation d'Accessibilité.
+            let dock_info = info_item(&t.dock_info);
+            settings.append(&dock_info)?;
+            settings.append(&PredefinedMenuItem::separator())?;
             let open_folder = MenuItem::new(&t.open_pets_folder, true, None);
-            menu.append(&open_folder)?;
+            settings.append(&open_folder)?;
+            menu.append(&settings)?;
             menu.append(&PredefinedMenuItem::separator())?;
 
             let about = MenuItem::new(&t.about, true, None);
@@ -140,9 +183,11 @@ mod native {
 
             Ok(Self {
                 _tray: tray,
+                add_favorite,
                 add,
-                add_default: first.id().clone(),
-                remove_all: remove_all.id().clone(),
+                goodbye_all,
+                goodbye,
+                names,
                 together: together.id().clone(),
                 pause,
                 sounds,
@@ -157,18 +202,40 @@ mod native {
             })
         }
 
+        /// Le préféré (rang dans la bibliothèque) et le nombre d'animaux de
+        /// chaque espèce à l'écran : les articles d'ajout et d'au revoir suivent.
+        pub fn set_flock(&self, favorite: usize, counts: &[usize]) {
+            let t = crate::i18n::texts();
+            if let Some(name) = self.names.get(favorite) {
+                self.add_favorite
+                    .set_text(t.add_named.replace("{name}", name));
+            }
+            let count = |i: usize| counts.get(i).copied().unwrap_or(0);
+            for (item, i) in &self.add {
+                item.set_text(counted(&self.names[*i], count(*i)));
+            }
+            for (item, i) in &self.goodbye {
+                item.set_text(counted(&self.names[*i], count(*i)));
+                item.set_enabled(count(*i) > 0);
+            }
+            self.goodbye_all.set_enabled(counts.iter().any(|c| *c > 0));
+        }
+
         pub fn action(&self, event: &MenuEvent) -> Option<Action> {
             let id = &event.id;
-            if let Some((_, i)) = self.add.iter().find(|(item, _)| item == id) {
+            if let Some((_, i)) = self.add.iter().find(|(item, _)| item.id() == id) {
                 return Some(Action::Add(*i));
             }
-            if id == &self.add_default {
+            if let Some((_, i)) = self.goodbye.iter().find(|(item, _)| item.id() == id) {
+                return Some(Action::RemoveOne(*i));
+            }
+            if id == self.add_favorite.id() {
                 return Some(Action::AddDefault);
             }
             if let Some(i) = self.sizes.iter().position(|item| item.id() == id) {
                 return Some(Action::SetSize(i));
             }
-            if id == &self.remove_all {
+            if id == self.goodbye_all.id() {
                 Some(Action::RemoveAll)
             } else if id == &self.together {
                 Some(Action::Together)
@@ -252,3 +319,14 @@ mod native {
 pub use native::TrayMenu;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use tray_icon::menu::MenuEvent;
+
+#[cfg(test)]
+mod tests {
+    use super::counted;
+
+    #[test]
+    fn a_species_shows_how_many_are_on_screen() {
+        assert_eq!(counted("Lainou", 0), "Lainou");
+        assert_eq!(counted("Lainou", 2), "Lainou (2)");
+    }
+}

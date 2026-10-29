@@ -173,10 +173,17 @@ pub struct App {
     floating_seen: std::collections::HashSet<(String, i32)>,
     seed: u64,
     refresh_hz: f64,
+    /// Images par seconde voulues par le dernier `schedule` (0 : horloge
+    /// arrêtée) : notées au journal d'un essai.
+    cadence: f64,
     /// Pour réveiller la boucle depuis l'horloge, le menu ou un autre fil.
     proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     menu: Option<crate::menu::TrayMenu>,
+    /// Ce que le menu montre du troupeau (le préféré, le nombre d'animaux de
+    /// chaque espèce) : il n'est mis à jour que quand cela change.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    menu_flock: Option<(usize, Vec<usize>)>,
 }
 
 fn to_rect(r: platform::OsRect) -> Rect {
@@ -296,9 +303,12 @@ impl App {
             floating_seen: std::collections::HashSet::new(),
             seed,
             refresh_hz: 60.0,
+            cadence: 0.0,
             proxy: Arc::new(Mutex::new(proxy)),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu: None,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            menu_flock: None,
         }
     }
 
@@ -779,6 +789,42 @@ impl App {
                 }
                 Err(e) => log::error!("impossible de recréer le menu : {e}"),
             }
+            self.menu_flock = None;
+            self.sync_menu();
+        }
+    }
+
+    /// Le menu suit le troupeau : « Ajouter Lainou » nomme l'animal préféré,
+    /// et chaque espèce dit combien des siens sont à l'écran (ceux qui
+    /// partent déjà et les personnages secondaires ne comptent pas).
+    fn sync_menu(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let Some(menu) = &self.menu else {
+                return;
+            };
+            let favorite = self
+                .library
+                .default_index(self.settings.default_pet.as_deref());
+            let mut counts = vec![0; self.library.pets.len()];
+            for pet in self.flock.pets() {
+                if pet.is_child() || pet.is_leaving() {
+                    continue;
+                }
+                let id = pet.def().meta.id.as_str();
+                if let Some(i) = self.library.pets.iter().position(|e| e.def.meta.id == id) {
+                    counts[i] += 1;
+                }
+            }
+            if self
+                .menu_flock
+                .as_ref()
+                .is_some_and(|(f, c)| *f == favorite && *c == counts)
+            {
+                return;
+            }
+            menu.set_flock(favorite, &counts);
+            self.menu_flock = Some((favorite, counts));
         }
     }
 
@@ -965,6 +1011,18 @@ impl App {
                     }
                 }
             }
+            Action::RemoveOne(index) => {
+                // Le dernier arrivé de cette espèce dit au revoir.
+                if let Some(entry) = self.library.pets.get(index) {
+                    let input = self.input();
+                    let species = entry.def.meta.id.clone();
+                    if let Some(id) = self.flock.leave_one(&species, &self.world, &input)
+                        && self.pointer.dragging == Some(id)
+                    {
+                        self.pointer = Pointer::default();
+                    }
+                }
+            }
             Action::RemoveAll => self.remove_all(),
             Action::Together => {
                 let input = self.input();
@@ -1093,6 +1151,7 @@ impl App {
     /// `shown_at` : heure d'affichage de l'image, donnée par l'horloge de l'écran.
     fn frame(&mut self, event_loop: &ActiveEventLoop, shown_at: Option<f64>) {
         let now = Instant::now();
+        let cadence = self.cadence;
         // Calé sur l'écran, on avance exactement du temps qui sépare deux
         // images affichées : les petits retards du fil principal ne font plus
         // varier la vitesse des animaux d'une image à l'autre.
@@ -1174,6 +1233,7 @@ impl App {
         }
         phases.sounds = lap(&mut mark);
         self.sync_windows(event_loop);
+        self.sync_menu();
         phases.windows = lap(&mut mark);
 
         let Self {
@@ -1293,7 +1353,7 @@ impl App {
                     roll: view.pose.roll,
                 }
             });
-            stats.record(now, shown_at.is_some(), phases, pets);
+            stats.record(now, shown_at.is_some(), cadence, phases, pets);
             if self.trial_end.is_some_and(|end| now >= end) {
                 log::info!("essai terminé : {}", stats.finish());
                 event_loop.exit();
@@ -1319,6 +1379,7 @@ impl App {
                 None => None,
             }
         };
+        self.cadence = fps.unwrap_or(0.0);
         let Some(fps) = fps else {
             // Rien ne bouge : l'horloge s'arrête, on passe de temps en temps.
             if let Some(clock) = &self.clock {
@@ -1445,6 +1506,8 @@ impl ApplicationHandler<UserEvent> for App {
                 Err(e) => log::error!("impossible de créer le menu : {e}"),
             }
         }
+        // Les noms et les nombres du menu sont justes avant même la première image.
+        self.sync_menu();
 
         // Préchargement, avant la première image : dessins des animaux du
         // lancement, GPU, sons, premier relevé des fenêtres. Rien de tout

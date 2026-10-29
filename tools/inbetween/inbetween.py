@@ -22,7 +22,9 @@ fait tourner le dessin lui-même.
 Il écrit `entre-deux.toml` et les images à côté du `pet.toml`, puis il reste
 à ajouter `inbetweens = "entre-deux.toml"` dans la section [appearance].
 Avec `--review planche.png`, une planche de contrôle montre chaque paire, ses
-images intermédiaires et sa note de « fondu ».
+images intermédiaires et sa note de « fondu ». Pour des bandes, `--count 1`
+donne une image intermédiaire après chaque image, et `--count-for tombe=3`
+en donne davantage à une animation rapide (une chute, une culbute).
 """
 
 import argparse
@@ -300,23 +302,25 @@ def strips_mode(folder, appearance, rife, args, review):
     first = folder / patterns[0]
     names = sorted(p.stem for p in first.parent.glob(first.name.replace('{name}', '*')))
     skip = {}
+    counts = dict(args.count_for or [])
     for name in names:
         sides = [tiles_of(load(folder / p.replace('{name}', name)), frame_w, frame_h) for p in patterns]
         n = len(sides[0])
         if n < 2:
             continue
+        count = counts.get(name, args.count)
         strips = [[] for _ in sides]
         for i in range(n):
             results = []
             for frames in sides:
-                images, ghost = inbetweens(rife, frames[i], frames[(i + 1) % n], args.count, args)
+                images, ghost = inbetweens(rife, frames[i], frames[(i + 1) % n], count, args)
                 results.append((images, ghost))
             kept = all(images is not None for images, _ in results)
             for side, (frames, (images, ghost)) in enumerate(zip(sides, results)):
                 if review and side == 0:
                     review.add(f"{name} {i}→{(i + 1) % n}", frames[i], images, frames[(i + 1) % n], ghost, kept)
                 empty = np.zeros_like(frames[i])
-                strips[side].extend(images if kept else [empty] * args.count)
+                strips[side].extend(images if kept else [empty] * count)
             if not kept:
                 skip.setdefault(name, []).append(i)
         for out, strip in zip(outputs, strips):
@@ -328,12 +332,26 @@ def strips_mode(folder, appearance, rife, args, review):
              f"count = {args.count}"]
     for key, out in zip(('strips_left', 'strips_right'), outputs):
         lines.append(f'{key} = "{out}"')
+    own = {name: c for name, c in sorted(counts.items()) if name in names and c != args.count}
+    if own:
+        lines.append("")
+        lines.append("# Animations rapides : plus d'images intermédiaires après chaque image.")
+        lines.append("[counts]")
+        lines.extend(f"{name} = {c}" for name, c in own.items())
     if skip:
         lines.append("")
         lines.append("# Images trop différentes de la suivante : pas d'image intermédiaire après elles.")
         lines.append("[skip]")
         lines.extend(f"{name} = {sorted(indices)}" for name, indices in sorted(skip.items()))
     return lines
+
+
+def count_for(text):
+    """« tombe=3 » → ("tombe", 3)."""
+    name, _, value = text.partition('=')
+    if not name or not value.isdigit() or int(value) < 1:
+        raise argparse.ArgumentTypeError(f"« {text} » : il faut NOM=N, N au moins 1")
+    return name, int(value)
 
 
 # ---------------------------------------------------------------- planche desktopPet
@@ -424,6 +442,8 @@ def main():
     parser.add_argument('folder', type=Path, help="dossier de l'animal (avec son pet.toml)")
     parser.add_argument('--model', required=True, help='RIFE_fp32_timestep.onnx')
     parser.add_argument('--count', type=int, default=1, help="bandes : images intermédiaires après chaque image")
+    parser.add_argument('--count-for', type=count_for, action='append', metavar='NOM=N',
+                        help="bandes : autant d'images intermédiaires pour cette animation (plusieurs fois possible)")
     parser.add_argument('--count-max', type=int, default=None, help="planche : au plus tant d'images par paire")
     parser.add_argument('--max-ghost', type=float, default=0.018,
                         help="note de fondu d'ensemble au-delà de laquelle une paire est sautée "

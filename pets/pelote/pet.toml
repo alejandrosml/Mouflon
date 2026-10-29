@@ -42,7 +42,7 @@ walk = { name = "clochette", frame = 0, chance = 0.03 }
 run = { name = "clochette", frame = 1, chance = 0.15 }
 jump = { name = "clochette", frame = 5, chance = 0.6 }
 drag = { name = "bele", chance = 0.6 }
-toss = { name = "bele", chance = 0.3 }
+toss = [{ name = "clochette" }, { name = "bele", chance = 0.3 }]
 boing = [{ name = "clochette", frame = 2 }, { name = "bele", chance = 0.4 }]
 "fall soft" = { name = "pose", frame = 4, chance = 0.7 }
 "fall hard" = [{ name = "pose" }, { name = "bele", chance = 0.5 }]
