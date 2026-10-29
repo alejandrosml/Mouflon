@@ -16,7 +16,7 @@ import statistics
 import sys
 from collections import defaultdict
 
-FRAME = re.compile(r"^F (\S+) ecart (\S+) prep (\S+) (clk|tmr)(?: cad (\S+))? (.*?)((?: \| .*)?)$")
+FRAME = re.compile(r"^F (\S+) ecart (\S+) prep (\S+) (clk|tmr)(?: cad (\S+))?(?: ecr (\S+))? (.*?)((?: \| .*)?)$")
 PHASES = re.compile(r"(rel|sim|son|fen|dep|des|att|env|r) (\S+)")
 # Le nom d'un comportement peut contenir des espaces (« fall soft ») : les
 # champs sont lus depuis la fin.
@@ -37,10 +37,11 @@ def parse(path):
                 m = FRAME.match(line)
                 if not m:
                     continue
-                t, gap, prep, source, cadence, phases, pets = m.groups()
+                t, gap, prep, source, cadence, refresh, phases, pets = m.groups()
                 frame = {
                     "t": float(t), "gap": float(gap), "prep": float(prep), "clock": source == "clk",
                     "cadence": float(cadence) if cadence else None,
+                    "refresh": float(refresh) if refresh else None,
                     "phases": {k: float(v) for k, v in PHASES.findall(phases)}, "pets": {},
                 }
                 for chunk in pets.split(" | ")[1:]:
@@ -97,6 +98,14 @@ def main():
     if cadences:
         parts = ", ".join(f"{c:.0f} i/s : {t:.0f} s" for c, t in sorted(cadences.items(), reverse=True))
         print(f"cadences voulues : {parts}")
+    # Rythme réel de l'écran (ProMotion le change) : durée d'une image de l'écran.
+    rates = defaultdict(float)
+    for f in frames[1:]:
+        if f["refresh"]:
+            rates[round(1000 / f["refresh"])] += f["gap"] / 1000
+    if rates:
+        parts = ", ".join(f"{hz} Hz : {t:.0f} s" for hz, t in sorted(rates.items(), reverse=True) if t >= 0.5)
+        print(f"fréquence de l'écran : {parts}")
 
     # Rythme attendu pendant le mouvement : la cadence voulue pour l'image
     # (notée par les journaux récents), sinon l'écart médian quand un animal bouge.
@@ -123,13 +132,38 @@ def main():
                 blame["hors de l'app (système, écran)"] += 1
         if blame:
             print("  causes : " + ", ".join(f"{k} {v}" for k, v in sorted(blame.items(), key=lambda kv: -kv[1])))
+
+        # Un à-coup juste après un changement de cadence (un animal qui se met
+        # à bouger après un repos, par exemple) : l'écran change peut-être de
+        # fréquence (ProMotion), ou l'horloge met un temps à suivre.
+        def cadence_change(i, window=0.3):
+            t = frames[i]["t"]
+            j = i - 1
+            while j > 0 and t - frames[j]["t"] <= window:
+                if frames[j]["cadence"] != frames[i]["cadence"]:
+                    return frames[j]["cadence"], frames[i]["cadence"]
+                j -= 1
+            return None
+
+        changes = defaultdict(int)
+        for i, f in hitches:
+            change = cadence_change(i)
+            if change and None not in change:
+                changes[f"{change[0]:.0f} → {change[1]:.0f} i/s"] += 1
+        if changes:
+            print("  juste après un changement de cadence : "
+                  + ", ".join(f"{k} : {v}" for k, v in sorted(changes.items(), key=lambda kv: -kv[1])))
         worst = sorted(hitches, key=lambda h: -h[1]["gap"])[:25]
         for i, f in sorted(worst, key=lambda h: h[1]["t"]):
             before = frames[i - 1]
             ph = " ".join(f"{k} {v:.1f}" for k, v in before["phases"].items() if k != "r" and v >= 0.5)
             what = "; ".join(near(events, f["t"])) or "—"
+            change = cadence_change(i)
+            cad = f" ; cadence {change[0]:.0f} → {change[1]:.0f}" if change and None not in change else ""
+            if f["refresh"]:
+                cad += f" ; écran à {1000 / f['refresh']:.0f} Hz"
             print(f"  {f['t']:8.2f} s : écart {f['gap']:6.1f} ms ; image d'avant préparée en {before['prep']:.1f} ms"
-                  f" [{ph or 'rien de long'}] ; {what}")
+                  f" [{ph or 'rien de long'}]{cad} ; {what}")
 
     slow = sorted(frames, key=lambda f: -f["prep"])[:15]
     print("\nIMAGES LES PLUS LONGUES À PRÉPARER :")

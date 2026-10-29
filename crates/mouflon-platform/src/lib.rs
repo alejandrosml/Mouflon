@@ -233,6 +233,11 @@ mod fallback {
             match *self {}
         }
 
+        #[must_use]
+        pub fn frame_duration(&self) -> f64 {
+            match *self {}
+        }
+
         pub fn set_running(&self, _running: bool) {
             match *self {}
         }

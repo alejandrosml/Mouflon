@@ -115,6 +115,13 @@ impl FrameClock {
         !self.link.isPaused()
     }
 
+    /// Durée d'une image de l'écran au dernier battement, en secondes :
+    /// 1/120 s pour ProMotion à plein régime, davantage quand l'écran ralentit.
+    #[must_use]
+    pub fn frame_duration(&self) -> f64 {
+        self.link.targetTimestamp() - self.link.timestamp()
+    }
+
     /// Fait tourner l'horloge, ou l'arrête (plus rien ne bouge à l'écran).
     pub fn set_running(&self, running: bool) {
         if self.link.isPaused() == running {

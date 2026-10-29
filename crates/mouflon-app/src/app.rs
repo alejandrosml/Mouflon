@@ -1396,7 +1396,12 @@ impl App {
                     roll: view.pose.roll,
                 }
             });
-            stats.record(now, shown_at.is_some(), cadence, phases, pets);
+            // Durée d'une image de l'écran : ProMotion la change selon ce qui bouge.
+            let refresh = self
+                .clock
+                .as_ref()
+                .map_or(0.0, |clock| clock.frame_duration() * 1000.0);
+            stats.record(now, shown_at.is_some(), (cadence, refresh), phases, pets);
             if self.trial_end.is_some_and(|end| now >= end) {
                 log::info!("essai terminé : {}", stats.finish());
                 event_loop.exit();

@@ -246,12 +246,13 @@ impl FrameStats {
     /// chaque animal à ce moment.
     /// Note une image : `started`, quand on a commencé à la préparer ;
     /// `beat`, réveillée par l'horloge de l'écran ; `cadence`, les images par
-    /// seconde voulues pour elle (0 : l'horloge était arrêtée, rien ne bougeait).
+    /// seconde voulues pour elle (0 : l'horloge était arrêtée, rien ne bougeait) ;
+    /// `refresh`, la durée d'une image de l'écran en millisecondes (0 : inconnue).
     pub fn record<'a>(
         &mut self,
         started: Instant,
         beat: bool,
-        cadence: f64,
+        (cadence, refresh): (f64, f64),
         phases: Phases,
         pets: impl Iterator<Item = PetLine<'a>>,
     ) {
@@ -282,7 +283,7 @@ impl FrameStats {
 
         // L'image dans le journal : temps, parties, puis chaque animal.
         let mut line = format!(
-            "F {at:.4} ecart {:.2} prep {work:.2} {} cad {cadence:.0} {}",
+            "F {at:.4} ecart {:.2} prep {work:.2} {} cad {cadence:.0} ecr {refresh:.1} {}",
             gap.unwrap_or(0.0),
             if beat { "clk" } else { "tmr" },
             phases.compact(),
@@ -570,7 +571,7 @@ mod tests {
             stats.record(
                 start + Duration::from_millis(i * 8),
                 i > 0,
-                120.0,
+                (120.0, 8.3),
                 Phases::default(),
                 [pet("marche", i as u32 / 2)].into_iter(),
             );
@@ -592,7 +593,7 @@ mod tests {
         stats.record(
             start,
             false,
-            60.0,
+            (60.0, 0.0),
             Phases {
                 sounds: Duration::from_millis(900),
                 ..Phases::default()
@@ -613,7 +614,7 @@ mod tests {
         stats.record(
             start,
             true,
-            30.0,
+            (30.0, 8.3),
             Phases::default(),
             [pet("marche", 3)].into_iter(),
         );
@@ -622,7 +623,7 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert!(text.starts_with("ESSAI test\n"), "{text}");
-        assert!(text.contains("clk cad 30 "), "{text}");
+        assert!(text.contains("clk cad 30 ecr 8.3 "), "{text}");
         assert!(text.contains("| 0 marche 3 10.0,20.0 0,0 s 0.00"), "{text}");
         assert!(text.contains("E ") && text.contains("heurt 0 1"), "{text}");
         assert!(text.contains("BILAN 1 images"), "{text}");
