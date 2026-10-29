@@ -86,20 +86,49 @@ pub fn current_pid() -> i32 {
     std::process::id() as i32
 }
 
+/// Une ligne des crédits de la fenêtre « À propos ».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AboutLine<'a> {
+    Text(&'a str),
+    /// Lien cliquable : texte affiché, adresse.
+    Link(&'a str, &'a str),
+}
+
+/// Contenu de la fenêtre « À propos ».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct About<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    /// Mention de copyright (« © 2026 … »).
+    pub copyright: &'a str,
+    /// Crédits, de haut en bas.
+    pub lines: &'a [AboutLine<'a>],
+}
+
+/// Icône de Mouflon dans la barre des menus, où une bulle d'explication
+/// peut s'accrocher (voir [`show_note`]).
+#[cfg(target_os = "macos")]
+pub type StatusItem = objc2_app_kit::NSStatusItem;
+/// Pas d'icône où accrocher une bulle sur ce système.
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug)]
+pub enum StatusItem {}
+
 #[cfg(target_os = "macos")]
 mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    accessibility_trusted, cursor_position, dock_frame, frontmost_pid, open_folder,
-    preferred_languages, prepare_pet_window, request_accessibility, screens, windows,
+    accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
+    preferred_languages, prepare_pet_window, request_accessibility, screens, show_about, show_note,
+    windows,
 };
 
 #[cfg(not(target_os = "macos"))]
 mod fallback {
     //! Repli pour les systèmes pas encore pris en charge : aucun rebord de
     //! fenêtre, l'animal marche sur le bas de l'écran.
-    use super::{OsScreen, OsWindow};
+    use super::{About, AboutLine, OsScreen, OsWindow, StatusItem};
 
     #[must_use]
     pub fn screens() -> Vec<OsScreen> {
@@ -160,6 +189,25 @@ mod fallback {
         tags
     }
 
+    /// Pas encore de fenêtre « À propos » ici : on ouvre le premier lien
+    /// des crédits (la page du projet) dans le navigateur.
+    pub fn show_about(about: &About<'_>) {
+        let link = about.lines.iter().find_map(|line| match line {
+            AboutLine::Link(_, url) => Some(*url),
+            AboutLine::Text(_) => None,
+        });
+        if let Some(url) = link {
+            open_folder(std::path::Path::new(url));
+        }
+    }
+
+    /// Pas de bulle ici : l'explication va au journal.
+    pub fn show_note(_anchor: Option<&StatusItem>, title: &str, text: &str) {
+        log::info!("{title} : {text}");
+    }
+
+    pub fn close_note() {}
+
     /// Ouvre un dossier dans le gestionnaire de fichiers du système.
     pub fn open_folder(path: &std::path::Path) -> bool {
         let opener = if cfg!(target_os = "windows") {
@@ -173,8 +221,9 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    accessibility_trusted, cursor_position, dock_frame, frontmost_pid, open_folder,
-    preferred_languages, prepare_pet_window, request_accessibility, screens, windows,
+    accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
+    preferred_languages, prepare_pet_window, request_accessibility, screens, show_about, show_note,
+    windows,
 };
 
 #[cfg(test)]

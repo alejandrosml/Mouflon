@@ -23,9 +23,12 @@ pub struct Settings {
     pub collisions: bool,
     /// Taille des animaux, par rapport à celle prévue par chacun.
     pub size: f32,
-    /// Le Dock tel qu'il est : les animaux marchent dessus et en bas de
-    /// l'écran à côté de lui (il faut l'autorisation d'Accessibilité).
-    pub walk_on_dock: bool,
+    /// Marcher sous le Dock : les animaux descendent jusqu'en bas de l'écran,
+    /// passent derrière le Dock et peuvent sauter dessus (il faut
+    /// l'autorisation d'Accessibilité pour savoir où il est). Sans cela, ils
+    /// marchent sur le Dock.
+    #[serde(alias = "walk_on_dock")]
+    pub walk_under_dock: bool,
 }
 
 impl Default for Settings {
@@ -36,7 +39,7 @@ impl Default for Settings {
             frontmost_only: true,
             collisions: false,
             size: 1.0,
-            walk_on_dock: false,
+            walk_under_dock: false,
         }
     }
 }
@@ -162,6 +165,14 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_dock_choice_made_under_its_old_name() {
+        let old: Settings = toml::from_str("walk_on_dock = true").unwrap();
+        assert!(old.walk_under_dock);
+        let saved = toml::to_string(&old).unwrap();
+        assert!(saved.contains("walk_under_dock = true"), "{saved}");
+    }
+
+    #[test]
     fn takes_over_the_old_pets_and_settings_once() {
         let root = std::env::temp_dir().join(format!("mouflon-migration-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -181,7 +192,7 @@ mod tests {
             frontmost_only: false,
             collisions: true,
             size: 1.0,
-            walk_on_dock: false,
+            walk_under_dock: false,
         }
         .save(&old.settings);
 

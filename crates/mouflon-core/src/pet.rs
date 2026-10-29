@@ -1070,7 +1070,9 @@ impl Pet {
             to.x = arena.right() - half;
             self.vel.x = -self.vel.x.abs() * 0.45;
         }
-        let ceiling = arena.top() + p.height;
+        // Lancé vers le haut, il peut monter jusqu'au bord de l'écran, en
+        // passant derrière la barre des menus (et l'encoche), puis retombe.
+        let ceiling = world.bounds().top() + p.height;
         if to.y < ceiling {
             to.y = ceiling;
             self.vel.y = self.vel.y.max(0.0);
@@ -2890,6 +2892,26 @@ mod tests {
         assert!(!pet.is_held());
         advance(&mut flock, &world, 1.0);
         assert!(flock.pets().is_empty());
+    }
+
+    #[test]
+    fn thrown_upward_it_slips_behind_the_menu_bar_then_falls_back() {
+        let world = world();
+        let mut pet = Pet::spawn(0, def(), 6, &world, Some(600.0));
+        run(&mut pet, &world, 2.0);
+        let h = pet.def.physics.height;
+        pet.support = Support::Air;
+        pet.ground_ref = None;
+        pet.vel = Vec2::new(0.0, -2600.0);
+        let mut highest = f32::MAX;
+        for _ in 0..(3.0 / TICK) as usize {
+            pet.step(TICK, &world, &Input::default());
+            highest = highest.min(pet.position().y - h);
+        }
+        // Le haut de la tête passe au-dessus de la zone utile (sous la barre
+        // des menus), sans dépasser le bord de l'écran.
+        assert!((0.0..25.0).contains(&highest), "{highest}");
+        assert_eq!(pet.position().y, 825.0, "il est retombé");
     }
 
     #[test]

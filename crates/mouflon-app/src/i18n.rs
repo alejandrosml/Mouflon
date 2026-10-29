@@ -76,7 +76,10 @@ pub struct Texts {
     pub pause: String,
     pub frontmost_only: String,
     pub collisions: String,
-    pub walk_on_dock: String,
+    pub walk_under_dock: String,
+    /// Article « ⓘ » sous « Marcher sous le Dock » et son explication.
+    pub dock_info: String,
+    pub dock_info_text: String,
     pub size: String,
     pub size_small: String,
     pub size_normal: String,
@@ -87,6 +90,7 @@ pub struct Texts {
     pub quit: String,
     pub description: String,
     pub credits: String,
+    pub license: String,
 }
 
 /// Code de la première langue préférée que Mouflon parle, l'anglais à défaut.
@@ -142,7 +146,9 @@ mod tests {
                 &texts.pause,
                 &texts.frontmost_only,
                 &texts.collisions,
-                &texts.walk_on_dock,
+                &texts.walk_under_dock,
+                &texts.dock_info,
+                &texts.dock_info_text,
                 &texts.size,
                 &texts.size_small,
                 &texts.size_normal,
@@ -153,6 +159,7 @@ mod tests {
                 &texts.quit,
                 &texts.description,
                 &texts.credits,
+                &texts.license,
             ] {
                 assert!(!text.trim().is_empty(), "{code} : texte vide");
             }

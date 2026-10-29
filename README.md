@@ -30,7 +30,8 @@ throw them across the desktop.
   format with images drawn for both directions, pets that greet each other or
   tumble in collision mode, *All Together*, a goodbye before leaving, four
   sizes, pets you can catch without leaving the app you are working in, pets
-  that walk on the Dock and on floating panels such as the Keyboard Viewer,
+  that walk on the Dock (or under it) and on floating panels such as the
+  Keyboard Viewer,
   install by drag and drop, a menu in the language of macOS (English, French,
   Spanish, German, Italian, Dutch, Portuguese, Russian, Japanese, Korean,
   Chinese).
@@ -62,14 +63,15 @@ cargo run --release
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
 `animaux/` folder: Poete drops onto your frontmost window if it is there,
 Pelote otherwise. The menu bar icon adds pets, gets them all to play together,
-says goodbye to them, pauses, turns collisions on, lets them walk on the Dock,
-changes their size, opens the pets folder and shows *About Mouflon*.
+says goodbye to them, pauses, turns collisions on, lets them walk under the
+Dock, changes their size, opens the pets folder and shows *About Mouflon*.
 
-*Walk on the Dock* reads where the Dock really is: pets walk on it, and down to
-the bottom of the screen on either side of it. macOS asks for the
-Accessibility permission (System Settings → Privacy & Security →
-Accessibility); launched with `cargo run`, the permission goes to the terminal
-app.
+Pets walk on the Dock. With *Walk Under the Dock*, they go down to the bottom of
+the screen, pass behind the Dock and can jump onto it. To know where the Dock
+really is, Mouflon needs the Accessibility permission (System Settings →
+Privacy & Security → Accessibility), which it uses for nothing else; the ⓘ item
+just below the option says so. The option is not required. Launched with
+`cargo run`, the permission goes to the terminal app.
 
 To try a pet without installing it, pass its file or folder: it is loaded with
 the others, and it is the one that appears.
@@ -235,8 +237,8 @@ se laissent attraper et lancer à travers le bureau.
   un format natif aux images dessinées dans les deux sens, des animaux qui se
   saluent, ou qui culbutent en mode collisions, « Tous ensemble », un au revoir
   avant de partir, quatre tailles, des animaux qu'on attrape sans quitter
-  l'app où l'on travaille, qui marchent sur le Dock et sur les panneaux
-  flottants comme le visualiseur de clavier, l'installation par
+  l'app où l'on travaille, qui marchent sur le Dock (ou dessous) et sur les
+  panneaux flottants comme le visualiseur de clavier, l'installation par
   glisser-déposer, un menu dans la langue de macOS (anglais, français,
   espagnol, allemand, italien, néerlandais, portugais, russe, japonais, coréen,
   chinois).
@@ -269,14 +271,16 @@ Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du
 dossier `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est,
 sinon Pelote. L'icône de la barre des menus ajoute des animaux, les fait jouer
 tous ensemble, leur dit au revoir, met en pause, active les collisions, les
-fait marcher sur le Dock, change leur taille, ouvre le dossier des animaux et
+fait marcher sous le Dock, change leur taille, ouvre le dossier des animaux et
 affiche « À propos de Mouflon ».
 
-« Marcher sur le Dock » lit la vraie place du Dock : les animaux marchent
-dessus, et jusqu'en bas de l'écran de part et d'autre. macOS demande
-l'autorisation d'Accessibilité (Réglages Système → Confidentialité et
-sécurité → Accessibilité) ; lancé avec `cargo run`, c'est le Terminal qui la
-reçoit.
+Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
+jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
+Pour savoir où est vraiment le Dock, Mouflon a besoin de l'autorisation
+d'Accessibilité (Réglages Système → Confidentialité et sécurité →
+Accessibilité), qui ne lui sert à rien d'autre ; l'article ⓘ juste sous
+l'option le dit. L'option est facultative. Lancé avec `cargo run`, c'est le
+Terminal qui reçoit l'autorisation.
 
 Pour essayer un animal sans l'installer, passe son fichier ou son dossier en
 argument : il est chargé en plus des autres, et c'est lui qui apparaît.

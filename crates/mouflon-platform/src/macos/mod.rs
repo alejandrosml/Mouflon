@@ -1,5 +1,9 @@
 //! Implémentation macOS.
 
+mod ui;
+
+pub use ui::{close_note, show_about, show_note};
+
 use std::ptr::NonNull;
 
 use objc2::ClassType;

@@ -43,7 +43,13 @@ struct PetWindow {
     canvas: Canvas,
     art: Arc<PetArt>,
     scale: f64,
+    /// Coin haut gauche demandé pour la fenêtre (repère commun, points).
     position: Option<(f64, f64)>,
+    /// Coin haut gauche où la fenêtre se trouve vraiment : macOS refuse de
+    /// placer une fenêtre plus haut que la barre des menus.
+    placed: (f64, f64),
+    /// Écart entre les deux au dernier dessin.
+    drawn_offset: (f64, f64),
     hittest: bool,
     last_render: Option<Instant>,
     /// Dernière image dessinée d'un animal en sprites.
@@ -109,7 +115,7 @@ pub struct App {
     next_screen_poll: Instant,
     fast_poll_until: Instant,
     frontmost: Option<i32>,
-    /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sur le Dock »).
+    /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sous le Dock »).
     dock: Option<WindowRect>,
     /// Le Dock a déjà été signalé au journal.
     dock_logged: bool,
@@ -124,6 +130,48 @@ pub struct App {
 
 fn to_rect(r: platform::OsRect) -> Rect {
     Rect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32)
+}
+
+/// Ouvre la fenêtre « À propos » : version, description, page du projet (et
+/// site de l'auteur quand le `homepage` du workspace en sera un autre),
+/// crédits, licence et copyright.
+fn show_about() {
+    use platform::AboutLine;
+    let t = crate::i18n::texts();
+    let shown = |url: &'static str| url.trim_start_matches("https://").trim_end_matches('/');
+    let repository = env!("CARGO_PKG_REPOSITORY");
+    let homepage = env!("CARGO_PKG_HOMEPAGE");
+    let mut lines = vec![
+        AboutLine::Text(&t.description),
+        AboutLine::Link(shown(repository), repository),
+    ];
+    if !homepage.is_empty() && homepage != repository {
+        lines.push(AboutLine::Link(shown(homepage), homepage));
+    }
+    lines.push(AboutLine::Text(&t.credits));
+    lines.push(AboutLine::Text(&t.license));
+    platform::show_about(&platform::About {
+        name: "Mouflon",
+        version: env!("CARGO_PKG_VERSION"),
+        copyright: COPYRIGHT,
+        lines: &lines,
+    });
+}
+
+/// Mention de copyright de la fenêtre « À propos ».
+const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
+
+/// Coin haut gauche où se trouve vraiment la fenêtre (repère commun).
+/// Sur macOS, un déplacement est immédiat et peut être corrigé par le
+/// système (une fenêtre ne monte pas au-dessus de la barre des menus) ;
+/// ailleurs, il peut n'être fait qu'un peu plus tard : on s'en tient à la
+/// position demandée.
+fn placed_at(window: &Window, scale: f64) -> Option<(f64, f64)> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let p = window.outer_position().ok()?.to_logical::<f64>(scale);
+    Some((p.x, p.y))
 }
 
 fn local_hour() -> f32 {
@@ -229,7 +277,7 @@ impl App {
         }
         // Le Dock tel qu'il est, si on a le droit de le lire.
         self.dock = None;
-        if self.settings.walk_on_dock
+        if self.settings.walk_under_dock
             && let Some(frame) = platform::dock_frame()
         {
             self.dock = exact_dock(&mut screens, to_rect(frame));
@@ -449,6 +497,8 @@ impl App {
                 art,
                 scale,
                 position: None,
+                placed: (f64::from(origin.x), f64::from(origin.y)),
+                drawn_offset: (0.0, 0.0),
                 hittest: true,
                 last_render: None,
                 sprite: None,
@@ -465,7 +515,7 @@ impl App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
-                self.settings.walk_on_dock,
+                self.settings.walk_under_dock,
                 self.settings.size_index(),
             ) {
                 Ok(menu) => {
@@ -542,9 +592,37 @@ impl App {
         for id in gone {
             self.flock.remove(id);
         }
-        // Les fenêtres sont refaites à la nouvelle taille.
-        self.windows.clear();
-        self.pointer = Pointer::default();
+        // Chaque fenêtre prend tout de suite la nouvelle taille, sans se fermer.
+        for pw in self.windows.values_mut() {
+            let Some(pet) = self.flock.pets().iter().find(|p| p.id() == pw.pet) else {
+                continue;
+            };
+            let Some(art) = self
+                .library
+                .pets
+                .iter()
+                .find(|e| Arc::ptr_eq(&e.def, pet.def()))
+                .and_then(crate::library::Entry::art)
+            else {
+                continue;
+            };
+            pw.canvas = art.canvas();
+            pw.art = art;
+            let requested =
+                LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));
+            if let Some(size) = pw.window.request_inner_size(requested)
+                && let Some(gpu) = self.gpu.as_ref()
+            {
+                gpu.resize(&mut pw.surface, size.width, size.height);
+            }
+            pw.position = None;
+            pw.last_render = None;
+            pw.sprite = None;
+        }
+        log::info!(
+            "taille des animaux : × {size} ({} à l'écran)",
+            self.flock.pets().len()
+        );
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(menu) = &self.menu {
             menu.set_size(index);
@@ -577,22 +655,22 @@ impl App {
                 let count = self.flock.together(&self.world, &input);
                 log::info!("tous ensemble : {count} animal(aux)");
             }
-            Action::ToggleWalkOnDock => {
-                self.settings.walk_on_dock = !self.settings.walk_on_dock;
+            Action::ToggleWalkUnderDock => {
+                self.settings.walk_under_dock = !self.settings.walk_under_dock;
                 if let Some(paths) = &self.paths {
                     self.settings.save(&paths.settings);
                 }
                 // Lire le Dock demande l'autorisation d'Accessibilité : macOS
                 // propose de l'accorder si Mouflon ne l'a pas encore.
-                if self.settings.walk_on_dock && !platform::request_accessibility() {
+                if self.settings.walk_under_dock && !platform::request_accessibility() {
                     log::info!(
-                        "Marcher sur le Dock : en attente de l'autorisation d'Accessibilité"
+                        "Marcher sous le Dock : en attente de l'autorisation d'Accessibilité"
                     );
                 }
                 self.dock_logged = false;
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 if let Some(menu) = &self.menu {
-                    menu.set_walk_on_dock(self.settings.walk_on_dock);
+                    menu.set_walk_under_dock(self.settings.walk_under_dock);
                 }
                 self.refresh_screens(event_loop);
                 self.refresh_windows(Instant::now());
@@ -638,6 +716,15 @@ impl App {
                     }
                 }
             }
+            Action::DockInfo =>
+            {
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                if let Some(menu) = &self.menu {
+                    let t = crate::i18n::texts();
+                    menu.show_note(&t.walk_under_dock, &t.dock_info_text);
+                }
+            }
+            Action::About => show_about(),
             Action::Quit => event_loop.exit(),
         }
     }
@@ -725,7 +812,12 @@ impl App {
             if moved {
                 pw.window.set_outer_position(LogicalPosition::new(ox, oy));
                 pw.position = Some((ox, oy));
+                pw.placed = placed_at(&pw.window, scale).unwrap_or((ox, oy));
             }
+            // L'animal est dessiné là où il est, même si sa fenêtre n'a pas pu
+            // monter jusque-là : il reste sous le curseur, et ce qui dépasse
+            // de la fenêtre passe derrière la barre des menus (et l'encoche).
+            let offset = (pw.placed.0 - ox, pw.placed.1 - oy);
             // Les personnages secondaires laissent passer les clics.
             let hit = pointer.dragging == Some(pw.pet)
                 || (!pet.is_child() && cursor.is_none_or(|c| hit_test(c, &view, &pw.art)));
@@ -738,7 +830,7 @@ impl App {
             }
             let sprite = SpriteKey::of(&pw.art, &view);
             let needed = if sprite.is_some() {
-                pw.last_render.is_none() || sprite != pw.sprite
+                pw.last_render.is_none() || sprite != pw.sprite || offset != pw.drawn_offset
             } else {
                 let interval = match pet.activity() {
                     Activity::Moving => moving_interval,
@@ -757,13 +849,14 @@ impl App {
             let size = pw.window.inner_size();
             list.clear(size.width, size.height);
             let frame = Frame {
-                origin: Vec2::new(ox as f32, oy as f32),
+                origin: Vec2::new(pw.placed.0 as f32, pw.placed.1 as f32),
                 scale,
             };
             paint_pet(&pw.art, &view, &frame, style, list);
             if gpu.render(&mut pw.surface, list, &pw.window) {
                 pw.last_render = Some(now);
                 pw.sprite = sprite;
+                pw.drawn_offset = offset;
             }
         }
 
@@ -804,7 +897,7 @@ impl ApplicationHandler<UserEvent> for App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
-                self.settings.walk_on_dock,
+                self.settings.walk_under_dock,
                 self.settings.size_index(),
             ) {
                 Ok(menu) => self.menu = Some(menu),
@@ -871,8 +964,10 @@ impl ApplicationHandler<UserEvent> for App {
             },
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(pw) = self.windows.get(&window_id)
-                    && let Some((ox, oy)) = pw.position
+                    && pw.position.is_some()
                 {
+                    // Par rapport à l'endroit où la fenêtre est vraiment.
+                    let (ox, oy) = pw.placed;
                     let local = position.to_logical::<f64>(pw.scale);
                     self.pointer.cursor =
                         Some(Vec2::new((ox + local.x) as f32, (oy + local.y) as f32));

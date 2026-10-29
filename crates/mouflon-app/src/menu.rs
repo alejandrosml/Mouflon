@@ -15,19 +15,21 @@ pub enum Action {
     TogglePause,
     ToggleFrontmostOnly,
     ToggleCollisions,
-    /// Marcher sur le Dock tel qu'il est (autorisation d'Accessibilité).
-    ToggleWalkOnDock,
+    /// Marcher sous le Dock (il faut l'autorisation d'Accessibilité).
+    ToggleWalkUnderDock,
+    /// Explique pourquoi « Marcher sous le Dock » demande l'Accessibilité.
+    DockInfo,
     /// Taille des animaux : rang dans [`crate::settings::SIZES`].
     SetSize(usize),
     OpenPetsFolder,
+    About,
     Quit,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native {
     use tray_icon::menu::{
-        AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem,
-        Submenu,
+        CheckMenuItem, IconMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     };
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -43,9 +45,11 @@ mod native {
         pause: CheckMenuItem,
         frontmost: CheckMenuItem,
         collisions: CheckMenuItem,
-        walk_on_dock: CheckMenuItem,
+        walk_under_dock: CheckMenuItem,
+        dock_info: MenuId,
         sizes: Vec<CheckMenuItem>,
         open_folder: MenuId,
+        about: MenuId,
         quit: MenuId,
     }
 
@@ -60,7 +64,7 @@ mod native {
             library: &Library,
             frontmost_only: bool,
             collisions_on: bool,
-            walk_on_dock_on: bool,
+            walk_under_dock_on: bool,
             size: usize,
         ) -> Result<Self, Box<dyn std::error::Error>> {
             let t = crate::i18n::texts();
@@ -90,8 +94,12 @@ mod native {
             menu.append(&frontmost)?;
             let collisions = CheckMenuItem::new(&t.collisions, true, collisions_on, None);
             menu.append(&collisions)?;
-            let walk_on_dock = CheckMenuItem::new(&t.walk_on_dock, true, walk_on_dock_on, None);
-            menu.append(&walk_on_dock)?;
+            let walk_under_dock =
+                CheckMenuItem::new(&t.walk_under_dock, true, walk_under_dock_on, None);
+            menu.append(&walk_under_dock)?;
+            // Juste dessous, « ⓘ » : pourquoi il faut l'autorisation d'Accessibilité.
+            let dock_info = info_item(&t.dock_info);
+            menu.append(&dock_info)?;
             let size_menu = Submenu::new(&t.size, true);
             let mut sizes = Vec::new();
             for (i, label) in [&t.size_small, &t.size_normal, &t.size_large, &t.size_huge]
@@ -107,17 +115,8 @@ mod native {
             menu.append(&open_folder)?;
             menu.append(&PredefinedMenuItem::separator())?;
 
-            let about = AboutMetadata {
-                name: Some("Mouflon".into()),
-                version: Some(env!("CARGO_PKG_VERSION").into()),
-                authors: Some(vec!["Alejandro San Martin Lamas".into()]),
-                copyright: Some("© 2026 Alejandro San Martin Lamas".into()),
-                license: Some("MIT OR Apache-2.0".into()),
-                comments: Some(t.description.clone()),
-                credits: Some(t.credits.clone()),
-                ..AboutMetadata::default()
-            };
-            menu.append(&PredefinedMenuItem::about(Some(&t.about), Some(about)))?;
+            let about = MenuItem::new(&t.about, true, None);
+            menu.append(&about)?;
             let quit = MenuItem::new(&t.quit, true, None);
             menu.append(&quit)?;
 
@@ -142,9 +141,11 @@ mod native {
                 pause,
                 frontmost,
                 collisions,
-                walk_on_dock,
+                walk_under_dock,
+                dock_info: dock_info.id().clone(),
                 sizes,
                 open_folder: open_folder.id().clone(),
+                about: about.id().clone(),
                 quit: quit.id().clone(),
             })
         }
@@ -170,10 +171,14 @@ mod native {
                 Some(Action::ToggleFrontmostOnly)
             } else if id == self.collisions.id() {
                 Some(Action::ToggleCollisions)
-            } else if id == self.walk_on_dock.id() {
-                Some(Action::ToggleWalkOnDock)
+            } else if id == self.walk_under_dock.id() {
+                Some(Action::ToggleWalkUnderDock)
+            } else if id == &self.dock_info {
+                Some(Action::DockInfo)
             } else if id == &self.open_folder {
                 Some(Action::OpenPetsFolder)
+            } else if id == &self.about {
+                Some(Action::About)
             } else if id == &self.quit {
                 Some(Action::Quit)
             } else {
@@ -193,8 +198,17 @@ mod native {
             self.collisions.set_checked(value);
         }
 
-        pub fn set_walk_on_dock(&self, value: bool) {
-            self.walk_on_dock.set_checked(value);
+        pub fn set_walk_under_dock(&self, value: bool) {
+            self.walk_under_dock.set_checked(value);
+        }
+
+        /// Montre une courte explication dans une bulle sous l'icône de Mouflon.
+        pub fn show_note(&self, title: &str, text: &str) {
+            #[cfg(target_os = "macos")]
+            let anchor = self._tray.ns_status_item();
+            #[cfg(not(target_os = "macos"))]
+            let anchor: Option<&mouflon_platform::StatusItem> = None;
+            mouflon_platform::show_note(anchor.as_deref(), title, text);
         }
 
         /// Coche la taille choisie, et elle seule.
@@ -203,6 +217,21 @@ mod native {
                 item.set_checked(i == size);
             }
         }
+    }
+
+    /// Article d'information, précédé d'un « ⓘ » que macOS teinte comme le
+    /// texte du menu (image « modèle »).
+    fn info_item(text: &str) -> IconMenuItem {
+        let item = IconMenuItem::new(text, true, None, None);
+        let size = 36;
+        if let Ok(icon) = tray_icon::menu::Icon::from_rgba(crate::icon::info_icon(size), size, size)
+        {
+            #[cfg(target_os = "macos")]
+            item.set_icon_templated(Some(icon));
+            #[cfg(not(target_os = "macos"))]
+            item.set_icon(Some(icon));
+        }
+        item
     }
 }
 
