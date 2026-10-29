@@ -22,6 +22,7 @@ fn main() {
         env_logger::Env::default()
             .default_filter_or("warn,mouflon=info,mouflon_core=info,mouflon_render=info"),
     )
+    .format_timestamp_millis()
     .init();
 
     let paths = settings::Paths::new();

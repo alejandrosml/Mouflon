@@ -595,6 +595,11 @@ impl App {
     /// personnages secondaires des scènes desktopPet) et on ferme celles des partis.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
         let alive: Vec<u32> = self.flock.pets().iter().map(|p| p.id()).collect();
+        if let Some(stats) = &self.stats {
+            for w in self.windows.values().filter(|w| !alive.contains(&w.pet)) {
+                stats.note(format_args!("fenêtre fermée (n° {})", w.pet));
+            }
+        }
         self.windows.retain(|_, w| alive.contains(&w.pet));
         if self.windows.len() == alive.len() {
             return;
@@ -630,6 +635,9 @@ impl App {
     }
 
     fn open_window(&mut self, event_loop: &ActiveEventLoop, id: u32, name: &str, art: Arc<PetArt>) {
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!("fenêtre ouverte pour {name} (n° {id})"));
+        }
         let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
             return;
         };
@@ -782,6 +790,9 @@ impl App {
                     && let Some(data) = sound.clips.get(clip)
                 {
                     platform::play_sound(data, sound.volume * VOLUME);
+                    if let Some(stats) = &self.stats {
+                        stats.note(format_args!("son {} ({})", sound.name, clip + 1));
+                    }
                 }
             }
         }
@@ -1227,6 +1238,12 @@ impl App {
         self.schedule(event_loop, now, settling);
 
         if let Some(stats) = &mut self.stats {
+            stats.follow(
+                self.flock
+                    .pets()
+                    .iter()
+                    .map(|p| (p.id(), p.def().meta.name.as_str(), p.behavior_name())),
+            );
             stats.record(now, shown_at.is_some(), phases);
             if self.trial_end.is_some_and(|end| now >= end) {
                 log::info!("essai terminé : {}", stats.report());

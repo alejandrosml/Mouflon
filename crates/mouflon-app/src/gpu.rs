@@ -7,11 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mouflon_render::DisplayList;
+use mouflon_render::vello::kurbo::Affine;
+use mouflon_render::vello::peniko::{
+    Blob, Color, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
+};
 use mouflon_render::vello::util::RenderContext;
 use mouflon_render::vello::wgpu::{self, util::TextureBlitter, util::TextureBlitterBuilder};
-use mouflon_render::vello::{
-    AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene, peniko::Color,
-};
+use mouflon_render::vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 use winit::window::Window;
 
 #[derive(Debug, thiserror::Error)]
@@ -50,6 +52,11 @@ pub struct Gpu {
     blitter: Option<(wgpu::TextureFormat, TextureBlitter)>,
     scene: Scene,
     timings: Timings,
+    /// Un pixel transparent, ajouté à chaque scène : devant une scène sans
+    /// aucune image (le mannequin, une fenêtre vide), Vello 0.11 détruit son
+    /// atlas d'images sans l'oublier, et les images qu'il croit encore y avoir
+    /// s'afficheraient ensuite vides.
+    keepalive: ImageBrush,
 }
 
 /// Temps passé à dessiner (voir [`Gpu::take_timings`]).
@@ -103,6 +110,13 @@ impl Gpu {
             blitter: None,
             scene: Scene::new(),
             timings: Timings::default(),
+            keepalive: ImageBrush::new(ImageData {
+                data: Blob::from(vec![0u8; 4]),
+                format: ImageFormat::Rgba8,
+                alpha_type: ImageAlphaType::Alpha,
+                width: 1,
+                height: 1,
+            }),
         }
     }
 
@@ -226,6 +240,7 @@ impl Gpu {
         let (_target, target_view) = create_target(&handle.device, width, height);
         self.scene.reset();
         mouflon_render::vello_scene::encode(list, &mut self.scene);
+        self.scene.draw_image(&self.keepalive, Affine::IDENTITY);
         renderer.render_to_texture(
             &handle.device,
             &handle.queue,
@@ -297,6 +312,7 @@ impl Gpu {
         let started = Instant::now();
         self.scene.reset();
         mouflon_render::vello_scene::encode(list, &mut self.scene);
+        self.scene.draw_image(&self.keepalive, Affine::IDENTITY);
         let params = RenderParams {
             base_color: Color::TRANSPARENT,
             width: surface.config.width,

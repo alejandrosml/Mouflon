@@ -2,6 +2,7 @@
 //! Mouflon pour 8 secondes, puis note au journal la régularité des images
 //! avant de quitter (l'intégration continue s'en sert sur Mac).
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
@@ -82,6 +83,8 @@ pub struct FrameStats {
     /// Images données par l'horloge de l'écran (les autres : la minuterie).
     beats: usize,
     last: Option<Instant>,
+    /// Comportement de chaque animal à la dernière image.
+    behaviors: HashMap<u32, String>,
 }
 
 impl Default for FrameStats {
@@ -101,6 +104,24 @@ impl FrameStats {
             slow: Vec::new(),
             beats: 0,
             last: None,
+            behaviors: HashMap::new(),
+        }
+    }
+
+    /// Note au journal ce qui arrive pendant l'essai, avec l'heure depuis
+    /// son début : on retrouve ainsi ce qui accompagne une image lente.
+    pub fn note(&self, what: impl std::fmt::Display) {
+        log::info!("à {:.2} s : {what}", self.begun.elapsed().as_secs_f32());
+    }
+
+    /// Note les animaux qui changent de comportement.
+    pub fn follow<'a>(&mut self, pets: impl Iterator<Item = (u32, &'a str, &'a str)>) {
+        for (id, name, behavior) in pets {
+            if self.behaviors.get(&id).is_some_and(|b| b == behavior) {
+                continue;
+            }
+            self.note(format_args!("{name} n° {id} : {behavior}"));
+            self.behaviors.insert(id, behavior.to_owned());
         }
     }
 

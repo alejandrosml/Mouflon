@@ -68,6 +68,7 @@ jobs:
       # déjà envoyée, reste téléchargeable.
       - name: Essai de lancement
         run: |
+          export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info,vello=debug
           MOUFLON_ESSAI=10 perl -e 'alarm 90; exec @ARGV' \
             dist/Mouflon.app/Contents/MacOS/mouflon 2>&1 | tee essai.log
           grep -q "essai terminé" essai.log
