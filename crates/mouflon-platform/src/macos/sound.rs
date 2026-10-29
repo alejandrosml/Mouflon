@@ -1,10 +1,16 @@
 //! Sons des animaux : NSSound joue les fichiers que macOS sait lire (MP3,
 //! AAC, WAV, AIFF…), directement depuis la mémoire.
+//!
+//! Tout se passe sur un fil à part : préparer un son (le décodeur, la sortie
+//! audio au premier son) prend de quelques millisecondes à une fraction de
+//! seconde, que l'animation ne doit pas attendre.
 
-use std::cell::RefCell;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use objc2::AllocAnyThread;
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2_app_kit::NSSound;
 use objc2_foundation::NSData;
 
@@ -12,24 +18,84 @@ use objc2_foundation::NSData;
 /// (un troupeau qui bêle d'un coup reste supportable).
 const MAX_PLAYING: usize = 6;
 
-thread_local! {
-    /// Sons en cours, gardés en vie jusqu'à la fin de leur lecture.
-    static PLAYING: RefCell<Vec<Retained<NSSound>>> = const { RefCell::new(Vec::new()) };
+/// Un son à jouer : le contenu d'un fichier audio et son volume (de 0 à 1).
+struct Job {
+    data: Arc<[u8]>,
+    volume: f32,
 }
 
-/// Joue un son (contenu d'un fichier audio) au volume donné (de 0 à 1).
-/// Renvoie `false` si macOS ne sait pas le lire, ou si trop de sons jouent déjà.
-pub fn play_sound(data: &[u8], volume: f32) -> bool {
-    play(data, volume.clamp(0.0, 1.0))
+/// Fil des sons, lancé au premier son.
+fn sounds() -> Option<&'static Mutex<Sender<Job>>> {
+    static SOUNDS: OnceLock<Option<Mutex<Sender<Job>>>> = OnceLock::new();
+    SOUNDS
+        .get_or_init(|| {
+            let (sender, receiver) = channel();
+            match std::thread::Builder::new()
+                .name("mouflon-sons".into())
+                .spawn(move || play_all(&receiver))
+            {
+                Ok(_) => Some(Mutex::new(sender)),
+                Err(e) => {
+                    log::error!("impossible de lancer le fil des sons : {e}");
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+/// Joue un son (contenu d'un fichier audio) au volume donné (de 0 à 1), sans
+/// attendre. Un son que macOS ne sait pas lire, ou de trop quand six jouent
+/// déjà, est ignoré.
+pub fn play_sound(data: &Arc<[u8]>, volume: f32) {
+    send(Arc::clone(data), volume.clamp(0.0, 1.0));
 }
 
 /// Met la sortie audio en route en jouant sans volume `sample` (un son des
 /// animaux, pour que son décodeur soit chargé aussi), ou un court silence :
-/// le premier son joué par l'app charge tout le nécessaire (une fraction de
-/// seconde), et ferait sinon sauter l'animation au premier bêlement.
-pub fn warm_up_sounds(sample: Option<&[u8]>) {
-    if !sample.is_some_and(|data| play(data, 0.0)) {
-        let _ = play(&silence(), 0.0);
+/// le premier son joué par l'app charge tout le nécessaire, et le premier
+/// bêlement partirait sinon en retard.
+pub fn warm_up_sounds(sample: Option<&Arc<[u8]>>) {
+    let data = sample.map_or_else(|| Arc::from(silence()), Arc::clone);
+    send(data, 0.0);
+}
+
+fn send(data: Arc<[u8]>, volume: f32) {
+    if let Some(sounds) = sounds()
+        && let Ok(sender) = sounds.lock()
+    {
+        let _ = sender.send(Job { data, volume });
+    }
+}
+
+/// Le fil des sons : joue ce qu'on lui envoie, et garde chaque son en vie
+/// jusqu'à la fin de sa lecture.
+fn play_all(jobs: &Receiver<Job>) {
+    let mut playing: Vec<Retained<NSSound>> = Vec::new();
+    loop {
+        let job = match jobs.recv_timeout(Duration::from_millis(500)) {
+            Ok(job) => Some(job),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
+        autoreleasepool(|_| {
+            playing.retain(|sound| sound.isPlaying());
+            let Some(job) = job else {
+                return;
+            };
+            if playing.len() >= MAX_PLAYING {
+                return;
+            }
+            let data = NSData::with_bytes(&job.data);
+            let Some(sound) = NSSound::initWithData(NSSound::alloc(), &data) else {
+                log::warn!("son illisible ({} octets)", job.data.len());
+                return;
+            };
+            sound.setVolume(job.volume);
+            if sound.play() {
+                playing.push(sound);
+            }
+        });
     }
 }
 
@@ -53,24 +119,4 @@ fn silence() -> Vec<u8> {
     wav.extend_from_slice(&data.to_le_bytes());
     wav.resize(44 + data as usize, 0);
     wav
-}
-
-fn play(data: &[u8], volume: f32) -> bool {
-    PLAYING.with(|playing| {
-        let mut playing = playing.borrow_mut();
-        playing.retain(|sound| sound.isPlaying());
-        if playing.len() >= MAX_PLAYING {
-            return false;
-        }
-        let data = NSData::with_bytes(data);
-        let Some(sound) = NSSound::initWithData(NSSound::alloc(), &data) else {
-            return false;
-        };
-        sound.setVolume(volume);
-        if !sound.play() {
-            return false;
-        }
-        playing.push(sound);
-        true
-    })
 }

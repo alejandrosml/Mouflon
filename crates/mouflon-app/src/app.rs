@@ -775,7 +775,7 @@ impl App {
             .get(index)
             .and_then(|entry| entry.def.sounds.first())
             .and_then(|sound| sound.clips.first());
-        platform::warm_up_sounds(sample.map(|clip| clip.as_ref()));
+        platform::warm_up_sounds(sample);
     }
 
     /// Joue les sons que les animaux viennent de faire (s'ils ont la parole),

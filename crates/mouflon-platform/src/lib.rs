@@ -243,11 +243,9 @@ mod fallback {
     }
 
     /// Pas encore de sons sur ce système.
-    pub fn play_sound(_data: &[u8], _volume: f32) -> bool {
-        false
-    }
+    pub fn play_sound(_data: &std::sync::Arc<[u8]>, _volume: f32) {}
 
-    pub fn warm_up_sounds(_sample: Option<&[u8]>) {}
+    pub fn warm_up_sounds(_sample: Option<&std::sync::Arc<[u8]>>) {}
 
     /// Ouvre un dossier dans le gestionnaire de fichiers du système.
     pub fn open_folder(path: &std::path::Path) -> bool {
