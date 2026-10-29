@@ -12,6 +12,8 @@ mod icon;
 mod library;
 mod menu;
 mod settings;
+mod stats;
+mod watch;
 
 use winit::event_loop::EventLoop;
 

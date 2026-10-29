@@ -76,6 +76,15 @@ envie = [
     { to = "baille", weight = 4, when = "night" },
 ]
 
+# Sons : bêlements d'agneau, la clochette, le broutage et un petit bruit
+# d'atterrissage (enregistrements libres de droits, CC0 et domaine public :
+# voir CREDITS.md). Chaque son a plusieurs prises, tirées au hasard.
+[sounds]
+bele = { files = ["sons/agneau-1.mp3", "sons/agneau-2.mp3", "sons/agneau-3.mp3", "sons/agneau-4.mp3", "sons/agneau-5.mp3"], volume = 0.8 }
+clochette = { files = ["sons/clochette-1.mp3", "sons/clochette-2.mp3", "sons/clochette-3.mp3", "sons/clochette-4.mp3"], volume = 0.55 }
+broute = { files = ["sons/broute-1.mp3", "sons/broute-2.mp3"], volume = 0.6 }
+pose = { files = ["sons/pose-1.mp3", "sons/pose-2.mp3"], volume = 0.5 }
+
 # ------------------------------------------------------------------ au repos
 
 [[behavior]]
@@ -98,6 +107,8 @@ next = "repos"
 
 [[behavior]]
 name = "marche"
+# De temps en temps, la clochette tinte en marchant.
+sound = { name = "clochette", frame = 0, chance = 0.04 }
 fps = 10
 loops = [3, 6]
 move = [5.5, 0]
@@ -107,6 +118,8 @@ next = "envie"
 
 [[behavior]]
 name = "course"
+# En courant, la clochette tinte souvent (pattes en l'air, image 3).
+sound = { name = "clochette", frame = 3, chance = 0.2 }
 fps = 14
 loops = [6, 10]
 move = [13, 0]
@@ -119,6 +132,7 @@ next = "envie"
 # Il continue au bout de la fenêtre et saute dans le vide.
 [[behavior]]
 name = "aventure"
+sound = { name = "clochette", frame = 0, chance = 0.04 }
 strip = "marche"
 fps = 10
 loops = [1, 2]
@@ -129,6 +143,7 @@ next = "envie"
 
 [[behavior]]
 name = "course_vide"
+sound = { name = "clochette", frame = 3, chance = 0.2 }
 strip = "course"
 fps = 14
 loops = 2
@@ -146,12 +161,14 @@ next = [{ to = "marche", weight = 3 }, { to = "repos", weight = 1 }]
 # Lancé contre le bord de l'écran : il recule, sonné, puis fait demi-tour.
 [[behavior]]
 name = "se_cogne"
+sound = [{ name = "clochette", frame = 1 }, { name = "bele", chance = 0.3 }]
 fps = 12
 move = [[0, 0], [0, 0], [-5, 0], [-7, 0], [-4, 0], [-1.5, 0], [0, 0], [0, 0], [0, 0]]
 next = "demi_tour"
 
 [[behavior]]
 name = "saute"
+sound = [{ name = "clochette", frame = 3, chance = 0.8 }, { name = "pose", frame = 9, chance = 0.5 }]
 fps = 12
 next = "envie"
 
@@ -164,6 +181,7 @@ next = "brouter"
 
 [[behavior]]
 name = "brouter"
+sound = { name = "broute", frame = 0, chance = 0.7 }
 fps = 8
 loops = [3, 5]
 next = "brouter_fin"
@@ -175,11 +193,13 @@ next = "repos"
 
 [[behavior]]
 name = "s_ebroue"
+sound = [{ name = "clochette", frame = 1 }, { name = "clochette", frame = 4, chance = 0.7 }]
 fps = 14
 next = "repos_face"
 
 [[behavior]]
 name = "bele"
+sound = "bele"
 fps = 10
 next = "repos"
 
@@ -188,12 +208,14 @@ next = "repos"
 # Il bêle pour saluer l'autre, puis repart de son côté.
 [[behavior]]
 name = "salue"
+sound = "bele"
 strip = "bele"
 fps = 10
 next = "demi_tour"
 
 [[behavior]]
 name = "fete"
+sound = [{ name = "clochette", frame = 1, chance = 0.6 }, { name = "bele", chance = 0.3 }]
 strip = "content"
 fps = 10
 loops = 2
@@ -202,18 +224,21 @@ next = "demi_tour"
 # Au revoir : il bêle une dernière fois, puis s'efface.
 [[behavior]]
 name = "au_revoir"
+sound = "bele"
 strip = "bele"
 fps = 10
 next = "repos"
 
 [[behavior]]
 name = "content"
+sound = { name = "clochette", frame = 1, chance = 0.5 }
 fps = 10
 loops = 3
 next = "envie"
 
 [[behavior]]
 name = "surpris"
+sound = { name = "bele", chance = 0.4 }
 fps = 10
 next = "regarde"
 
@@ -290,17 +315,21 @@ on_land = "atterrit_sonne"
 
 [[behavior]]
 name = "atterrit"
+sound = { name = "pose", chance = 0.8 }
 fps = 10
 next = "repos"
 
 [[behavior]]
 name = "atterrit_sonne"
+sound = [{ name = "pose" }, { name = "bele", chance = 0.5 }]
 strip = "atterrit"
 fps = 10
 next = "etourdi"
 
 [[behavior]]
 name = "tenu"
+# Attrapé, il bêle souvent.
+sound = { name = "bele", chance = 0.5 }
 motion = "held"
 fps = 10
 duration = "forever"

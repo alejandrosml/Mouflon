@@ -39,6 +39,11 @@ fn lainou_loads_and_paints_both_ways() {
     eprintln!("{:.1} Mo d'images en mémoire", bytes as f64 / 1e6);
     assert!(bytes < 56_000_000, "{bytes} octets");
     assert!(frames.frames.iter().all(|f| f.bitmap.width <= 192));
+    // Ses sons : bêlements d'agneau, clochette, broutage, atterrissage.
+    let names: Vec<&str> = def.sounds.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["bele", "broute", "clochette", "pose"]);
+    let course = &def.behaviors[def.behavior_index("course").expect("course")];
+    assert_eq!(def.sounds[course.sounds[0].sound].name, "clochette");
 
     let world = world();
     let mut pet = Pet::spawn(0, Arc::clone(&def), 5, &world, Some(600.0));

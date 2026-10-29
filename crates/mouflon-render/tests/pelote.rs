@@ -27,6 +27,12 @@ fn pelote_loads_at_80_points_and_paints_both_ways() {
     let (first, count) = sheet.inbetween(1, 0).expect("marche adoucie");
     assert_eq!(count, 3);
     assert!(first >= 120 && (first + count) as usize <= frames.frames.len());
+    // Ses sons : bêlements, clochette, broutage, bain, atterrissage ; le
+    // trèfle se broute en musique.
+    assert_eq!(def.sounds.len(), 5);
+    assert!(def.sounds.iter().all(|s| !s.clips.is_empty()));
+    let eat = &def.behaviors[def.behavior_index("eat").expect("eat")];
+    assert_eq!(def.sounds[eat.sounds[0].sound].name, "broute");
 
     let world = World::new(vec![Screen {
         frame: Rect::new(0.0, 0.0, 1280.0, 800.0),

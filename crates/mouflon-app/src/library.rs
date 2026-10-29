@@ -45,6 +45,12 @@ impl Entry {
         self.art = Arc::new(OnceLock::new());
     }
 
+    /// Le dessin de l'animal a-t-il déjà été préparé (ou trouvé illisible) ?
+    #[must_use]
+    pub fn art_ready(&self) -> bool {
+        self.art.get().is_some()
+    }
+
     /// Dessin de l'animal, préparé à la première demande ; `None` s'il est
     /// illisible (l'erreur est notée au journal une fois).
     pub fn art(&self) -> Option<Arc<PetArt>> {
@@ -86,9 +92,9 @@ pub struct Library {
 }
 
 /// Noms et dates de modification du dossier des animaux et de ses sous-dossiers.
-type Stamp = Vec<(PathBuf, Option<SystemTime>)>;
+pub type Stamp = Vec<(PathBuf, Option<SystemTime>)>;
 
-fn stamp(dir: &Path) -> Stamp {
+pub fn stamp(dir: &Path) -> Stamp {
     let mut out = Vec::new();
     let mut visit = |path: &Path| {
         out.push((
@@ -246,12 +252,17 @@ impl Library {
         }
     }
 
-    /// Le dossier des animaux a-t-il changé depuis le dernier chargement ?
+    /// Dossier des animaux de l'utilisateur (surveillé pendant que l'app tourne).
     #[must_use]
-    pub fn changed(&self) -> bool {
-        self.dir
-            .as_deref()
-            .is_some_and(|dir| stamp(dir) != self.stamp)
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+
+    /// Le dossier des animaux a-t-il changé depuis le dernier chargement,
+    /// d'après ce relevé ?
+    #[must_use]
+    pub fn changed_since(&self, stamp: &Stamp) -> bool {
+        self.dir.is_some() && *stamp != self.stamp
     }
 
     fn add(&mut self, def: PetDef, origin: &str) {
@@ -397,15 +408,22 @@ mod tests {
 
         let mut library = Library::load(Some(&pets), 1.0);
         assert_eq!(library.pets.len(), 1);
-        assert!(!library.changed());
+        assert_eq!(library.dir(), Some(pets.as_path()));
+        assert!(!library.changed_since(&stamp(&pets)));
         let id = library.install(&source.join("pet.toml")).unwrap();
         assert_eq!(id, "robot");
         assert!(pets.join("robot/mannequin.svg").is_file(), "le dessin suit");
         assert_eq!(library.pets.len(), 2);
-        assert!(!library.changed());
+        assert!(
+            !library.changed_since(&stamp(&pets)),
+            "un animal installé ne recharge pas tout"
+        );
 
         std::fs::create_dir_all(pets.join("vide")).unwrap();
-        assert!(library.changed(), "un nouveau dossier est remarqué");
+        assert!(
+            library.changed_since(&stamp(&pets)),
+            "un nouveau dossier est remarqué"
+        );
 
         // Plus grand : le dessin et le corps suivent, l'original ne change pas.
         let height = |library: &Library| library.pets[0].art().unwrap().height;

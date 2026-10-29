@@ -14,24 +14,26 @@ screen, stroll along your windows and ride with them when you move them, climb
 the edges of the screen, graze, bleat, doze off — and let you catch them and
 throw them across the desktop.
 
-- **Light**: a native menu bar app, drawn by the GPU. The frame rate follows
-  what happens on screen (the display's rate in motion, 30 fps at rest, 20 fps
-  asleep), a sprite is redrawn only when its image changes, and the window list
-  is read often only while a window carrying a pet moves.
-- **Beautiful**: continuous 120 Hz physics, interpolated to the display
-  (ProMotion included), sub-pixel motion, sharp pixel-exact images at rest,
-  soft shadows, dust on landing.
+- **Light**: a native menu bar app, drawn by the GPU. Images follow the
+  display's own clock (its full rate in motion, 30 fps at rest, 20 fps
+  asleep), a sprite is redrawn only when its image changes, and the window
+  list is read on a separate thread (often only while a window carrying a pet
+  moves), so it never holds up an image.
+- **Beautiful**: continuous 120 Hz physics, timed to the moment each image
+  reaches the display (ProMotion included), sub-pixel motion, in-between
+  images for smoother animations, sharp pixel-exact images at rest, soft
+  shadows, dust on landing.
 - **Compatible with desktopPet**: Mouflon reads the pets of
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 and the
   community's pets) as they are, with all their scenes: climbing the screen
   edges, walking on the ceiling, going down windows, secondary characters,
   pets that meet and do things together, window sides that block the way.
-- **And much more**: high-definition sheets for desktopPet pets, a native
-  format with images drawn for both directions, pets that greet each other or
-  tumble in collision mode, *All Together*, a goodbye before leaving, four
-  sizes, pets you can catch without leaving the app you are working in, pets
-  that walk on the Dock (or under it) and on floating panels such as the
-  Keyboard Viewer,
+- **And much more**: sounds (bleats, a little bell, grazing; desktopPet pets'
+  own sounds too), high-definition sheets for desktopPet pets, a native format
+  with images drawn for both directions, pets that greet each other or tumble
+  in collision mode, *All Together*, a goodbye before leaving, four sizes, pets
+  you can catch without leaving the app you are working in, pets that walk on
+  the Dock (or under it) and on floating panels such as the Keyboard Viewer,
   install by drag and drop, a menu in the language of macOS (English, French,
   Spanish, German, Italian, Dutch, Portuguese, Russian, Japanese, Korean,
   Chinese).
@@ -78,6 +80,15 @@ the others, and it is the one that appears.
 
 ```sh
 cargo run --release -- path/to/esheep64
+```
+
+To check that the animation is smooth, `MOUFLON_ESSAI=10` runs Mouflon for ten
+seconds, then logs how regular its images were (the gaps between them, and the
+time spent preparing each one) before quitting. The CI does it on every Mac
+build.
+
+```sh
+MOUFLON_ESSAI=10 cargo run --release
 ```
 
 The `essais/` and `animaux/` folders are ignored by git: keep test pets and
@@ -197,7 +208,6 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 ### Roadmap
 
-- Sounds (desktopPet's included).
 - Window tracking through accessibility notifications.
 - A settings window.
 - Windows and Linux (X11; Wayland in a reduced mode).
@@ -219,14 +229,16 @@ l'écran, se promènent sur tes fenêtres et voyagent avec elles quand tu les
 déplaces, escaladent les bords de l'écran, broutent, bêlent, s'endorment — et
 se laissent attraper et lancer à travers le bureau.
 
-- **Léger** : une app native de la barre des menus, dessinée par le GPU. La
-  cadence d'affichage suit ce qui se passe à l'écran (celle de l'écran en
+- **Léger** : une app native de la barre des menus, dessinée par le GPU. Les
+  images suivent l'horloge de l'écran lui-même (sa pleine cadence en
   mouvement, 30 i/s au repos, 20 i/s endormi), une image n'est redessinée que
-  quand elle change, et la liste des fenêtres n'est relevée souvent que
-  lorsqu'une fenêtre portant un animal bouge.
-- **Beau** : une physique continue à 120 Hz, interpolée à la fréquence de
-  l'écran (ProMotion compris), des mouvements au sous-pixel près, des images
-  nettes au pixel près au repos, des ombres douces, de la poussière à
+  quand elle change, et la liste des fenêtres est relevée sur un fil à part
+  (souvent seulement lorsqu'une fenêtre portant un animal bouge), sans jamais
+  retenir une image.
+- **Beau** : une physique continue à 120 Hz, calée sur l'instant où chaque
+  image arrive à l'écran (ProMotion compris), des mouvements au sous-pixel
+  près, des images intermédiaires pour des animations plus fluides, des
+  images nettes au pixel près au repos, des ombres douces, de la poussière à
   l'atterrissage.
 - **Compatible desktopPet** : Mouflon lit tels quels les animaux de
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 et ceux
@@ -234,15 +246,16 @@ se laissent attraper et lancer à travers le bureau.
   marche au plafond, descente des fenêtres, personnages secondaires, animaux
   qui se rencontrent et font des choses ensemble, côtés des fenêtres qui
   barrent le chemin.
-- **Et bien plus** : des planches haute définition pour les animaux desktopPet,
-  un format natif aux images dessinées dans les deux sens, des animaux qui se
-  saluent, ou qui culbutent en mode collisions, « Tous ensemble », un au revoir
-  avant de partir, quatre tailles, des animaux qu'on attrape sans quitter
-  l'app où l'on travaille, qui marchent sur le Dock (ou dessous) et sur les
-  panneaux flottants comme le visualiseur de clavier, l'installation par
-  glisser-déposer, un menu dans la langue de macOS (anglais, français,
-  espagnol, allemand, italien, néerlandais, portugais, russe, japonais, coréen,
-  chinois).
+- **Et bien plus** : des sons (bêlements, clochette, broutage ; ceux des
+  animaux desktopPet aussi), des planches haute définition pour les animaux
+  desktopPet, un format natif aux images dessinées dans les deux sens, des
+  animaux qui se saluent, ou qui culbutent en mode collisions,
+  « Tous ensemble », un au revoir avant de partir, quatre tailles, des animaux
+  qu'on attrape sans quitter l'app où l'on travaille, qui marchent sur le Dock
+  (ou dessous) et sur les panneaux flottants comme le visualiseur de clavier,
+  l'installation par glisser-déposer, un menu dans la langue de macOS (anglais,
+  français, espagnol, allemand, italien, néerlandais, portugais, russe,
+  japonais, coréen, chinois).
 - **Écrit entièrement en Rust** : du code `unsafe` seulement à la frontière
   avec macOS, dans un seul crate, chaque bloc justifié.
 
@@ -288,6 +301,15 @@ argument : il est chargé en plus des autres, et c'est lui qui apparaît.
 
 ```sh
 cargo run --release -- chemin/vers/esheep64
+```
+
+Pour vérifier que l'animation est fluide, `MOUFLON_ESSAI=10` lance Mouflon pour
+dix secondes, puis note au journal la régularité de ses images (les écarts
+entre elles et le temps passé à préparer chacune) avant de quitter.
+L'intégration continue le fait à chaque construction pour Mac.
+
+```sh
+MOUFLON_ESSAI=10 cargo run --release
 ```
 
 Les dossiers `essais/` et `animaux/` sont ignorés par git : on y garde les
@@ -410,7 +432,6 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 
 ### Feuille de route
 
-- Sons (ceux de desktopPet compris).
 - Suivi des fenêtres par notifications d'accessibilité.
 - Fenêtre de réglages.
 - Windows et Linux (X11 ; Wayland en mode dégradé).

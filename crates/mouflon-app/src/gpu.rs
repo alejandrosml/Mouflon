@@ -138,10 +138,23 @@ impl Gpu {
         };
         surface.configure(&handle.device, &config);
         let (target, target_view) = create_target(&handle.device, config.width, config.height);
+        self.prepare(dev_id, format)?;
+        Ok(PetSurface {
+            surface,
+            config,
+            dev_id,
+            _target: target,
+            target_view,
+        })
+    }
 
+    /// Programmes de dessin : ceux de Vello (une fois), et la recopie vers
+    /// des fenêtres au format `format`.
+    fn prepare(&mut self, dev_id: usize, format: wgpu::TextureFormat) -> Result<(), GpuError> {
+        let device = &self.context.devices[dev_id].device;
         if self.renderer.is_none() {
             let renderer = Renderer::new(
-                &handle.device,
+                device,
                 RendererOptions {
                     use_cpu: false,
                     antialiasing_support: AaSupport::area_only(),
@@ -165,18 +178,73 @@ impl Gpu {
                     operation: wgpu::BlendOperation::Add,
                 },
             };
-            let blitter = TextureBlitterBuilder::new(&handle.device, format)
+            let blitter = TextureBlitterBuilder::new(device, format)
                 .blend_state(premultiply)
                 .build();
             self.blitter = Some((format, blitter));
         }
-        Ok(PetSurface {
-            surface,
-            config,
-            dev_id,
-            _target: target,
-            target_view,
-        })
+        Ok(())
+    }
+
+    /// Met le GPU en route avant d'ouvrir la moindre fenêtre : appareil,
+    /// programmes de Vello, puis une image d'essai (les dessins des animaux
+    /// du lancement) faite hors écran jusqu'au bout. La première chute ne
+    /// paie plus ces mises en route.
+    pub fn warm_up(&mut self, list: &DisplayList) -> Result<(), GpuError> {
+        let dev_id = pollster::block_on(self.context.device(None)).ok_or(GpuError::NoDevice)?;
+        // Le format des fenêtres déjà ouvertes, sinon celui des fenêtres sur Mac.
+        let format = self
+            .blitter
+            .as_ref()
+            .map_or(wgpu::TextureFormat::Bgra8Unorm, |(format, _)| *format);
+        self.prepare(dev_id, format)?;
+        let (Some(renderer), Some((_, blitter))) = (self.renderer.as_mut(), self.blitter.as_ref())
+        else {
+            return Ok(());
+        };
+        let handle = &self.context.devices[dev_id];
+        let (width, height) = (list.width.max(1), list.height.max(1));
+        let (_target, target_view) = create_target(&handle.device, width, height);
+        self.scene.reset();
+        mouflon_render::vello_scene::encode(list, &mut self.scene);
+        renderer.render_to_texture(
+            &handle.device,
+            &handle.queue,
+            &self.scene,
+            &target_view,
+            &RenderParams {
+                base_color: Color::TRANSPARENT,
+                width,
+                height,
+                antialiasing_method: AaConfig::Area,
+            },
+        )?;
+        let window = handle.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mouflon-essai"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            view_formats: &[],
+        });
+        let view = window.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = handle
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("mouflon-essai"),
+            });
+        blitter.copy(&handle.device, &mut encoder, &target_view, &view);
+        handle.queue.submit([encoder.finish()]);
+        if let Err(e) = handle.device.poll(wgpu::PollType::wait_indefinitely()) {
+            log::warn!("mise en route du GPU : {e}");
+        }
+        Ok(())
     }
 
     pub fn resize(&self, surface: &mut PetSurface, width: u32, height: u32) {

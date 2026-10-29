@@ -45,6 +45,19 @@ The rights in the characters belong to their respective owners.
 - **Poete**, the mascot of Mouflon, is not part of this repository: it lives in
   its own repository, with its own notice.
 
+### Sounds
+
+The sounds of Lainou and Pelote are cut from recordings given to the public
+domain (none requires credit; thanks to their authors all the same):
+
+- **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>): sheep
+  (#2343 to #2346), goat kids that lend their voice to Lainou the lamb (#1377
+  to #1379), a small goat bell (#0010), horses grazing and chewing hay (#0990,
+  #0497), jumps on grass (#1839, #1840), water stirred in a bathtub (#0192).
+- **OpenGameArt**: a lamb bleat from the *Baby Animals Sounds Pack*
+  (Technopeasant, CC0 1.0, <https://opengameart.org/content/baby-animals-sounds-pack>),
+  itself cut from recordings released under CC0 on Freesound.
+
 ### Libraries
 
 Vello, wgpu, kurbo and peniko (Linebender), winit, tray-icon and muda (Tauri),
@@ -96,6 +109,20 @@ Les droits sur les personnages appartiennent à leurs auteurs respectifs.
   `pets/pelote/NOTICE_desktopPet_MIT.txt`). L'icône de l'app est la tête de Pelote.
 - **Poete**, la mascotte de Mouflon, ne fait pas partie de ce dépôt : il vit
   dans son propre dépôt, avec sa propre notice.
+
+### Sons
+
+Les sons de Lainou et de Pelote sont découpés dans des enregistrements versés
+au domaine public (aucun n'exige de mention ; merci quand même à leurs auteurs) :
+
+- **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>) : des
+  moutons (n° 2343 à 2346), des chevreaux qui prêtent leur voix à Lainou
+  l'agneau (n° 1377 à 1379), une petite cloche de chèvre (n° 0010), des chevaux
+  qui broutent et mâchent du foin (n° 0990, 0497), des sauts dans l'herbe
+  (n° 1839, 1840), de l'eau remuée dans une baignoire (n° 0192).
+- **OpenGameArt** : un bêlement d'agneau du *Baby Animals Sounds Pack*
+  (Technopeasant, CC0 1.0, <https://opengameart.org/content/baby-animals-sounds-pack>),
+  lui-même découpé dans des enregistrements publiés sous CC0 sur Freesound.
 
 ### Bibliothèques
 

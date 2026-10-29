@@ -1,9 +1,11 @@
 //! Implémentation macOS.
 
+mod clock;
 mod sound;
 mod ui;
 
-pub use sound::play_sound;
+pub use clock::FrameClock;
+pub use sound::{play_sound, warm_up_sounds};
 pub use ui::{close_note, show_about, show_note};
 
 use std::ptr::NonNull;
@@ -182,6 +184,28 @@ pub fn cursor_position() -> Option<(f64, f64)> {
     let primary = primary_height(mtm)?;
     let p = NSEvent::mouseLocation();
     Some((p.x, primary - p.y))
+}
+
+/// Images par seconde que l'écran d'une fenêtre sait afficher, au plus
+/// (120 sur un écran ProMotion). `None` si on ne sait pas.
+#[must_use]
+pub fn window_max_fps(window: &impl HasWindowHandle) -> Option<f64> {
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        return None;
+    };
+    MainThreadMarker::new()?;
+    // `maximumFramesPerSecond` date de macOS 12.
+    if !objc2::available!(macos = 12.0) {
+        return None;
+    }
+    // SAFETY: winit garantit que `ns_view` pointe vers une NSView vivante tant
+    // que la fenêtre existe ; on est sur le fil principal (vérifié ci-dessus)
+    // et on ne garde qu'une référence comptée pendant l'appel.
+    let view: Retained<NSView> =
+        unsafe { Retained::retain(appkit.ns_view.as_ptr().cast::<NSView>()) }?;
+    let fps = view.window()?.screen()?.maximumFramesPerSecond();
+    (fps > 0).then_some(fps as f64)
 }
 
 /// Règle une fenêtre d'animal : visible sur tous les Spaces et par-dessus les

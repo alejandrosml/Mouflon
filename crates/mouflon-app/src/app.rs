@@ -1,7 +1,9 @@
 //! Boucle de l'application : simulation, fenêtres des animaux, entrées et menu.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Timelike;
@@ -15,25 +17,38 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
+use winit::monitor::MonitorHandle;
 use winit::window::{Theme, Window, WindowId, WindowLevel};
 
 use crate::gpu::{Gpu, PetSurface};
-use crate::library::Library;
+use crate::library::{Entry, Library};
 use crate::menu::Action;
 use crate::settings::{Paths, Settings};
+use crate::watch::{Snapshot, Watcher};
 
-/// Intervalle de relevé des fenêtres quand rien ne bouge, et quand une
-/// fenêtre portant un animal est en train d'être déplacée.
-const WINDOW_POLL_CALM: Duration = Duration::from_millis(250);
-const WINDOW_POLL_FAST: Duration = Duration::from_millis(33);
+/// Relevé des écrans (le reste se relève sur un fil à part).
 const SCREEN_POLL: Duration = Duration::from_secs(2);
+/// Au lancement, les fenêtres des animaux restent vides un court instant :
+/// le temps que macOS les affiche et que tout soit en route avant que le
+/// premier animal ne tombe.
+const SETTLE: Duration = Duration::from_millis(300);
+/// Sans battement de l'horloge de l'écran depuis ce délai (écran en veille,
+/// débranché…), la minuterie prend le relais ; au-delà du second, l'écran
+/// dort sans doute : on ralentit, et l'horloge est recréée de temps en temps.
+const CLOCK_SILENT: Duration = Duration::from_millis(150);
+const CLOCK_ASLEEP: Duration = Duration::from_secs(1);
+/// Cadences quand les animaux se reposent ou dorment (images par seconde).
+const IDLE_FPS: f64 = 30.0;
+const ASLEEP_FPS: f64 = 20.0;
 
 #[derive(Debug)]
 pub enum UserEvent {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     Menu(crate::menu::MenuEvent),
-    #[allow(dead_code)]
-    Wake,
+    /// Battement de l'horloge de l'écran (voir `App::beat`).
+    Frame,
+    /// Le dessin de cet animal (identifiant) est prêt.
+    ArtReady(String),
 }
 
 struct PetWindow {
@@ -54,6 +69,11 @@ struct PetWindow {
     last_render: Option<Instant>,
     /// Dernière image dessinée d'un animal en sprites.
     sprite: Option<SpriteKey>,
+    /// Écran où se trouve la fenêtre, et sa fréquence (images par seconde) :
+    /// sur un écran plus lent que l'horloge, on dessine moins souvent (sinon
+    /// l'affichage ferait attendre toute l'app).
+    monitor: Option<MonitorHandle>,
+    hz: f64,
 }
 
 /// Ce qui change l'image d'un animal en sprites. Le déplacement passe par la
@@ -111,9 +131,35 @@ pub struct App {
     paused: bool,
     started: bool,
     last_tick: Instant,
-    next_window_poll: Instant,
     next_screen_poll: Instant,
     fast_poll_until: Instant,
+    /// Relevé des fenêtres, du Dock et du dossier des animaux (fil à part).
+    watcher: Option<Watcher>,
+    /// Dernier relevé des fenêtres des autres apps, tel quel (refiltré quand
+    /// un réglage change).
+    os_windows: Vec<platform::OsWindow>,
+    /// Dernier cadre du Dock relevé (« Marcher sous le Dock »).
+    dock_frame: Option<platform::OsRect>,
+    /// Horloge de l'écran (macOS 14 et plus) ; sinon, une minuterie.
+    clock: Option<platform::FrameClock>,
+    /// Dernier battement de l'horloge pas encore traité : l'heure (en
+    /// secondes) à laquelle l'image préparée maintenant sera affichée. Les
+    /// battements se remplacent : si l'app a pris du retard (une fenêtre
+    /// modale…), une seule image rattrape le tout.
+    beat: Rc<Cell<Option<f64>>>,
+    /// Dernier battement reçu de l'horloge.
+    clock_beat: Option<Instant>,
+    /// Heure d'affichage (horloge de l'écran) de l'image précédente.
+    shown_at: Option<f64>,
+    /// Fin de la mise en route du lancement.
+    settle_until: Option<Instant>,
+    /// Animaux demandés dont le dessin se prépare encore (identifiant → nombre).
+    pending: HashMap<String, usize>,
+    /// Dessins en préparation sur un fil à part (identifiants).
+    decoding: HashSet<String>,
+    /// Essai (`MOUFLON_ESSAI`) : fin prévue et mesures de fluidité.
+    trial_end: Option<Instant>,
+    stats: Option<crate::stats::FrameStats>,
     frontmost: Option<i32>,
     /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sous le Dock »).
     dock: Option<WindowRect>,
@@ -123,7 +169,8 @@ pub struct App {
     floating_seen: std::collections::HashSet<(String, i32)>,
     seed: u64,
     refresh_hz: f64,
-    proxy: EventLoopProxy<UserEvent>,
+    /// Pour réveiller la boucle depuis l'horloge, le menu ou un autre fil.
+    proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     menu: Option<crate::menu::TrayMenu>,
 }
@@ -224,16 +271,27 @@ impl App {
             paused: false,
             started: false,
             last_tick: now,
-            next_window_poll: now,
             next_screen_poll: now,
             fast_poll_until: now,
+            watcher: None,
+            os_windows: Vec::new(),
+            dock_frame: None,
+            clock: None,
+            beat: Rc::new(Cell::new(None)),
+            clock_beat: None,
+            shown_at: None,
+            settle_until: None,
+            pending: HashMap::new(),
+            decoding: HashSet::new(),
+            trial_end: None,
+            stats: None,
             frontmost: None,
             dock: None,
             dock_logged: false,
             floating_seen: std::collections::HashSet::new(),
             seed,
             refresh_hz: 60.0,
-            proxy,
+            proxy: Arc::new(Mutex::new(proxy)),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu: None,
         }
@@ -279,10 +337,10 @@ impl App {
                 })
                 .collect();
         }
-        // Le Dock tel qu'il est, si on a le droit de le lire.
+        // Le Dock tel que le fil de relevé l'a lu (s'il en a le droit).
         self.dock = None;
         if self.settings.walk_under_dock
-            && let Some(frame) = platform::dock_frame()
+            && let Some(frame) = self.dock_frame
         {
             self.dock = exact_dock(&mut screens, to_rect(frame));
             if !self.dock_logged {
@@ -302,10 +360,94 @@ impl App {
             }
         }
         if screens != self.world.screens() {
+            let first = self.world.screens().is_empty();
             self.world.set_screens(screens);
+            // Écran branché, débranché ou réglé autrement : l'horloge se cale
+            // de nouveau sur le plus rapide.
+            if !first && self.clock.is_some() {
+                self.start_clock();
+            }
         }
     }
 
+    /// (Re)crée l'horloge de l'écran, sur l'écran le plus rapide. Elle
+    /// démarre à la prochaine image.
+    fn start_clock(&mut self) {
+        // L'ancienne d'abord : elle cesse de battre.
+        self.clock = None;
+        self.shown_at = None;
+        // Le silence se compte depuis le dernier battement entendu ; une
+        // horloge toute neuve ne mène les images qu'une fois qu'elle bat.
+        if self.clock_beat.is_none() {
+            let now = Instant::now();
+            self.clock_beat = Some(now.checked_sub(CLOCK_SILENT).unwrap_or(now));
+        }
+        self.beat.set(None);
+        let beat = Rc::clone(&self.beat);
+        let proxy = Arc::clone(&self.proxy);
+        self.clock = platform::FrameClock::new(move |shown_at| {
+            // Un seul battement en attente à la fois.
+            if beat.replace(Some(shown_at)).is_none()
+                && let Ok(proxy) = proxy.lock()
+            {
+                let _ = proxy.send_event(UserEvent::Frame);
+            }
+        });
+        if let Some(clock) = &self.clock {
+            log::info!(
+                "horloge de l'écran : jusqu'à {:.0} images par seconde",
+                clock.max_fps()
+            );
+        }
+    }
+
+    /// L'horloge de l'écran mène-t-elle les images en ce moment ?
+    fn clocked(&self, now: Instant) -> bool {
+        self.clock
+            .as_ref()
+            .is_some_and(platform::FrameClock::is_running)
+            && self
+                .clock_beat
+                .is_some_and(|beat| now.duration_since(beat) < CLOCK_SILENT)
+    }
+
+    /// Applique ce que le fil de relevé a vu depuis la dernière image.
+    fn apply_watch(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        let Some(watcher) = &self.watcher else {
+            return;
+        };
+        let snapshot = watcher.take();
+        let pets = watcher.take_pets();
+        if let Some(snapshot) = snapshot {
+            self.apply_snapshot(event_loop, snapshot, now);
+        }
+        // Un animal ajouté au dossier apparaît dans le menu sans relancer l'app.
+        if let Some(stamp) = pets
+            && self.library.changed_since(&stamp)
+        {
+            log::info!("dossier des animaux modifié : rechargement");
+            self.library.reload();
+            self.rebuild_menu();
+        }
+        // Une fenêtre qui porte un animal bouge, ou on tient un animal : on
+        // relève plus souvent pour qu'il suive en douceur.
+        if let Some(watcher) = &self.watcher {
+            watcher.set_fast(now < self.fast_poll_until || self.pointer.dragging.is_some());
+        }
+    }
+
+    fn apply_snapshot(&mut self, event_loop: &ActiveEventLoop, snapshot: Snapshot, now: Instant) {
+        let dock = snapshot.dock.filter(|_| self.settings.walk_under_dock);
+        if dock != self.dock_frame {
+            self.dock_frame = dock;
+            self.refresh_screens(event_loop);
+        }
+        self.os_windows = snapshot.windows;
+        self.refresh_windows(now);
+    }
+
+    /// Applique le dernier relevé des fenêtres (sans rien redemander au système,
+    /// sauf l'app au premier plan).
     fn refresh_windows(&mut self, now: Instant) {
         let me = platform::current_pid();
         if let Some(pid) = platform::frontmost_pid()
@@ -314,7 +456,7 @@ impl App {
             self.frontmost = Some(pid);
         }
         let mut windows = Vec::new();
-        for w in platform::windows() {
+        for w in &self.os_windows {
             // Calque transparent posé sur tout un écran (le clavier d'accessibilité
             // en a deux) : ni sol, ni obstacle.
             let overlay = w.is_floating()
@@ -380,7 +522,14 @@ impl App {
         let Some(entry) = self.library.pets.get(index).cloned() else {
             return;
         };
-        // Dessin préparé à la première apparition de l'animal.
+        // Les dessins d'un animal se préparent à sa première apparition, sur
+        // un fil à part : les autres continuent de bouger pendant ce temps, et
+        // il arrive dès que c'est prêt.
+        if !entry.art_ready() && self.prepare_art(&entry) {
+            *self.pending.entry(entry.def.meta.id.clone()).or_default() += 1;
+            return;
+        }
+        // Illisible : rien à montrer (l'erreur est au journal).
         if entry.art().is_none() {
             return;
         }
@@ -391,6 +540,49 @@ impl App {
         self.flock
             .spawn(Arc::clone(&entry.def), self.seed, &self.world, None);
         self.sync_windows(event_loop);
+    }
+
+    /// Prépare les dessins d'un animal sur un fil à part ; `UserEvent::ArtReady`
+    /// arrive quand c'est fait. `false` si le fil n'a pas pu être lancé.
+    fn prepare_art(&mut self, entry: &Entry) -> bool {
+        let id = entry.def.meta.id.clone();
+        if self.decoding.contains(&id) {
+            return true;
+        }
+        let job = (entry.clone(), id.clone(), Arc::clone(&self.proxy));
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-dessins".into())
+            .spawn(move || {
+                let (entry, id, proxy) = job;
+                let _ = entry.art();
+                if let Ok(proxy) = proxy.lock() {
+                    let _ = proxy.send_event(UserEvent::ArtReady(id));
+                }
+            });
+        match spawned {
+            Ok(_) => {
+                self.decoding.insert(id);
+                true
+            }
+            Err(e) => {
+                log::warn!("dessins préparés sur le fil principal : {e}");
+                false
+            }
+        }
+    }
+
+    /// Les dessins d'un animal sont prêts : ceux qui l'attendaient arrivent.
+    fn art_ready(&mut self, event_loop: &ActiveEventLoop, id: &str) {
+        self.decoding.remove(id);
+        let count = self.pending.remove(id).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+        if let Some(index) = self.library.pets.iter().position(|e| e.def.meta.id == id) {
+            for _ in 0..count {
+                self.spawn(event_loop, index);
+            }
+        }
     }
 
     /// Une fenêtre par animal : on en crée pour les nouveaux venus (dont les
@@ -468,15 +660,9 @@ impl App {
             }
         };
         platform::prepare_pet_window(&*window);
-        if let Some(hz) = window
-            .current_monitor()
-            .and_then(|m| m.refresh_rate_millihertz())
-        {
-            self.refresh_hz = self
-                .refresh_hz
-                .max(f64::from(hz) / 1000.0)
-                .clamp(30.0, 240.0);
-        }
+        let monitor = window.current_monitor();
+        let hz = window_hz(&window, monitor.as_ref());
+        self.refresh_hz = self.refresh_hz.max(hz);
         if window.theme() == Some(Theme::Dark) {
             self.style.dark = true;
         }
@@ -506,8 +692,39 @@ impl App {
                 hittest: true,
                 last_render: None,
                 sprite: None,
+                monitor,
+                hz,
             },
         );
+    }
+
+    /// Met le GPU en route avant la première image : une image d'essai de
+    /// chaque animal du lancement, dessinée hors écran jusqu'au bout.
+    fn warm_up_gpu(&mut self) {
+        let started = Instant::now();
+        let gpu = self.gpu.get_or_insert_with(Gpu::new);
+        let mut done: Vec<Arc<PetArt>> = Vec::new();
+        for pw in self.windows.values() {
+            if done.iter().any(|art| Arc::ptr_eq(art, &pw.art)) {
+                continue;
+            }
+            done.push(Arc::clone(&pw.art));
+            let Some(pet) = self.flock.pets().iter().find(|p| p.id() == pw.pet) else {
+                continue;
+            };
+            let view = pet.view(1.0);
+            let size = pw.window.inner_size();
+            self.list.clear(size.width, size.height);
+            let frame = Frame {
+                origin: view.ground - pw.canvas.anchor,
+                scale: pw.scale,
+            };
+            paint_pet(&pw.art, &view, &frame, &self.style, &mut self.list);
+            if let Err(e) = gpu.warm_up(&self.list) {
+                log::warn!("mise en route du GPU : {e}");
+            }
+        }
+        log::info!("GPU en route en {} ms", started.elapsed().as_millis());
     }
 
     /// Reconstruit le menu après un changement de la bibliothèque.
@@ -530,6 +747,21 @@ impl App {
                 Err(e) => log::error!("impossible de recréer le menu : {e}"),
             }
         }
+    }
+
+    /// Met la sortie audio en route avant le premier son, avec un son de
+    /// l'animal du lancement (joué sans volume) : son décodeur se charge aussi.
+    fn warm_up_sounds(&self) {
+        let index = self
+            .library
+            .default_index(self.settings.default_pet.as_deref());
+        let sample = self
+            .library
+            .pets
+            .get(index)
+            .and_then(|entry| entry.def.sounds.first())
+            .and_then(|sound| sound.clips.first());
+        platform::warm_up_sounds(sample.map(|clip| clip.as_ref()));
     }
 
     /// Joue les sons que les animaux viennent de faire (s'ils ont la parole),
@@ -600,6 +832,22 @@ impl App {
             self.settings.save(&paths.settings);
         }
         self.library.set_size(size);
+        // Les dessins de chaque espèce à l'écran, à la nouvelle taille,
+        // préparés en parallèle.
+        let mut species = HashSet::new();
+        let needed: Vec<Entry> = self
+            .flock
+            .pets()
+            .iter()
+            .filter_map(|pet| self.library.current(pet.def()))
+            .filter(|entry| species.insert(entry.def.meta.id.clone()))
+            .cloned()
+            .collect();
+        std::thread::scope(|scope| {
+            for entry in &needed {
+                scope.spawn(move || entry.art());
+            }
+        });
         let mut gone = Vec::new();
         for pet in self.flock.pets_mut() {
             let resized = self
@@ -694,6 +942,13 @@ impl App {
                 if let Some(menu) = &self.menu {
                     menu.set_walk_under_dock(self.settings.walk_under_dock);
                 }
+                // Le fil de relevé lit le Dock tout de suite (ou cesse de le lire).
+                if let Some(watcher) = &self.watcher {
+                    watcher.set_dock(self.settings.walk_under_dock);
+                }
+                if !self.settings.walk_under_dock {
+                    self.dock_frame = None;
+                }
                 self.refresh_screens(event_loop);
                 self.refresh_windows(Instant::now());
             }
@@ -706,6 +961,9 @@ impl App {
                 if let Some(paths) = &self.paths {
                     self.settings.save(&paths.settings);
                 }
+                if self.settings.sounds {
+                    self.warm_up_sounds();
+                }
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 if let Some(menu) = &self.menu {
                     menu.set_sounds(self.settings.sounds);
@@ -713,6 +971,10 @@ impl App {
             }
             Action::TogglePause => {
                 self.paused = !self.paused;
+                // Au réveil, les animaux repartent d'où ils étaient, sans
+                // rattraper le temps de la pause.
+                self.last_tick = Instant::now();
+                self.shown_at = None;
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 if let Some(menu) = &self.menu {
                     menu.set_paused(self.paused);
@@ -765,31 +1027,60 @@ impl App {
         self.windows.get(&window).map(|w| w.pet)
     }
 
+    /// Fréquence de l'écran de chaque fenêtre (un animal a pu changer d'écran).
+    fn refresh_monitors(&mut self) {
+        let mut fastest: f64 = 0.0;
+        for pw in self.windows.values_mut() {
+            let monitor = pw.window.current_monitor();
+            if monitor != pw.monitor {
+                pw.hz = window_hz(&pw.window, monitor.as_ref());
+                pw.monitor = monitor;
+            }
+            fastest = fastest.max(pw.hz);
+        }
+        if fastest > 0.0 {
+            self.refresh_hz = fastest;
+        }
+    }
+
     /// Une image : simulation, position des fenêtres, rendu, prochain réveil.
-    fn frame(&mut self, event_loop: &ActiveEventLoop) {
+    /// `shown_at` : heure d'affichage de l'image, donnée par l'horloge de l'écran.
+    fn frame(&mut self, event_loop: &ActiveEventLoop, shown_at: Option<f64>) {
         let now = Instant::now();
-        let elapsed = now.duration_since(self.last_tick).as_secs_f32();
+        // Calé sur l'écran, on avance exactement du temps qui sépare deux
+        // images affichées : les petits retards du fil principal ne font plus
+        // varier la vitesse des animaux d'une image à l'autre.
+        let elapsed = match (shown_at, self.shown_at) {
+            (Some(at), Some(before)) if at > before => (at - before) as f32,
+            _ => now.duration_since(self.last_tick).as_secs_f32(),
+        };
+        self.shown_at = shown_at;
         self.last_tick = now;
 
         if now >= self.next_screen_poll {
             self.refresh_screens(event_loop);
-            // Un animal ajouté au dossier apparaît dans le menu sans relancer l'app.
-            if self.library.changed() {
-                log::info!("dossier des animaux modifié : rechargement");
-                self.library.reload();
-                self.rebuild_menu();
+            self.refresh_monitors();
+            // Une horloge qui tourne mais ne bat plus (écran changé, réveil…) :
+            // on en refait une.
+            if self
+                .clock
+                .as_ref()
+                .is_some_and(platform::FrameClock::is_running)
+                && self
+                    .clock_beat
+                    .is_some_and(|beat| now.duration_since(beat) > SCREEN_POLL)
+            {
+                self.start_clock();
             }
             self.next_screen_poll = now + SCREEN_POLL;
         }
-        if now >= self.next_window_poll {
-            self.refresh_windows(now);
-            let fast = now < self.fast_poll_until || self.pointer.dragging.is_some();
-            self.next_window_poll = now
-                + if fast {
-                    WINDOW_POLL_FAST
-                } else {
-                    WINDOW_POLL_CALM
-                };
+        self.apply_watch(event_loop, now);
+
+        // Mise en route du lancement : les fenêtres sont ouvertes mais vides,
+        // les animaux attendent.
+        let settling = self.settle_until.is_some_and(|until| now < until);
+        if !settling && self.settle_until.take().is_some() {
+            log::info!("mise en route terminée : les animaux arrivent");
         }
 
         let input = self.input();
@@ -798,7 +1089,9 @@ impl App {
         // Glisser : on n'attrape l'animal qu'après un petit déplacement,
         // un simple clic reste un « coucou ». Il est pris là où l'on a cliqué,
         // et ce point reste sous le curseur.
-        if let (Some(start), Some(c), None) = (self.pointer.pressed, cursor, self.pointer.dragging)
+        if !settling
+            && let (Some(start), Some(c), None) =
+                (self.pointer.pressed, cursor, self.pointer.dragging)
             && (c - start).length() > 3.0
             && let Some(id) = self.pointer.window.and_then(|w| self.pet_of(w))
             && let Some(pet) = self.flock.get_mut(id)
@@ -812,12 +1105,14 @@ impl App {
             pet.drag_to(c);
         }
 
-        let alpha = if self.paused {
+        let alpha = if self.paused || settling {
             1.0
         } else {
             self.flock.advance(elapsed, &self.world, &input)
         };
-        self.play_sounds();
+        if !settling {
+            self.play_sounds();
+        }
         self.sync_windows(event_loop);
 
         let Self {
@@ -827,11 +1122,9 @@ impl App {
             list,
             style,
             pointer,
-            refresh_hz,
             paused,
             ..
         } = self;
-        let moving_interval = Duration::from_secs_f64(1.0 / *refresh_hz);
         for pw in windows.values_mut() {
             let Some(pet) = flock.pets().iter().find(|p| p.id() == pw.pet) else {
                 continue;
@@ -847,6 +1140,17 @@ impl App {
                 pw.window.set_outer_position(LogicalPosition::new(ox, oy));
                 pw.position = Some((ox, oy));
                 pw.placed = placed_at(&pw.window, scale).unwrap_or((ox, oy));
+            }
+            if settling {
+                // Une image vide : la fenêtre s'affiche et l'affichage se met en
+                // route sans que l'animal se voie encore.
+                if let Some(gpu) = gpu.as_mut() {
+                    let size = pw.window.inner_size();
+                    list.clear(size.width, size.height);
+                    gpu.render(&mut pw.surface, list, &pw.window);
+                }
+                pw.last_render = None;
+                continue;
             }
             // L'animal est dessiné là où il est, même si sa fenêtre n'a pas pu
             // monter jusque-là : il reste sous le curseur, et ce qui dépasse
@@ -866,10 +1170,11 @@ impl App {
             let needed = if sprite.is_some() {
                 pw.last_render.is_none() || sprite != pw.sprite || offset != pw.drawn_offset
             } else {
+                // En mouvement, au rythme de l'écran où se trouve la fenêtre.
                 let interval = match pet.activity() {
-                    Activity::Moving => moving_interval,
-                    Activity::Idle => Duration::from_millis(33),
-                    Activity::Asleep => Duration::from_millis(50),
+                    Activity::Moving => Duration::from_secs_f64(1.0 / pw.hz),
+                    Activity::Idle => Duration::from_secs_f64(1.0 / IDLE_FPS),
+                    Activity::Asleep => Duration::from_secs_f64(1.0 / ASLEEP_FPS),
                 };
                 moved
                     || pw.last_render.is_none_or(|t| {
@@ -894,20 +1199,74 @@ impl App {
             }
         }
 
-        let wake = if self.paused {
-            Duration::from_millis(250)
-        } else if self.pointer.dragging.is_some() {
-            moving_interval
+        self.schedule(event_loop, now, settling);
+
+        if let Some(stats) = &mut self.stats {
+            stats.record(now, shown_at.is_some());
+            if self.trial_end.is_some_and(|end| now >= end) {
+                log::info!("essai terminé : {}", stats.report());
+                event_loop.exit();
+            }
+        }
+    }
+
+    /// Prochain réveil : au battement de l'horloge de l'écran, à la cadence
+    /// voulue, ou par la minuterie quand l'horloge manque ou se tait.
+    fn schedule(&mut self, event_loop: &ActiveEventLoop, now: Instant, settling: bool) {
+        let moving = self.clock.as_ref().map_or(self.refresh_hz, |clock| {
+            self.refresh_hz.max(f64::from(clock.max_fps()))
+        });
+        let fps = if self.paused {
+            None
+        } else if settling || self.pointer.dragging.is_some() {
+            Some(moving)
         } else {
             match self.flock.activity() {
-                Some(Activity::Moving) => moving_interval,
-                Some(Activity::Idle) => Duration::from_millis(33),
-                Some(Activity::Asleep) => Duration::from_millis(50),
-                None => Duration::from_millis(500),
+                Some(Activity::Moving) => Some(moving),
+                Some(Activity::Idle) => Some(IDLE_FPS),
+                Some(Activity::Asleep) => Some(ASLEEP_FPS),
+                None => None,
             }
+        };
+        let Some(fps) = fps else {
+            // Rien ne bouge : l'horloge s'arrête, on passe de temps en temps.
+            if let Some(clock) = &self.clock {
+                clock.set_running(false);
+            }
+            self.shown_at = None;
+            let wake = Duration::from_millis(if self.paused { 250 } else { 500 });
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
+            return;
+        };
+        let interval = Duration::from_secs_f64(1.0 / fps);
+        let wake = match &self.clock {
+            Some(clock) => {
+                clock.set_rate(fps as f32);
+                clock.set_running(true);
+                match self.clock_beat.map(|beat| now.duration_since(beat)) {
+                    // Tant que l'horloge bat, c'est elle qui réveille.
+                    Some(silent) if silent < CLOCK_SILENT => CLOCK_SILENT,
+                    // Muette depuis longtemps : l'écran dort, rien ne se voit.
+                    Some(silent) if silent > CLOCK_ASLEEP => Duration::from_millis(100),
+                    _ => interval,
+                }
+            }
+            None => interval,
         };
         event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
     }
+}
+
+/// Fréquence de l'écran d'une fenêtre, en images par seconde : celle que
+/// donne macOS, sinon celle de winit, sinon 60.
+fn window_hz(window: &Window, monitor: Option<&MonitorHandle>) -> f64 {
+    platform::window_max_fps(window)
+        .or_else(|| {
+            monitor
+                .and_then(MonitorHandle::refresh_rate_millihertz)
+                .map(|mhz| f64::from(mhz) / 1000.0)
+        })
+        .map_or(60.0, |hz| hz.clamp(30.0, 240.0))
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -916,12 +1275,16 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         self.started = true;
-        self.refresh_screens(event_loop);
-        self.refresh_windows(Instant::now());
+        let begun = Instant::now();
+        // Le relevé des fenêtres (et du Dock) commence tout de suite, à côté.
+        let watcher = Watcher::start(
+            self.settings.walk_under_dock,
+            self.library.dir().map(std::path::Path::to_path_buf),
+        );
 
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
-            let proxy = std::sync::Mutex::new(self.proxy.clone());
+            let proxy = Arc::clone(&self.proxy);
             crate::menu::MenuEvent::set_event_handler(Some(move |event| {
                 if let Ok(proxy) = proxy.lock() {
                     let _ = proxy.send_event(UserEvent::Menu(event));
@@ -940,13 +1303,38 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
+        // Préchargement, avant la première image : dessins des animaux du
+        // lancement, GPU, sons, premier relevé des fenêtres. Rien de tout
+        // cela ne doit tomber pendant la première chute.
         let index = self
             .library
             .default_index(self.settings.default_pet.as_deref());
+        if let Some(entry) = self.library.pets.get(index) {
+            let _ = entry.art();
+        }
+        if self.settings.sounds {
+            self.warm_up_sounds();
+        }
+        let first = watcher.wait_first(Duration::from_millis(500));
+        self.watcher = Some(watcher);
+        self.refresh_screens(event_loop);
+        match first {
+            Some(snapshot) => self.apply_snapshot(event_loop, snapshot, Instant::now()),
+            None => self.refresh_windows(Instant::now()),
+        }
         for _ in 0..self.settings.start_count.clamp(1, 32) {
             self.spawn(event_loop, index);
         }
+        self.warm_up_gpu();
+        self.start_clock();
+        self.settle_until = Some(Instant::now() + SETTLE);
         self.last_tick = Instant::now();
+        log::info!("préchargement : {} ms", begun.elapsed().as_millis());
+        if let Some(duration) = crate::stats::trial() {
+            log::info!("essai de {:.1} s", duration.as_secs_f32());
+            self.trial_end = Some(Instant::now() + duration);
+            self.stats = Some(crate::stats::FrameStats::default());
+        }
     }
 
     #[cfg_attr(
@@ -961,7 +1349,21 @@ impl ApplicationHandler<UserEvent> for App {
                     self.handle_action(event_loop, action);
                 }
             }
-            UserEvent::Wake => {}
+            UserEvent::Frame => {
+                let Some(shown_at) = self.beat.take() else {
+                    return;
+                };
+                self.clock_beat = Some(Instant::now());
+                if self.started
+                    && self
+                        .clock
+                        .as_ref()
+                        .is_some_and(platform::FrameClock::is_running)
+                {
+                    self.frame(event_loop, Some(shown_at));
+                }
+            }
+            UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
         }
     }
 
@@ -1042,8 +1444,10 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.started {
-            self.frame(event_loop);
+        // L'horloge de l'écran donne le rythme ; sans elle (ou si elle se
+        // tait), on avance ici, au réveil de la minuterie.
+        if self.started && !self.clocked(Instant::now()) {
+            self.frame(event_loop, None);
         }
     }
 }

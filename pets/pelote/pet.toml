@@ -24,3 +24,31 @@ inbetweens = "entre-deux.toml"
 [desktoppet]
 animations = "animations.xml"
 tile = [80, 80]               # le fichier est réglé pour des images de 80 pixels
+
+# Sons (enregistrements libres de droits, CC0 : voir CREDITS.md) : bêlements
+# de brebis, la clochette de son collier, le broutage du trèfle, le bain et
+# un petit bruit d'atterrissage. Chaque son a plusieurs prises.
+[sounds]
+bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3", "sons/mouton-3.mp3", "sons/mouton-4.mp3"], volume = 0.75 }
+clochette = { files = ["sons/clochette-1.mp3", "sons/clochette-2.mp3"], volume = 0.5 }
+broute = { files = ["sons/broute-1.mp3", "sons/broute-2.mp3"], volume = 0.6 }
+bain = { files = ["sons/bain-1.mp3", "sons/bain-2.mp3"], volume = 0.6 }
+pose = { files = ["sons/pose-1.mp3", "sons/pose-2.mp3"], volume = 0.5 }
+
+# Les animations du fichier desktopPet (par leur nom) et leurs sons : `frame`
+# est le rang de l'image dans la séquence, `chance` la probabilité.
+[desktoppet.sounds]
+walk = { name = "clochette", frame = 0, chance = 0.03 }
+run = { name = "clochette", frame = 1, chance = 0.15 }
+jump = { name = "clochette", frame = 5, chance = 0.6 }
+drag = { name = "bele", chance = 0.6 }
+toss = { name = "bele", chance = 0.3 }
+boing = [{ name = "clochette", frame = 2 }, { name = "bele", chance = 0.4 }]
+"fall soft" = { name = "pose", frame = 4, chance = 0.7 }
+"fall hard" = [{ name = "pose" }, { name = "bele", chance = 0.5 }]
+kill = "bele"
+sync = { name = "bele", chance = 0.8 }
+eat = { name = "broute", frame = 5 }
+bathc = { name = "bain" }
+bathd = { name = "bain", frame = 3, chance = 0.7 }
+blacksheepc = { name = "bele", frame = 4, chance = 0.8 }

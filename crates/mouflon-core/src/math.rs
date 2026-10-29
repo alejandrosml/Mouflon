@@ -258,6 +258,13 @@ impl Rng {
         xorshifted.rotate_right(rot)
     }
 
+    /// Un autre générateur, tiré de l'état de celui-ci sans le faire avancer :
+    /// ses tirages ne changent rien à la suite de celui-ci.
+    #[must_use]
+    pub fn fork(&self, salt: u64) -> Self {
+        Self::new(self.state ^ self.inc.rotate_left(17) ^ salt)
+    }
+
     /// Nombre dans [0, 1).
     pub fn next_f32(&mut self) -> f32 {
         (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32

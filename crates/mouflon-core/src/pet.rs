@@ -278,6 +278,9 @@ pub struct Pet {
     id: u32,
     def: Arc<PetDef>,
     rng: Rng,
+    /// Tirages des sons, à part : ajouter (ou couper) des sons ne change
+    /// rien à ce que fait l'animal.
+    voice: Rng,
     pos: Vec2,
     prev_pos: Vec2,
     vel: Vec2,
@@ -526,6 +529,7 @@ impl Pet {
     }
 
     fn bare(id: u32, def: Arc<PetDef>, mut rng: Rng, pos: Vec2) -> Self {
+        let voice = rng.fork(0x534F_554E_4453);
         let facing = if rng.chance(0.5) { 1.0 } else { -1.0 };
         let anim = Anim::new(facing, &mut rng);
         let rand_s = (10 + rng.next_u32() % 80) as f32;
@@ -537,6 +541,7 @@ impl Pet {
             id,
             def,
             rng,
+            voice,
             pos,
             prev_pos: pos,
             vel: Vec2::ZERO,
@@ -1320,10 +1325,10 @@ impl Pet {
         }
         let def = Arc::clone(&self.def);
         for cue in &def.behaviors[self.behavior].sounds {
-            if cue.frame == frame && self.rng.chance(cue.chance) {
+            if cue.frame == frame && self.voice.chance(cue.chance) {
                 let clips = def.sounds.get(cue.sound).map_or(0, |s| s.clips.len());
                 if clips > 0 {
-                    let clip = self.rng.next_u32() as usize % clips;
+                    let clip = self.voice.next_u32() as usize % clips;
                     self.events.push(PetEvent::Sound {
                         sound: cue.sound,
                         clip,
@@ -2059,8 +2064,9 @@ impl Flock {
     /// Avance la simulation du temps écoulé et renvoie le facteur
     /// d'interpolation à passer à [`Pet::view`].
     pub fn advance(&mut self, elapsed: f32, world: &World, input: &Input) -> f32 {
-        // Au-delà d'un quart de seconde (Mac réveillé, débogueur…), on ne rattrape pas.
-        self.accumulator += elapsed.clamp(0.0, 0.25);
+        // Au-delà d'un dixième de seconde (Mac réveillé, débogueur…), on ne
+        // rattrape pas : l'animal reprend où il était au lieu de bondir.
+        self.accumulator += elapsed.clamp(0.0, 0.1);
         while self.accumulator >= TICK {
             for pet in &mut self.pets {
                 pet.step(TICK, world, input);

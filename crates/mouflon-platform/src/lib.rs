@@ -119,9 +119,9 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
-    play_sound, preferred_languages, prepare_pet_window, request_accessibility, screens,
-    show_about, show_note, windows,
+    FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
+    open_folder, play_sound, preferred_languages, prepare_pet_window, request_accessibility,
+    screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -151,6 +151,12 @@ mod fallback {
     }
 
     pub fn prepare_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
+
+    /// Pas de fréquence d'écran connue ici (celle de winit sert).
+    #[must_use]
+    pub fn window_max_fps(_window: &impl raw_window_handle::HasWindowHandle) -> Option<f64> {
+        None
+    }
 
     /// Pas d'autorisation d'Accessibilité à demander ici.
     #[must_use]
@@ -208,10 +214,40 @@ mod fallback {
 
     pub fn close_note() {}
 
+    /// Pas d'horloge d'écran ici : l'app se rythme avec une minuterie.
+    #[derive(Debug)]
+    pub enum FrameClock {}
+
+    impl FrameClock {
+        pub fn new(_tick: impl Fn(f64) + 'static) -> Option<Self> {
+            None
+        }
+
+        #[must_use]
+        pub fn max_fps(&self) -> f32 {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn is_running(&self) -> bool {
+            match *self {}
+        }
+
+        pub fn set_running(&self, _running: bool) {
+            match *self {}
+        }
+
+        pub fn set_rate(&self, _fps: f32) {
+            match *self {}
+        }
+    }
+
     /// Pas encore de sons sur ce système.
     pub fn play_sound(_data: &[u8], _volume: f32) -> bool {
         false
     }
+
+    pub fn warm_up_sounds(_sample: Option<&[u8]>) {}
 
     /// Ouvre un dossier dans le gestionnaire de fichiers du système.
     pub fn open_folder(path: &std::path::Path) -> bool {
@@ -226,9 +262,9 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
-    play_sound, preferred_languages, prepare_pet_window, request_accessibility, screens,
-    show_about, show_note, windows,
+    FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
+    open_folder, play_sound, preferred_languages, prepare_pet_window, request_accessibility,
+    screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]
