@@ -91,8 +91,8 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    cursor_position, frontmost_pid, open_folder, preferred_languages, prepare_pet_window, screens,
-    windows,
+    accessibility_trusted, cursor_position, dock_frame, frontmost_pid, open_folder,
+    preferred_languages, prepare_pet_window, request_accessibility, screens, windows,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -122,6 +122,22 @@ mod fallback {
     }
 
     pub fn prepare_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
+
+    /// Pas d'autorisation d'Accessibilité à demander ici.
+    #[must_use]
+    pub fn accessibility_trusted() -> bool {
+        false
+    }
+
+    pub fn request_accessibility() -> bool {
+        false
+    }
+
+    /// Pas de Dock.
+    #[must_use]
+    pub fn dock_frame() -> Option<super::OsRect> {
+        None
+    }
 
     /// Langues de l'utilisateur, d'après les variables d'environnement POSIX
     /// (`LANGUAGE`, puis `LC_ALL`, `LC_MESSAGES` et `LANG`), en codes BCP 47.
@@ -157,8 +173,8 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    cursor_position, frontmost_pid, open_folder, preferred_languages, prepare_pet_window, screens,
-    windows,
+    accessibility_trusted, cursor_position, dock_frame, frontmost_pid, open_folder,
+    preferred_languages, prepare_pet_window, request_accessibility, screens, windows,
 };
 
 #[cfg(test)]

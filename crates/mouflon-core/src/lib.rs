@@ -27,4 +27,6 @@ pub use pet::{
     Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals, Shadow,
     Support, TICK,
 };
-pub use world::{LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World};
+pub use world::{
+    DOCK_ID, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World, exact_dock,
+};

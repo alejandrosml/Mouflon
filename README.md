@@ -29,7 +29,8 @@ throw them across the desktop.
 - **And much more**: high-definition sheets for desktopPet pets, a native
   format with images drawn for both directions, pets that greet each other or
   tumble in collision mode, *All Together*, a goodbye before leaving, four
-  sizes, pets that walk on floating panels such as the Keyboard Viewer,
+  sizes, pets you can catch without leaving the app you are working in, pets
+  that walk on the Dock and on floating panels such as the Keyboard Viewer,
   install by drag and drop, a menu in the language of macOS (English, French,
   Spanish, German, Italian, Dutch, Portuguese, Russian, Japanese, Korean,
   Chinese).
@@ -61,8 +62,14 @@ cargo run --release
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
 `animaux/` folder: Poete drops onto your frontmost window if it is there,
 Pelote otherwise. The menu bar icon adds pets, gets them all to play together,
-says goodbye to them, pauses, turns collisions on, changes their size, opens
-the pets folder and shows *About Mouflon*.
+says goodbye to them, pauses, turns collisions on, lets them walk on the Dock,
+changes their size, opens the pets folder and shows *About Mouflon*.
+
+*Walk on the Dock* reads where the Dock really is: pets walk on it, and down to
+the bottom of the screen on either side of it. macOS asks for the
+Accessibility permission (System Settings → Privacy & Security →
+Accessibility); launched with `cargo run`, the permission goes to the terminal
+app.
 
 To try a pet without installing it, pass its file or folder: it is loaded with
 the others, and it is the one that appears.
@@ -152,7 +159,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 |---|---|---|
 | `mouflon-core` | physics, behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; Vello or SVG output | forbidden |
-| `mouflon-platform` | other apps' windows, screens, cursor, languages, macOS window settings | isolated and commented |
+| `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows | isolated and commented |
 | `mouflon-app` | transparent windows (winit), GPU (wgpu), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
@@ -188,8 +195,7 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 ### Roadmap
 
 - Sounds (desktopPet's included).
-- Non-activating windows (catching a pet no longer steals the focus).
-- Exact Dock, and window tracking through accessibility notifications.
+- Window tracking through accessibility notifications.
 - A settings window.
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
@@ -228,7 +234,8 @@ se laissent attraper et lancer à travers le bureau.
 - **Et bien plus** : des planches haute définition pour les animaux desktopPet,
   un format natif aux images dessinées dans les deux sens, des animaux qui se
   saluent, ou qui culbutent en mode collisions, « Tous ensemble », un au revoir
-  avant de partir, quatre tailles, des animaux qui marchent sur les panneaux
+  avant de partir, quatre tailles, des animaux qu'on attrape sans quitter
+  l'app où l'on travaille, qui marchent sur le Dock et sur les panneaux
   flottants comme le visualiseur de clavier, l'installation par
   glisser-déposer, un menu dans la langue de macOS (anglais, français,
   espagnol, allemand, italien, néerlandais, portugais, russe, japonais, coréen,
@@ -261,8 +268,15 @@ cargo run --release
 Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du
 dossier `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est,
 sinon Pelote. L'icône de la barre des menus ajoute des animaux, les fait jouer
-tous ensemble, leur dit au revoir, met en pause, active les collisions, change
-leur taille, ouvre le dossier des animaux et affiche « À propos de Mouflon ».
+tous ensemble, leur dit au revoir, met en pause, active les collisions, les
+fait marcher sur le Dock, change leur taille, ouvre le dossier des animaux et
+affiche « À propos de Mouflon ».
+
+« Marcher sur le Dock » lit la vraie place du Dock : les animaux marchent
+dessus, et jusqu'en bas de l'écran de part et d'autre. macOS demande
+l'autorisation d'Accessibilité (Réglages Système → Confidentialité et
+sécurité → Accessibilité) ; lancé avec `cargo run`, c'est le Terminal qui la
+reçoit.
 
 Pour essayer un animal sans l'installer, passe son fichier ou son dossier en
 argument : il est chargé en plus des autres, et c'est lui qui apparaît.
@@ -354,7 +368,7 @@ ses comportements : [docs/format.md](docs/format.md).
 |---|---|---|
 | `mouflon-core` | physique, comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; sortie Vello ou SVG | interdit |
-| `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, réglages des fenêtres macOS | isolé et commenté |
+| `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes | isolé et commenté |
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
@@ -390,8 +404,7 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 ### Feuille de route
 
 - Sons (ceux de desktopPet compris).
-- Fenêtres non activantes (attraper un animal ne vole plus le focus).
-- Dock exact et suivi des fenêtres par notifications d'accessibilité.
+- Suivi des fenêtres par notifications d'accessibilité.
 - Fenêtre de réglages.
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.

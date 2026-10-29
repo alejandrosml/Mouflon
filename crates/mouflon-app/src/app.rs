@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::Timelike;
 use mouflon_core::{
     Activity, Flock, Input, LedgeOptions, PetView, Rect, Screen, Support, Vec2, WindowRect, World,
+    exact_dock,
 };
 use mouflon_platform as platform;
 use mouflon_render::{Canvas, DisplayList, Frame, Look, PetArt, SpriteMotion, Style, paint_pet};
@@ -108,6 +109,10 @@ pub struct App {
     next_screen_poll: Instant,
     fast_poll_until: Instant,
     frontmost: Option<i32>,
+    /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sur le Dock »).
+    dock: Option<WindowRect>,
+    /// Le Dock a déjà été signalé au journal.
+    dock_logged: bool,
     /// Panneaux flottants déjà signalés au journal (propriétaire, niveau).
     floating_seen: std::collections::HashSet<(String, i32)>,
     seed: u64,
@@ -171,6 +176,8 @@ impl App {
             next_screen_poll: now,
             fast_poll_until: now,
             frontmost: None,
+            dock: None,
+            dock_logged: false,
             floating_seen: std::collections::HashSet::new(),
             seed,
             refresh_hz: 60.0,
@@ -220,6 +227,28 @@ impl App {
                 })
                 .collect();
         }
+        // Le Dock tel qu'il est, si on a le droit de le lire.
+        self.dock = None;
+        if self.settings.walk_on_dock
+            && let Some(frame) = platform::dock_frame()
+        {
+            self.dock = exact_dock(&mut screens, to_rect(frame));
+            if !self.dock_logged {
+                self.dock_logged = true;
+                log::info!(
+                    "Dock : {:.0} × {:.0} en {:.0}, {:.0}{}",
+                    frame.w,
+                    frame.h,
+                    frame.x,
+                    frame.y,
+                    if self.dock.is_some() {
+                        ""
+                    } else {
+                        " (sur le côté, masqué ou sur toute la largeur : ignoré)"
+                    }
+                );
+            }
+        }
         if screens != self.world.screens() {
             self.world.set_screens(screens);
         }
@@ -265,6 +294,11 @@ impl App {
                 id: w.id,
                 frame: to_rect(w.frame),
             });
+        }
+
+        // Le Dock passe devant toutes les fenêtres.
+        if let Some(dock) = self.dock {
+            windows.insert(0, dock);
         }
 
         // Une fenêtre qui porte un animal bouge : on relève plus souvent pour qu'il suive en douceur.
@@ -431,6 +465,7 @@ impl App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
+                self.settings.walk_on_dock,
                 self.settings.size_index(),
             ) {
                 Ok(menu) => {
@@ -541,6 +576,26 @@ impl App {
                 let input = self.input();
                 let count = self.flock.together(&self.world, &input);
                 log::info!("tous ensemble : {count} animal(aux)");
+            }
+            Action::ToggleWalkOnDock => {
+                self.settings.walk_on_dock = !self.settings.walk_on_dock;
+                if let Some(paths) = &self.paths {
+                    self.settings.save(&paths.settings);
+                }
+                // Lire le Dock demande l'autorisation d'Accessibilité : macOS
+                // propose de l'accorder si Mouflon ne l'a pas encore.
+                if self.settings.walk_on_dock && !platform::request_accessibility() {
+                    log::info!(
+                        "Marcher sur le Dock : en attente de l'autorisation d'Accessibilité"
+                    );
+                }
+                self.dock_logged = false;
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                if let Some(menu) = &self.menu {
+                    menu.set_walk_on_dock(self.settings.walk_on_dock);
+                }
+                self.refresh_screens(event_loop);
+                self.refresh_windows(Instant::now());
             }
             Action::SetSize(index) => {
                 self.set_size(index);
@@ -749,6 +804,7 @@ impl ApplicationHandler<UserEvent> for App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
+                self.settings.walk_on_dock,
                 self.settings.size_index(),
             ) {
                 Ok(menu) => self.menu = Some(menu),

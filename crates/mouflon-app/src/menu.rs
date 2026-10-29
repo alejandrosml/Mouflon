@@ -15,6 +15,8 @@ pub enum Action {
     TogglePause,
     ToggleFrontmostOnly,
     ToggleCollisions,
+    /// Marcher sur le Dock tel qu'il est (autorisation d'Accessibilité).
+    ToggleWalkOnDock,
     /// Taille des animaux : rang dans [`crate::settings::SIZES`].
     SetSize(usize),
     OpenPetsFolder,
@@ -41,6 +43,7 @@ mod native {
         pause: CheckMenuItem,
         frontmost: CheckMenuItem,
         collisions: CheckMenuItem,
+        walk_on_dock: CheckMenuItem,
         sizes: Vec<CheckMenuItem>,
         open_folder: MenuId,
         quit: MenuId,
@@ -57,6 +60,7 @@ mod native {
             library: &Library,
             frontmost_only: bool,
             collisions_on: bool,
+            walk_on_dock_on: bool,
             size: usize,
         ) -> Result<Self, Box<dyn std::error::Error>> {
             let t = crate::i18n::texts();
@@ -86,6 +90,8 @@ mod native {
             menu.append(&frontmost)?;
             let collisions = CheckMenuItem::new(&t.collisions, true, collisions_on, None);
             menu.append(&collisions)?;
+            let walk_on_dock = CheckMenuItem::new(&t.walk_on_dock, true, walk_on_dock_on, None);
+            menu.append(&walk_on_dock)?;
             let size_menu = Submenu::new(&t.size, true);
             let mut sizes = Vec::new();
             for (i, label) in [&t.size_small, &t.size_normal, &t.size_large, &t.size_huge]
@@ -136,6 +142,7 @@ mod native {
                 pause,
                 frontmost,
                 collisions,
+                walk_on_dock,
                 sizes,
                 open_folder: open_folder.id().clone(),
                 quit: quit.id().clone(),
@@ -163,6 +170,8 @@ mod native {
                 Some(Action::ToggleFrontmostOnly)
             } else if id == self.collisions.id() {
                 Some(Action::ToggleCollisions)
+            } else if id == self.walk_on_dock.id() {
+                Some(Action::ToggleWalkOnDock)
             } else if id == &self.open_folder {
                 Some(Action::OpenPetsFolder)
             } else if id == &self.quit {
@@ -182,6 +191,10 @@ mod native {
 
         pub fn set_collisions(&self, value: bool) {
             self.collisions.set_checked(value);
+        }
+
+        pub fn set_walk_on_dock(&self, value: bool) {
+            self.walk_on_dock.set_checked(value);
         }
 
         /// Coche la taille choisie, et elle seule.

@@ -23,6 +23,9 @@ pub struct Settings {
     pub collisions: bool,
     /// Taille des animaux, par rapport à celle prévue par chacun.
     pub size: f32,
+    /// Le Dock tel qu'il est : les animaux marchent dessus et en bas de
+    /// l'écran à côté de lui (il faut l'autorisation d'Accessibilité).
+    pub walk_on_dock: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +36,7 @@ impl Default for Settings {
             frontmost_only: true,
             collisions: false,
             size: 1.0,
+            walk_on_dock: false,
         }
     }
 }
@@ -177,6 +181,7 @@ mod tests {
             frontmost_only: false,
             collisions: true,
             size: 1.0,
+            walk_on_dock: false,
         }
         .save(&old.settings);
 
