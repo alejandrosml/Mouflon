@@ -13,7 +13,7 @@ use std::ptr::NonNull;
 use objc2::ClassType;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2_app_kit::{
     NSEvent, NSPanel, NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
     NSWindowStyleMask, NSWorkspace,
@@ -31,7 +31,10 @@ use objc2_core_graphics::{
     kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer,
     kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
 };
-use objc2_foundation::{NSLocale, NSString, NSURL};
+use objc2_foundation::{
+    NSKeyValueObservingOptions, NSLocale, NSObject, NSObjectNSKeyValueObserverRegistration,
+    NSObjectNSKeyValueObservingCustomization, NSString, NSURL, ns_string,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::{OsRect, OsScreen, OsWindow, current_pid};
@@ -252,16 +255,38 @@ pub fn prepare_pet_window(window: &impl HasWindowHandle) {
 /// fait le greffon tauri-nspanel. C'est sans danger si les deux classes ont
 /// la même taille d'instance, ce que l'on vérifie : sinon, la fenêtre reste
 /// une fenêtre ordinaire (qui active Mouflon quand on attrape l'animal).
+///
+/// winit observe aussi le thème de la fenêtre (`effectiveAppearance`, par
+/// l'observation clé-valeur de Foundation) et retire cet observateur quand
+/// la fenêtre se ferme. Cette observation est rangée sous la classe de la
+/// fenêtre : la classe changée, le retrait échouerait (`NSRangeException`)
+/// et l'app s'arrêterait dès qu'un animal s'en va ou qu'on la quitte. On
+/// retire donc l'observateur de winit avant le changement de classe, et on
+/// le remet après, tel qu'il l'avait posé.
 fn make_non_activating(window: &NSWindow) {
     let current = window.class();
     let panel = NSPanel::class();
-    if current != panel {
+    if !window.isKindOfClass(panel) {
         if current.instance_size() != panel.instance_size() {
             log::warn!(
                 "fenêtre d'animal : {} ne peut pas devenir un panneau non activant",
                 current.name().to_string_lossy()
             );
             return;
+        }
+        let object: &NSObject = window.as_ref();
+        let key = ns_string!("effectiveAppearance");
+        // SAFETY: `delegate` est une méthode de `NSWindow` sans argument, qui
+        // renvoie un objet (le délégué de winit) ou nil ; on le garde en vie
+        // le temps des appels ci-dessous.
+        let observer: Option<Retained<NSObject>> = unsafe { objc2::msg_send![window, delegate] };
+        // winit n'observe la fenêtre que par son délégué : sans délégué ni
+        // observation en cours, il n'y a rien à retirer ni à remettre.
+        let observer = observer.filter(|_| !object.observationInfo().is_null());
+        if let Some(observer) = &observer {
+            // SAFETY: winit (0.30) pose cet observateur, avec ce délégué et
+            // cette clé, à la création de la fenêtre ; il est bien enregistré.
+            unsafe { object.removeObserver_forKeyPath(observer, key) };
         }
         // SAFETY:
         // - `NSPanel` hérite de `NSWindow` sans variable d'instance de plus :
@@ -277,6 +302,20 @@ fn make_non_activating(window: &NSWindow) {
         unsafe {
             let object: &AnyObject = window.as_ref();
             AnyObject::set_class(object, panel);
+        }
+        if let Some(observer) = &observer {
+            // SAFETY: l'observateur est remis comme winit le pose (nouvelle et
+            // ancienne valeurs, sans contexte) ; winit le retire à la
+            // fermeture de la fenêtre, et le délégué vit aussi longtemps
+            // qu'elle.
+            unsafe {
+                object.addObserver_forKeyPath_options_context(
+                    observer,
+                    key,
+                    NSKeyValueObservingOptions::New | NSKeyValueObservingOptions::Old,
+                    std::ptr::null_mut(),
+                );
+            }
         }
     }
     window.setStyleMask(window.styleMask() | NSWindowStyleMask::NonactivatingPanel);

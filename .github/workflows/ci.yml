@@ -62,12 +62,14 @@ jobs:
           name: Mouflon-macos-arm64
           path: dist/*.zip
 
-      # Essai de cinq minutes : deux Lainou et deux Pelote en mode collisions.
-      # L'app note chaque image et chaque événement dans un journal, puis
-      # quitte. Un plantage (ou un blocage : 7 minutes au plus) fait échouer
-      # la construction ; l'app, déjà envoyée, reste téléchargeable.
+      # Essai de cinq minutes : deux Lainou et deux Pelote en mode collisions ;
+      # à mi-parcours, une Lainou s'en va et une autre arrive. L'app note
+      # chaque image et chaque événement dans un journal, puis quitte. Un
+      # plantage, même en quittant (ou un blocage : 7 minutes au plus), fait
+      # échouer la construction ; l'app, déjà envoyée, reste téléchargeable.
       - name: Essai de cinq minutes
         run: |
+          set -o pipefail
           export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info
           MOUFLON_ESSAI=300 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
             MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=essai-journal.log \

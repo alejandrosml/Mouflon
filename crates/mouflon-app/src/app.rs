@@ -51,6 +51,16 @@ pub enum UserEvent {
     ArtReady(String),
 }
 
+/// Ce qu'un essai fait de lui-même à mi-parcours, pour passer aussi par un
+/// départ et une arrivée (une fenêtre fermée, une autre ouverte).
+#[derive(Clone, Copy, Debug)]
+enum TrialStep {
+    /// Le dernier arrivé de cette espèce dit au revoir.
+    Goodbye(usize),
+    /// Un animal de cette espèce arrive.
+    Add(usize),
+}
+
 struct PetWindow {
     pet: u32,
     window: Arc<Window>,
@@ -161,8 +171,9 @@ pub struct App {
     pending: HashMap<String, usize>,
     /// Dessins en préparation sur un fil à part (identifiants).
     decoding: HashSet<String>,
-    /// Essai (`MOUFLON_ESSAI`) : fin prévue et mesures de fluidité.
+    /// Essai (`MOUFLON_ESSAI`) : fin prévue, étapes à venir et mesures de fluidité.
     trial_end: Option<Instant>,
+    trial_steps: Vec<(Instant, TrialStep)>,
     stats: Option<crate::stats::FrameStats>,
     frontmost: Option<i32>,
     /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sous le Dock »).
@@ -296,6 +307,7 @@ impl App {
             pending: HashMap::new(),
             decoding: HashSet::new(),
             trial_end: None,
+            trial_steps: Vec::new(),
             stats: None,
             frontmost: None,
             dock: None,
@@ -894,6 +906,42 @@ impl App {
         }
     }
 
+    /// Le dernier arrivé de cette espèce (rang dans la bibliothèque) dit au
+    /// revoir ; sa fenêtre se ferme quand il est parti.
+    fn goodbye_one(&mut self, index: usize) {
+        if let Some(entry) = self.library.pets.get(index) {
+            let input = self.input();
+            let species = entry.def.meta.id.clone();
+            if let Some(id) = self.flock.leave_one(&species, &self.world, &input)
+                && self.pointer.dragging == Some(id)
+            {
+                self.pointer = Pointer::default();
+            }
+        }
+    }
+
+    /// Une étape de l'essai, notée au journal.
+    fn trial_step(&mut self, event_loop: &ActiveEventLoop, step: TrialStep) {
+        if let Some(stats) = &self.stats {
+            let (TrialStep::Goodbye(index) | TrialStep::Add(index)) = step;
+            let name = self
+                .library
+                .pets
+                .get(index)
+                .map_or("?", |entry| entry.def.meta.name.as_str());
+            match step {
+                TrialStep::Goodbye(_) => {
+                    stats.note(format_args!("essai : au revoir à un(e) {name}"))
+                }
+                TrialStep::Add(_) => stats.note(format_args!("essai : un(e) {name} de plus")),
+            }
+        }
+        match step {
+            TrialStep::Goodbye(index) => self.goodbye_one(index),
+            TrialStep::Add(index) => self.spawn(event_loop, index),
+        }
+    }
+
     /// Tous les animaux disent au revoir : chacun joue son animation d'adieu
     /// et s'efface ; leurs fenêtres se ferment quand ils sont partis.
     fn remove_all(&mut self) {
@@ -1011,18 +1059,7 @@ impl App {
                     }
                 }
             }
-            Action::RemoveOne(index) => {
-                // Le dernier arrivé de cette espèce dit au revoir.
-                if let Some(entry) = self.library.pets.get(index) {
-                    let input = self.input();
-                    let species = entry.def.meta.id.clone();
-                    if let Some(id) = self.flock.leave_one(&species, &self.world, &input)
-                        && self.pointer.dragging == Some(id)
-                    {
-                        self.pointer = Pointer::default();
-                    }
-                }
-            }
+            Action::RemoveOne(index) => self.goodbye_one(index),
             Action::RemoveAll => self.remove_all(),
             Action::Together => {
                 let input = self.input();
@@ -1192,6 +1229,12 @@ impl App {
             if let Some(stats) = &self.stats {
                 stats.note("mise en route terminée");
             }
+        }
+
+        // Un essai fait partir un animal à mi-parcours, puis en fait venir un.
+        while !settling && self.trial_steps.first().is_some_and(|(at, _)| now >= *at) {
+            let (_, step) = self.trial_steps.remove(0);
+            self.trial_step(event_loop, step);
         }
 
         let input = self.input();
@@ -1569,6 +1612,13 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(duration) = trial {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
+            if let Some(&species) = starters.first() {
+                let half = Instant::now() + duration / 2;
+                self.trial_steps = vec![
+                    (half, TrialStep::Goodbye(species)),
+                    (half + Duration::from_secs(5), TrialStep::Add(species)),
+                ];
+            }
             if let Some(stats) = &self.stats {
                 for (i, screen) in self.world.screens().iter().enumerate() {
                     stats.raw(format!(
