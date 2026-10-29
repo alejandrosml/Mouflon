@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mouflon_core::{
-    Flock, Input, LedgeOptions, Particle, ParticleKind, Pet, PetView, PoseSignals, Rect, Screen,
-    Shadow, Support, Vec2, WindowRect, World, load_pet,
+    Flock, Input, LedgeOptions, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals, Rect,
+    Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
 };
 use mouflon_render::display::{Command, DisplayList, Paint, Stop, rgba};
 use mouflon_render::svg::to_svg;
@@ -292,6 +292,7 @@ fn render_greeting(
         "atterrit_sonne",
     ];
     let mut start: Option<f32> = None;
+    let mut met = false;
     let mut frame = 0;
     loop {
         let t = frame as f32 / RATE as f32;
@@ -302,6 +303,17 @@ fn render_greeting(
             start = Some(t);
             for (id, facing) in [(a, 1.0), (b, -1.0), (c, 1.0)] {
                 if let Some(pet) = flock.get_mut(id) {
+                    pet.face(facing);
+                    pet.force(walk);
+                }
+            }
+        }
+        // Jusqu'à leur rencontre, les deux premiers continuent de marcher.
+        if start.is_some() && !met {
+            for (id, facing) in [(a, 1.0), (b, -1.0)] {
+                if let Some(pet) = flock.get_mut(id)
+                    && pet.behavior_name() != walk
+                {
                     pet.face(facing);
                     pet.force(walk);
                 }
@@ -323,6 +335,12 @@ fn render_greeting(
             flock.leave_all(&world, &input);
         }
         let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        for pet in flock.pets_mut() {
+            met |= pet
+                .take_events()
+                .iter()
+                .any(|e| matches!(e, PetEvent::Met { .. }));
+        }
         let mut list = DisplayList::new(
             (f64::from(SCREEN_W) * SCALE) as u32,
             (f64::from(SCREEN_H) * SCALE) as u32,
