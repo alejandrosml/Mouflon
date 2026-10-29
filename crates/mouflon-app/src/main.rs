@@ -74,8 +74,8 @@ fn main() {
     // On sort sans détruire les fenêtres des animaux une à une : ce sont des
     // panneaux dont la classe a changé après leur création, et AppKit, en
     // les libérant, échoue à défaire certaines de ses observations internes
-    // (NSRangeException, l'app « quitte de manière imprévue »). Celles qu'on
-    // a fermées en route sont gardées (`keep_pet_window`) ; le système
-    // reprend tout à la sortie du processus.
+    // (NSRangeException, l'app « quitte de manière imprévue »). Elles sont
+    // toutes gardées (`keep_pet_window`) ; le système reprend tout à la
+    // sortie du processus.
     std::process::exit(0);
 }

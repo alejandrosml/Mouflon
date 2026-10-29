@@ -924,10 +924,14 @@ impl App {
     }
 
     /// Avant de quitter : le journal d'un essai interrompu (Quitter pendant
-    /// l'essai) reçoit son bilan et part sur le disque.
+    /// l'essai) reçoit son bilan et part sur le disque, et les fenêtres des
+    /// animaux ne seront jamais libérées (voir `keep_pet_window`).
     pub fn shutdown(&mut self) {
         if let Some(stats) = &mut self.stats {
             stats.finish();
+        }
+        for pw in self.windows.values() {
+            platform::keep_pet_window(&*pw.window);
         }
     }
 

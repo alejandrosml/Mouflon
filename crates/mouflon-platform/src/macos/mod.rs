@@ -247,21 +247,15 @@ fn view_and_window(
     Some((view, ns_window))
 }
 
-thread_local! {
-    /// Fenêtres d'animaux fermées, gardées jusqu'à la fin du processus (voir
-    /// [`keep_pet_window`]). Seul le fil principal y touche.
-    static KEPT: std::cell::RefCell<Vec<Retained<NSWindow>>> = const {
-        std::cell::RefCell::new(Vec::new())
-    };
-}
-
 /// Garde en vie, jusqu'à la fin du processus, la fenêtre d'un animal qui va
-/// être fermée. Devenue un panneau après sa création, elle ne peut pas être
-/// libérée sans dommage : AppKit, en la libérant, voudrait défaire des
-/// observations qu'il avait posées sous son ancienne classe, et lèverait une
-/// exception (`NSRangeException`) qui arrêterait l'app. Fermée, elle ne
-/// coûte presque rien : on lui retire en plus ses calques de dessin (Metal),
-/// qui gardent des images de la taille de la fenêtre.
+/// être fermée (ou que l'app quitte). Devenue un panneau après sa création,
+/// elle ne peut pas être libérée sans dommage : AppKit, en la libérant,
+/// voudrait défaire des observations qu'il avait posées sous son ancienne
+/// classe, et lèverait une exception (`NSRangeException`) qui arrêterait
+/// l'app. On lui garde donc une référence qu'on ne rend jamais, même à la
+/// sortie du processus. Fermée, elle ne coûte presque rien : on lui retire
+/// en plus ses calques de dessin (Metal), qui gardent des images de la
+/// taille de la fenêtre.
 pub fn keep_pet_window(window: &impl HasWindowHandle) {
     let Some((view, ns_window)) = view_and_window(window) else {
         return;
@@ -280,7 +274,8 @@ pub fn keep_pet_window(window: &impl HasWindowHandle) {
             }
         }
     }
-    KEPT.with(|kept| kept.borrow_mut().push(ns_window));
+    // Une référence de plus, jamais rendue : la fenêtre n'est jamais libérée.
+    std::mem::forget(ns_window);
 }
 
 /// Fait de la fenêtre d'un animal un panneau « non activant » : un clic ou
