@@ -1,0 +1,7 @@
+/target
+/dist
+/apercu
+.DS_Store
+# Animaux d'essai, et animaux livrés dans tes builds : jamais publiés dans le dépôt
+/essais
+/animaux

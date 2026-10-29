@@ -1,0 +1,39 @@
+[package]
+name = "mouflon-platform"
+description = "Couche système de Mouflon : fenêtres des autres apps, écrans, curseur. Seul crate autorisé à contenir de l'unsafe."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale"] }
+objc2-app-kit = { workspace = true, features = [
+    "libc",
+    "NSScreen",
+    "NSWorkspace",
+    "NSRunningApplication",
+    "NSEvent",
+    "NSWindow",
+    "NSView",
+    "NSResponder",
+    "NSGraphics",
+] }
+objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry"] }
+objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes"] }
+
+# Ce crate n'hérite pas du `forbid(unsafe_code)` du workspace : c'est la
+# frontière avec le système. Chaque bloc unsafe y est commenté.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"

@@ -1,0 +1,21 @@
+[package]
+name = "mouflon-render"
+description = "Rendu de Mouflon : rigs vectoriels animés, sprites et effets, via Vello."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+mouflon-core.workspace = true
+vello.workspace = true
+usvg.workspace = true
+png.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

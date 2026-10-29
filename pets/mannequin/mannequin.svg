@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" width="160" height="120">
+  <!--
+    Mannequin : personnage de test de Mouflon (placeholder neutre).
+    Il sert de modèle au contrat des rigs : remplace-le par ton propre dessin
+    en gardant les mêmes id de groupes et de pivots.
+    © 2026 Alejandro San Martin Lamas — MIT OR Apache-2.0
+  -->
+  <defs>
+    <linearGradient id="body-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b3c3ff"/>
+      <stop offset="0.55" stop-color="#7f91f6"/>
+      <stop offset="1" stop-color="#5d6de0"/>
+    </linearGradient>
+    <radialGradient id="belly" cx="0.55" cy="0.85" r="0.55">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="head-fill" x1="0.1" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#c2d0ff"/>
+      <stop offset="0.6" stop-color="#8a9bf8"/>
+      <stop offset="1" stop-color="#6576e6"/>
+    </linearGradient>
+    <linearGradient id="leg-near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b7aea"/>
+      <stop offset="1" stop-color="#4b58c9"/>
+    </linearGradient>
+    <linearGradient id="leg-far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5563cf"/>
+      <stop offset="1" stop-color="#3c47ad"/>
+    </linearGradient>
+    <linearGradient id="ear-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9aabff"/>
+      <stop offset="1" stop-color="#6a7ae8"/>
+    </linearGradient>
+    <linearGradient id="ear-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd0dc"/>
+      <stop offset="1" stop-color="#ff9fba"/>
+    </linearGradient>
+    <radialGradient id="cheek" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff8fb2" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#ff8fb2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sclera" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3e8ff"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#3a4386"/>
+      <stop offset="1" stop-color="#151a3f"/>
+    </radialGradient>
+    <radialGradient id="tail-fill" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#dbe3ff"/>
+      <stop offset="1" stop-color="#8d9df5"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Pattes du fond -->
+  <g id="leg-back-far">
+    <rect x="45.5" y="84" width="13" height="28" rx="6.5" fill="url(#leg-far)"/>
+    <circle id="pivot-leg-back-far" cx="52" cy="88" r="0.8"/>
+  </g>
+  <g id="leg-front-far">
+    <rect x="89.5" y="84" width="13" height="28" rx="6.5" fill="url(#leg-far)"/>
+    <circle id="pivot-leg-front-far" cx="96" cy="88" r="0.8"/>
+  </g>
+
+  <!-- Queue -->
+  <g id="tail">
+    <circle cx="37" cy="70" r="7.5" fill="url(#tail-fill)"/>
+    <circle cx="31.5" cy="65.5" r="4.6" fill="url(#tail-fill)"/>
+    <circle id="pivot-tail" cx="42" cy="72" r="0.8"/>
+  </g>
+
+  <!-- Corps -->
+  <g id="body">
+    <path d="M40 76 C40 55 58 45 80 45 C104 45 118 57 118 76 C118 94 102 102 80 102 C56 102 40 94 40 76 Z" fill="url(#body-fill)"/>
+    <path d="M52 86 C60 97 96 99 108 88 C104 98 92 102 80 102 C66 102 56 97 52 86 Z" fill="url(#belly)"/>
+    <ellipse cx="62" cy="56" rx="14" ry="5.5" transform="rotate(-12 62 56)" fill="#ffffff" fill-opacity="0.22"/>
+    <circle id="pivot-body" cx="79" cy="102" r="0.8"/>
+  </g>
+
+  <!-- Pattes de devant -->
+  <g id="leg-back-near">
+    <rect x="53.5" y="86" width="13.5" height="26" rx="6.75" fill="url(#leg-near)"/>
+    <ellipse cx="60.25" cy="109.6" rx="5" ry="2" fill="#e8ecff" fill-opacity="0.85"/>
+    <circle id="pivot-leg-back-near" cx="60" cy="90" r="0.8"/>
+  </g>
+  <g id="leg-front-near">
+    <rect x="97.5" y="86" width="13.5" height="26" rx="6.75" fill="url(#leg-near)"/>
+    <ellipse cx="104.25" cy="109.6" rx="5" ry="2" fill="#e8ecff" fill-opacity="0.85"/>
+    <circle id="pivot-leg-front-near" cx="104" cy="90" r="0.8"/>
+  </g>
+
+  <!-- Tête -->
+  <g id="head">
+    <g id="ear-far">
+      <path d="M99 42 C96 29 100 19 107 15 C112 23 112 35 108 42 Z" fill="#6a79e2"/>
+      <circle id="pivot-ear-far" cx="104" cy="40" r="0.8"/>
+    </g>
+    <circle cx="112" cy="54" r="22.5" fill="url(#head-fill)"/>
+    <ellipse cx="103" cy="41" rx="8.5" ry="4.8" transform="rotate(-24 103 41)" fill="#ffffff" fill-opacity="0.38"/>
+    <g id="ear-near">
+      <path d="M113 40 C112 26 118 16 126 13 C130 22 128 34 123 41 Z" fill="url(#ear-outer)"/>
+      <path d="M116.5 37.5 C116.5 28 120 21.5 124.8 18.6 C126.6 25 125 32.5 121 38.5 Z" fill="url(#ear-inner)"/>
+      <circle id="pivot-ear-near" cx="118" cy="39" r="0.8"/>
+    </g>
+    <ellipse cx="127" cy="66" rx="6.5" ry="4.2" fill="url(#cheek)"/>
+    <ellipse cx="106" cy="65" rx="4.5" ry="3" fill="url(#cheek)"/>
+    <g id="eyes">
+      <ellipse cx="110" cy="54.5" rx="4.4" ry="5.6" fill="url(#sclera)"/>
+      <ellipse cx="124.5" cy="54.5" rx="5.4" ry="6.6" fill="url(#sclera)"/>
+      <g id="pupils">
+        <circle cx="111" cy="55.2" r="3" fill="url(#iris)"/>
+        <circle cx="125.8" cy="55.2" r="3.7" fill="url(#iris)"/>
+        <circle cx="109.9" cy="53.6" r="1.05" fill="#ffffff"/>
+        <circle cx="124.4" cy="53.4" r="1.35" fill="#ffffff"/>
+        <circle cx="127.2" cy="57.3" r="0.55" fill="#ffffff" fill-opacity="0.8"/>
+      </g>
+      <circle id="pivot-eyes" cx="118" cy="54.5" r="0.8"/>
+    </g>
+    <path d="M125.5 66.5 Q129.5 70 133.5 66.3" fill="none" stroke="#2c3170" stroke-width="1.6" stroke-linecap="round"/>
+    <circle id="pivot-head" cx="100" cy="70" r="0.8"/>
+  </g>
+
+  <circle id="pivot-ground" cx="80" cy="112" r="0.8"/>
+</svg>

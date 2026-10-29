@@ -1,0 +1,23 @@
+# Pelote, mouton de bureau original d'Alejandro San Martin Lamas, dessiné en
+# vectoriel (119 poses). Ses comportements sont ceux d'eSheep 64 : marche,
+# course, sommeil, chutes, escalade des murs et des fenêtres, bain, trèfle,
+# rencontre avec le mouton noir… Ils sont adaptés du fichier animations.xml
+# de desktopPet (licence MIT, © 2016 Adriano Petrucci, voir
+# NOTICE_desktopPet_MIT.txt).
+
+[pet]
+id = "pelote"
+name = "Pelote"
+author = "Alejandro San Martin Lamas"
+description = "Mouton de bureau tout en laine douce, avec son collier et sa clochette."
+version = "1.0"
+license = "MIT OR Apache-2.0"
+
+[appearance]
+sprites = "pelote.png"        # 12 × 10 images de 240 pixels
+tiles = [12, 10]
+scale = 0.33333334            # 240 pixels → 80 points
+
+[desktoppet]
+animations = "animations.xml"
+tile = [80, 80]               # le fichier est réglé pour des images de 80 pixels

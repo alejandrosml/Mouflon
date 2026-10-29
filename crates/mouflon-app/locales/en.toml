@@ -1,0 +1,16 @@
+# English: Mouflon's interface, and the language used when macOS asks for one
+# Mouflon does not speak yet. Menu items follow the macOS style (Title Case).
+
+add_pet = "Add a Pet"
+add_menu = "Add…"
+remove_all = "Remove All"
+pause = "Pause"
+frontmost_only = "Walk Only on the Frontmost App"
+collisions = "Collisions Between Pets"
+open_pets_folder = "Open the Pets Folder"
+about = "About Mouflon"
+quit = "Quit Mouflon"
+
+# About window
+description = "A light and beautiful desktop companion manager."
+credits = "Compatible with the desktopPet pets (eSheep) of Adriano Petrucci. Written entirely in Rust."

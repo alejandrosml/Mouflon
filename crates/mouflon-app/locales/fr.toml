@@ -1,0 +1,15 @@
+# Français
+
+add_pet = "Ajouter un animal"
+add_menu = "Ajouter…"
+remove_all = "Tout retirer"
+pause = "Pause"
+frontmost_only = "Marcher seulement sur l'app au premier plan"
+collisions = "Collisions entre animaux"
+open_pets_folder = "Ouvrir le dossier des animaux"
+about = "À propos de Mouflon"
+quit = "Quitter Mouflon"
+
+# Fenêtre « À propos »
+description = "Un gestionnaire de compagnons de bureau, léger et beau."
+credits = "Compatible avec les animaux desktopPet (eSheep) d'Adriano Petrucci. Écrit entièrement en Rust."
