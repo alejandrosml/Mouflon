@@ -61,6 +61,27 @@ pub struct SpritePage {
     pub tiles_y: u32,
 }
 
+/// Images intermédiaires entre deux images d'une animation, pour un
+/// mouvement plus fluide (calculées par `tools/inbetween`).
+#[derive(Clone, Debug, Default)]
+pub struct Inbetweens {
+    /// Leurs planches, de mêmes cases que la planche principale : dans le
+    /// premier sens, puis dans l'autre si les images existent dans les deux.
+    pub pages: Vec<SpritePage>,
+    /// (image de départ, image d'arrivée) → (première image intermédiaire,
+    /// nombre d'images). Numéros du premier sens ; ceux des images
+    /// intermédiaires suivent toutes les cases de la planche principale.
+    pub pairs: HashMap<(u32, u32), (u32, u32)>,
+}
+
+impl Inbetweens {
+    /// Nombre total de cases de leurs planches.
+    #[must_use]
+    pub fn tile_count(&self) -> u32 {
+        self.pages.iter().map(|p| p.tiles_x * p.tiles_y).sum()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SpriteSheet {
     /// Planches dans l'ordre : les numéros des cases se suivent de l'une à
@@ -78,6 +99,8 @@ pub struct SpriteSheet {
     /// tournée vers la gauche ; sans valeur, le milieu du bas de la case.
     pub anchor: Option<[f32; 2]>,
     pub drawn: Drawn,
+    /// Images intermédiaires, s'il y en a.
+    pub inbetweens: Option<Arc<Inbetweens>>,
 }
 
 impl SpriteSheet {
@@ -96,7 +119,20 @@ impl SpriteSheet {
             facings: Facings::Left,
             anchor: None,
             drawn: Drawn::default(),
+            inbetweens: None,
         }
+    }
+
+    /// Images intermédiaires pour aller de l'image `from` à l'image `to`
+    /// (numéros du premier sens) : première image et nombre d'images.
+    #[must_use]
+    pub fn inbetween(&self, from: u32, to: u32) -> Option<(u32, u32)> {
+        self.inbetweens
+            .as_ref()?
+            .pairs
+            .get(&(from, to))
+            .copied()
+            .filter(|&(_, count)| count > 0)
     }
 
     /// Nombre total de cases.
@@ -160,16 +196,9 @@ pub struct Physics {
     /// Au-delà de cette vitesse d'impact, l'atterrissage est « dur ».
     pub hard_landing_speed: f32,
     pub max_throw_speed: f32,
-    /// Raideur du lien avec le curseur quand on tient l'animal (Hz).
-    pub hold_frequency: f32,
-    pub hold_damping: f32,
     /// Boîte de l'animal : largeur et hauteur en points.
     pub width: f32,
     pub height: f32,
-    /// Point par lequel on le tient (laine du dos…), par rapport au point
-    /// d'appui, animal tourné vers la gauche (points). Sans valeur, il pend
-    /// sous le curseur par le haut du corps.
-    pub hold: Option<Vec2>,
 }
 
 impl Default for Physics {
@@ -184,11 +213,8 @@ impl Default for Physics {
             bounce_min_speed: 520.0,
             hard_landing_speed: 1150.0,
             max_throw_speed: 2600.0,
-            hold_frequency: 5.5,
-            hold_damping: 0.55,
             width: 76.0,
             height: 64.0,
-            hold: None,
         }
     }
 }
@@ -678,7 +704,6 @@ impl PetDef {
         ] {
             *length *= k;
         }
-        p.hold = p.hold.map(|h| h * k);
         for b in &mut def.behaviors {
             match &mut b.motion {
                 Motion::Walk { speed } | Motion::Run { speed } => *speed *= k,

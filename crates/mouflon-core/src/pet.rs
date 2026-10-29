@@ -8,7 +8,8 @@ use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 use crate::def::{
-    Appearance, Condition, Duration, Motion, PetDef, Pose, Rules, SpawnPoint, Transition,
+    Appearance, Condition, Duration, Motion, PetDef, Pose, Rules, SpawnPoint, SpriteClip,
+    Transition,
 };
 use crate::expr::Expr;
 use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep};
@@ -64,6 +65,11 @@ const BUMP_COOLDOWN: f32 = 3.5;
 /// Pause entre deux rencontres d'un même animal (secondes).
 const MEET_COOLDOWN: f32 = 2.5;
 
+/// Durée d'affichage d'une image intermédiaire, au plus (secondes).
+const INBETWEEN_TIME: f32 = 0.08;
+/// Lissage de la vitesse d'un animal tenu (secondes) : l'élan qu'il garde au
+/// lâcher est celui des derniers centièmes de seconde du geste.
+const THROW_SMOOTHING: f32 = 0.06;
 /// Au revoir : durée du fondu, et durée au-delà de laquelle l'animation
 /// d'adieu est écourtée.
 const FADE_TIME: f32 = 1.2;
@@ -180,6 +186,8 @@ pub struct PetView<'a> {
     pub particles: &'a [Particle],
     pub support: Support,
     pub behavior: &'a str,
+    /// Tenu : le point par lequel le curseur le tient (il se balance autour).
+    pub grip: Option<Vec2>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1099,24 +1107,21 @@ impl Pet {
     }
 
     fn step_held(&mut self, dt: f32) {
-        let p = self.def.physics;
-        let Some(hold) = &mut self.hold else {
+        let Some(hold) = &self.hold else {
             self.support = Support::Air;
             return;
         };
-        // Le point de prise glisse vers le dos : l'animal finit par pendre sous
-        // le curseur, par son point de prise s'il en a un (dessiné tourné vers la gauche).
-        let hang = match p.hold {
-            Some(h) => Vec2::new(-h.x * self.facing, h.y),
-            None => Vec2::new(0.0, -p.height * 0.8),
-        };
-        hold.offset = hold.offset.lerp(hang, 1.0 - (-4.0 * dt).exp());
+        // Comme une fenêtre qu'on déplace : le point par lequel on l'a pris
+        // reste sous le curseur, sans retard ni glissement.
         let target = hold.target - hold.offset;
-        let omega = TAU * p.hold_frequency;
-        let accel =
-            (target - self.pos) * (omega * omega) - self.vel * (2.0 * p.hold_damping * omega);
-        self.vel += accel * dt;
-        self.pos += self.vel * dt;
+        // Sa vitesse est celle du geste, lissée sur quelques centièmes de
+        // seconde : elle donne l'élan au lâcher (rien si la main s'est
+        // arrêtée) et le balancement du dessin.
+        if dt > 0.0 {
+            let gesture = (target - self.pos) * (1.0 / dt);
+            self.vel = self.vel.lerp(gesture, 1.0 - (-dt / THROW_SMOOTHING).exp());
+        }
+        self.pos = target;
     }
 
     fn land(&mut self, surface: &Surface, world: &World, input: &Input) {
@@ -1715,6 +1720,36 @@ impl Pet {
 
     /// Image dans la variante de couleur de l'animal : les indices du fichier
     /// désignent la première variante (desktopPet).
+    /// Image affichée au pas `step` : celle de la séquence, ou, vers la fin
+    /// du pas, une image intermédiaire vers celle du pas suivant. Le passage
+    /// dure au plus [`INBETWEEN_TIME`] par image intermédiaire : une pose
+    /// longue reste tenue, puis l'animal change de pose en douceur.
+    fn sprite_frame(&self, clip: &SpriteClip, step: usize, looping: bool) -> u32 {
+        let frame = clip.frame_at(step);
+        let Appearance::Sprites(sheet) = &self.def.appearance else {
+            return frame;
+        };
+        // Pas de pas suivant : la séquence s'arrête (ou garde sa dernière image).
+        if step != self.clip_step || (!looping && step + 1 >= self.clip_total.max(1)) {
+            return frame;
+        }
+        let next = clip.frame_at(step + 1);
+        let Some((first, count)) = (next != frame)
+            .then(|| sheet.inbetween(frame, next))
+            .flatten()
+        else {
+            return frame;
+        };
+        let interval = self.clip_interval();
+        let n = count as f32;
+        let span = (interval * n / (n + 1.0)).min(n * INBETWEEN_TIME);
+        let into = self.clip_timer - (interval - span);
+        if into < 0.0 || span <= 0.0 {
+            return frame;
+        }
+        first + ((into / span * n) as u32).min(count - 1)
+    }
+
     fn skinned(&self, frame: u32) -> u32 {
         match &self.def.appearance {
             Appearance::Sprites(sheet) if sheet.skins > 1 => {
@@ -1749,7 +1784,7 @@ impl Pet {
                 };
                 let t = (self.clip_step as f32 / total as f32).min(1.0);
                 (
-                    Some(self.skinned(clip.frame_at(step))),
+                    Some(self.skinned(self.sprite_frame(clip, step, looping))),
                     if self.support == Support::Held {
                         0.0
                     } else {
@@ -1767,7 +1802,12 @@ impl Pet {
         let opacity = opacity * fade;
         PetView {
             id: self.id,
-            ground: self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
+            // Tenu, il est dessiné exactement sous le curseur, sans attendre
+            // le prochain pas de la simulation.
+            ground: match &self.hold {
+                Some(hold) => hold.target - hold.offset,
+                None => self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
+            },
             facing: a.flip,
             pose: PoseSignals {
                 gait_phase: a.gait_phase,
@@ -1794,6 +1834,7 @@ impl Pet {
             particles: &self.particles,
             support: self.support,
             behavior: &behavior.name,
+            grip: self.hold.map(|hold| hold.target),
         }
     }
 }
@@ -2302,6 +2343,32 @@ mod tests {
         )
     }
 
+    #[test]
+    fn inbetweens_show_up_at_the_end_of_each_step() {
+        let world = world();
+        let def = Arc::new(
+            parse_pet_toml(
+                &crate::format::tests::strips_with_inbetweens(),
+                crate::format::tests::inbetweens_resolve,
+            )
+            .unwrap(),
+        );
+        // Marche à 10 images par seconde : chaque image dure 0,1 s, la
+        // seconde moitié montre l'image intermédiaire vers la suivante.
+        let mut pet = standing(def, &world, 700.0, -1.0, "marche");
+        let mut seen = Vec::new();
+        for _ in 0..(0.4 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            let frame = pet.view(1.0).sprite_frame.unwrap();
+            if seen.last() != Some(&frame) {
+                seen.push(frame);
+            }
+        }
+        assert_eq!(&seen[..6], &[4, 34, 5, 35, 6, 36], "{seen:?}");
+        // Après la dernière image de la marche, rien : elle est sautée.
+        assert!(!seen.contains(&37), "{seen:?}");
+    }
+
     /// Animal posé au sol, dans le comportement voulu.
     fn standing(def: Arc<PetDef>, world: &World, x: f32, facing: f32, behavior: &str) -> Pet {
         let floor = *world.floor_under(x).unwrap();
@@ -2389,16 +2456,35 @@ mod tests {
     }
 
     #[test]
-    fn a_held_pet_hangs_from_its_hold_point() {
+    fn a_held_pet_stays_where_it_was_caught() {
         let world = world();
         let mut pet = standing(strips(), &world, 700.0, -1.0, "repos");
-        let cursor = Vec2::new(650.0, 500.0);
-        pet.grab(cursor, &world);
+        // Attrapé par le bas, à droite des pattes.
+        let caught = pet.position() + Vec2::new(10.0, -3.0);
+        pet.grab(caught, &world);
         assert_eq!(pet.behavior_name(), "tenu");
-        run(&mut pet, &world, 3.0);
-        // Prise à (4, -16) du point d'appui, tourné vers la gauche.
-        let hang = pet.position() + Vec2::new(4.0, -16.0);
-        assert!((hang - cursor).length() < 0.5, "{:?}", pet.position());
+        // Comme une fenêtre : le point de prise reste sous le curseur, à
+        // chaque instant, sans glisser ni traîner derrière lui.
+        for i in 1..=120 {
+            let cursor = caught + Vec2::new(i as f32 * 3.0, -(i as f32) * 5.0);
+            pet.drag_to(cursor);
+            pet.step(TICK, &world, &Input::default());
+            let held = pet.position() + Vec2::new(10.0, -3.0);
+            assert!((held - cursor).length() < 1e-3, "{i} : {held:?} {cursor:?}");
+        }
+        // Tout en haut de l'écran aussi, et au-delà.
+        let top = Vec2::new(600.0, -40.0);
+        pet.drag_to(top);
+        run(&mut pet, &world, 0.5);
+        assert!((pet.position() + Vec2::new(10.0, -3.0) - top).length() < 1e-3);
+        // La main s'arrête avant de le lâcher : il tombe sans élan.
+        pet.release(&world);
+        assert!(pet.velocity().length() < 5.0, "{:?}", pet.velocity());
+        assert_eq!(
+            pet.behavior_name(),
+            "chute",
+            "lâché sans élan, il tombe simplement"
+        );
     }
 
     #[test]

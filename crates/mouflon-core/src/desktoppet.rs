@@ -358,7 +358,12 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         .filter(|(w, h)| *w > 0 && *h > 0);
 
     let mut sheet = match overrides.sprites {
-        Some(sheet) => SpriteSheet { skins, ..sheet },
+        // Les images intermédiaires valent pour une seule variante de couleur.
+        Some(sheet) => SpriteSheet {
+            skins,
+            inbetweens: sheet.inbetweens.filter(|_| skins <= 1),
+            ..sheet
+        },
         None => SpriteSheet {
             key_color: text(image, "transparency").as_deref().and_then(key_color),
             skins,

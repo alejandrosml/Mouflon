@@ -20,7 +20,9 @@ pub mod math;
 pub mod pet;
 pub mod world;
 
-pub use def::{Appearance, Drawn, Facings, PetDef, Pose, Rules, SpritePage, SpriteSheet};
+pub use def::{
+    Appearance, Drawn, Facings, Inbetweens, PetDef, Pose, Rules, SpritePage, SpriteSheet,
+};
 pub use format::{LoadError, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};
 pub use pet::{

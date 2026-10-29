@@ -764,13 +764,14 @@ impl App {
         let cursor = input.cursor;
 
         // Glisser : on n'attrape l'animal qu'après un petit déplacement,
-        // un simple clic reste un « coucou ».
+        // un simple clic reste un « coucou ». Il est pris là où l'on a cliqué,
+        // et ce point reste sous le curseur.
         if let (Some(start), Some(c), None) = (self.pointer.pressed, cursor, self.pointer.dragging)
             && (c - start).length() > 3.0
             && let Some(id) = self.pointer.window.and_then(|w| self.pet_of(w))
             && let Some(pet) = self.flock.get_mut(id)
         {
-            pet.grab(c, &self.world);
+            pet.grab(start, &self.world);
             self.pointer.dragging = Some(id);
         }
         if let (Some(id), Some(c)) = (self.pointer.dragging, cursor)

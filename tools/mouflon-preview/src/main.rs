@@ -441,6 +441,7 @@ fn render_sheet(
                 particles: &[],
                 support: Support::Ground { surface: 0 },
                 behavior: name,
+                grip: None,
             };
             paint_pet(
                 art,
@@ -539,6 +540,7 @@ fn render_icon(art: &PetArt, path: &Path) -> Result<(), Error> {
         particles: &[],
         support: Support::Air,
         behavior: "",
+        grip: None,
     };
     paint_pet(art, &view, &frame, &Style::default(), &mut list);
     rasterize(&list, path)
@@ -1142,6 +1144,7 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             particles: &particles,
             support: Support::Air,
             behavior: "",
+            grip: None,
         };
         paint_pet(art, &view, &frame, &Style::default(), &mut list);
     }

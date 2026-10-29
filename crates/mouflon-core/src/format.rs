@@ -63,8 +63,9 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::def::{
-    Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Motion, PetDef, PetMeta,
-    Physics, Reflexes, Script, SpriteClip, SpritePage, SpriteSheet, Transition, png_size,
+    Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Inbetweens, Motion,
+    PetDef, PetMeta, Physics, Reflexes, Script, SpriteClip, SpritePage, SpriteSheet, Transition,
+    png_size,
 };
 use crate::expr::Expr;
 use crate::math::Vec2;
@@ -177,10 +178,6 @@ pub fn parse_pet_toml(
         }
     }
     file.physics.apply(&mut physics);
-    if let (Appearance::Sprites(sheet), Some([hx, hy])) = (&appearance, appearance_toml.hold) {
-        let [ax, ay] = sheet.anchor_or_default();
-        physics.hold = Some(Vec2::new((hx - ax) * sheet.scale, (hy - ay) * sheet.scale));
-    }
 
     let names: Vec<&str> = file.behaviors.iter().map(|b| b.name.as_str()).collect();
     if let Some(clash) = file.choices.keys().find(|k| names.contains(&k.as_str())) {
@@ -356,7 +353,7 @@ fn parse_appearance(
     if !(scale > 0.0 && scale.is_finite()) {
         return Err(format_error("`scale` doit être positif"));
     }
-    let sheet = SpriteSheet {
+    let mut sheet = SpriteSheet {
         pages,
         key_color: a.key_color.as_deref().map(parse_hex_color).transpose()?,
         scale,
@@ -364,12 +361,20 @@ fn parse_appearance(
         facings,
         anchor: a.anchor,
         drawn,
+        inbetweens: None,
     };
     let Some((tile_w, tile_h)) = sheet.tile_size().filter(|(w, h)| *w > 0 && *h > 0) else {
         return Err(format_error(
             "la planche n'est pas un PNG lisible, ou elle est trop petite pour ses cases",
         ));
     };
+    if let Some(path) = &a.inbetweens {
+        let strips = match &frames {
+            FrameSource::Strips(index) => Some((index, strip_names)),
+            _ => None,
+        };
+        sheet.inbetweens = Some(Arc::new(load_inbetweens(path, &sheet, strips, resolve)?));
+    }
     let frames = match frames {
         // Planche unique : les comportements désignent les cases du premier sens.
         FrameSource::Sheet { .. } => FrameSource::Sheet {
@@ -377,14 +382,12 @@ fn parse_appearance(
         },
         other => other,
     };
-    for (what, point) in [("anchor", a.anchor), ("hold", a.hold)] {
-        if let Some([x, y]) = point
-            && !(x.is_finite() && y.is_finite())
-        {
-            return Err(format_error(format!(
-                "`{what}` : coordonnées invalides (case de {tile_w} × {tile_h} pixels)"
-            )));
-        }
+    if let Some([x, y]) = a.anchor
+        && !(x.is_finite() && y.is_finite())
+    {
+        return Err(format_error(format!(
+            "`anchor` : coordonnées invalides (case de {tile_w} × {tile_h} pixels)"
+        )));
     }
     Ok((Appearance::Sprites(sheet), frames))
 }
@@ -448,6 +451,133 @@ fn load_strips(
         }
     }
     Ok((pages, index, facings))
+}
+
+/// Images intermédiaires décrites par le fichier `path` (écrit par
+/// `tools/inbetween`). Avec des bandes, chaque bande a la sienne, qui donne
+/// `count` images après chacune de ses images (la dernière va vers la
+/// première) ; une bande sans la sienne n'en a pas. Avec une planche
+/// unique, une planche à part et la liste des paires d'images.
+fn load_inbetweens(
+    path: &str,
+    sheet: &SpriteSheet,
+    strips: Option<(&StripIndex, &[String])>,
+    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+) -> Result<Inbetweens, LoadError> {
+    let bad = |what: String| format_error(format!("{path} : {what}"));
+    let text = String::from_utf8(resolve(path)?).map_err(|_| bad("pas en UTF-8".into()))?;
+    let file: InbetweensToml = toml::from_str(&text)?;
+    let (tile_w, tile_h) = sheet.tile_size().unwrap_or((0, 0));
+    // Les images intermédiaires sont numérotées après toutes les cases.
+    let base = sheet.tile_count();
+    let mut out = Inbetweens::default();
+    let page = |png: Vec<u8>, what: &str| -> Result<SpritePage, LoadError> {
+        let (w, h) = png_size(&png).ok_or_else(|| bad(format!("{what} n'est pas un PNG")))?;
+        if w % tile_w.max(1) != 0 || h % tile_h.max(1) != 0 || w == 0 || h == 0 {
+            return Err(bad(format!(
+                "{what} : {w} × {h} pixels, ce n'est pas un nombre entier d'images de {tile_w} × {tile_h}"
+            )));
+        }
+        Ok(SpritePage {
+            png: Arc::from(png),
+            tiles_x: w / tile_w,
+            tiles_y: h / tile_h,
+        })
+    };
+
+    let Some((index, names)) = strips else {
+        // Planche unique : une planche à part et la liste des paires.
+        let sprites = file
+            .sprites
+            .as_deref()
+            .ok_or_else(|| bad("il manque `sprites = \"planche.png\"`".into()))?;
+        let [tiles_x, tiles_y] = file
+            .tiles
+            .ok_or_else(|| bad("il manque `tiles = [colonnes, lignes]`".into()))?;
+        let page = page(resolve(sprites)?, sprites)?;
+        if (page.tiles_x, page.tiles_y) != (tiles_x, tiles_y) {
+            return Err(bad(format!(
+                "{sprites} : {} × {} cases, pas {tiles_x} × {tiles_y}",
+                page.tiles_x, page.tiles_y
+            )));
+        }
+        let tiles = page.tiles_x * page.tiles_y;
+        let frames = sheet.frames_per_facing();
+        for [from, to, first, count] in file.pairs {
+            if from >= frames || to >= frames {
+                return Err(bad(format!(
+                    "paire {from} → {to} : la planche n'a que {frames} images"
+                )));
+            }
+            if first + count > tiles {
+                return Err(bad(format!(
+                    "paire {from} → {to} : cases {first} à {} pour {tiles} cases",
+                    first + count
+                )));
+            }
+            out.pairs.insert((from, to), (base + first, count));
+        }
+        out.pages.push(page);
+        return Ok(out);
+    };
+
+    // Bandes : une par animation et par sens, `count` images après chaque image.
+    let count = file.count.unwrap_or(1);
+    if count == 0 {
+        return Err(bad("`count` doit valoir au moins 1".into()));
+    }
+    let patterns: Vec<&String> = [&file.strips_left, &file.strips_right]
+        .into_iter()
+        .flatten()
+        .collect();
+    let sides = if sheet.facings == Facings::Both { 2 } else { 1 };
+    if patterns.len() != sides || patterns.iter().any(|p| !p.contains("{name}")) {
+        return Err(bad(format!(
+            "il faut {sides} chemin(s) de bandes (`strips_left`, `strips_right`) contenant {{name}}"
+        )));
+    }
+    let mut pages: Vec<Vec<SpritePage>> = vec![Vec::new(); sides];
+    let mut offset = 0;
+    for name in names {
+        let Some(&(first, frames)) = index.get(name) else {
+            continue;
+        };
+        if frames < 2 {
+            continue;
+        }
+        // Une bande sans ses images intermédiaires (dans un sens ou l'autre)
+        // n'en a pas : elle reste telle qu'elle est dessinée.
+        let Ok(found) = patterns
+            .iter()
+            .map(|pattern| {
+                let path = pattern.replace("{name}", name);
+                resolve(&path).map(|png| (path, png))
+            })
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            continue;
+        };
+        for (side, (path, png)) in found.into_iter().enumerate() {
+            let page = page(png, &path)?;
+            if page.tiles_x * page.tiles_y != frames * count {
+                return Err(bad(format!(
+                    "{path} : {} images, il en faut {count} par image de la bande ({frames} images)",
+                    page.tiles_x * page.tiles_y
+                )));
+            }
+            pages[side].push(page);
+        }
+        let skip = file.skip.get(name.as_str()).map_or(&[][..], Vec::as_slice);
+        for i in 0..frames {
+            if !skip.contains(&i) {
+                let pair = (first + i, first + (i + 1) % frames);
+                out.pairs.insert(pair, (base + offset + i * count, count));
+            }
+        }
+        offset += frames * count;
+    }
+    out.pages = pages.into_iter().flatten().collect();
+    Ok(out)
 }
 
 /// `pet.toml` qui reprend un fichier desktopPet : nom et planche viennent du
@@ -575,10 +705,35 @@ struct AppearanceToml {
     frame: Option<[u32; 2]>,
     /// Point d'appui (milieu des pattes) dans une image, en pixels.
     anchor: Option<[f32; 2]>,
-    /// Point par lequel on tient l'animal, en pixels (images tournées vers la gauche).
-    hold: Option<[f32; 2]>,
+    /// Ancienne clé, acceptée et ignorée : l'animal reste pris là où on
+    /// l'attrape, comme une fenêtre qu'on déplace.
+    #[allow(dead_code)]
+    hold: Option<toml::Value>,
     /// Effets déjà dessinés dans les images.
     drawn: Option<Vec<String>>,
+    /// Fichier des images intermédiaires (écrit par `tools/inbetween`).
+    inbetweens: Option<String>,
+}
+
+/// Fichier des images intermédiaires.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InbetweensToml {
+    /// Bandes : nombre d'images intermédiaires après chaque image.
+    count: Option<u32>,
+    /// Bandes d'images intermédiaires, `{name}` remplacé par le nom de l'animation.
+    strips_left: Option<String>,
+    strips_right: Option<String>,
+    /// Bandes : images (numéros dans la bande) qui n'en ont pas après elles,
+    /// trop différentes de la suivante.
+    #[serde(default)]
+    skip: BTreeMap<String, Vec<u32>>,
+    /// Planche unique : la planche des images intermédiaires…
+    sprites: Option<String>,
+    tiles: Option<[u32; 2]>,
+    /// … et ses paires : `[image de départ, image d'arrivée, première case, nombre]`.
+    #[serde(default)]
+    pairs: Vec<[u32; 4]>,
 }
 
 #[derive(Deserialize, Default)]
@@ -593,8 +748,6 @@ struct PhysicsToml {
     bounce_min_speed: Option<f32>,
     hard_landing_speed: Option<f32>,
     max_throw_speed: Option<f32>,
-    hold_frequency: Option<f32>,
-    hold_damping: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
 }
@@ -615,8 +768,6 @@ impl PhysicsToml {
         set(&mut p.bounce_min_speed, self.bounce_min_speed);
         set(&mut p.hard_landing_speed, self.hard_landing_speed);
         set(&mut p.max_throw_speed, self.max_throw_speed);
-        set(&mut p.hold_frequency, self.hold_frequency);
-        set(&mut p.hold_damping, self.hold_damping);
         set(&mut p.width, self.width);
         set(&mut p.height, self.height);
     }
@@ -1171,8 +1322,7 @@ pub(crate) mod tests {
         assert!(sheet.drawn.shadow && sheet.drawn.squash && !sheet.drawn.dust);
         // Boîte : la largeur d'une image et la hauteur jusqu'au point d'appui.
         assert_eq!((def.physics.width, def.physics.height), (32.0, 28.0));
-        // Prise à 8 pixels en arrière et 32 au-dessus du point d'appui.
-        assert_eq!(def.physics.hold, Some(Vec2::new(4.0, -16.0)));
+        // L'ancienne clé `hold` est acceptée, et sans effet.
 
         let get = |name: &str| &def.behaviors[def.behavior_index(name).unwrap()];
         let repos = get("repos").clip.as_ref().unwrap();
@@ -1233,6 +1383,104 @@ pub(crate) mod tests {
             .replace("envie = [", "repos = [")
             .replace("\"envie\"", "\"repos\"");
         assert!(parse_pet_toml(&clash, strips_resolve).is_err());
+    }
+
+    /// Le même animal avec des images intermédiaires : une après chaque
+    /// image du repos et de la marche, rien pour les autres bandes, et rien
+    /// après la dernière image de la marche.
+    pub(crate) fn strips_with_inbetweens() -> String {
+        STRIPS.replace(
+            "drawn = [\"shadow\", \"squash\"]",
+            "drawn = [\"shadow\", \"squash\"]\n        inbetweens = \"entre.toml\"",
+        )
+    }
+
+    pub(crate) fn inbetweens_resolve(name: &str) -> Result<Vec<u8>, LoadError> {
+        match name {
+            "entre.toml" => Ok(br#"
+                count = 1
+                strips_left = "eg/{name}.png"
+                strips_right = "ed/{name}.png"
+                skip = { marche = [3] }
+            "#
+            .to_vec()),
+            "eg/repos.png" | "ed/repos.png" | "eg/marche.png" | "ed/marche.png" => {
+                Ok(png_header(64 * 4, 64))
+            }
+            _ if name.starts_with('e') => Err(LoadError::Format(format!("{name} absent"))),
+            _ => strips_resolve(name),
+        }
+    }
+
+    #[test]
+    fn strips_can_have_inbetweens() {
+        let def = parse_pet_toml(&strips_with_inbetweens(), inbetweens_resolve).unwrap();
+        let sheet = def.sprites().unwrap();
+        let inbetweens = sheet.inbetweens.as_deref().unwrap();
+        // Repos et marche, à gauche puis à droite ; numéros après les 30 cases.
+        assert_eq!(inbetweens.pages.len(), 4);
+        assert_eq!(sheet.inbetween(0, 1), Some((30, 1)));
+        assert_eq!(
+            sheet.inbetween(3, 0),
+            Some((33, 1)),
+            "la boucle revient au début"
+        );
+        assert_eq!(sheet.inbetween(4, 5), Some((34, 1)));
+        assert_eq!(sheet.inbetween(6, 7), Some((36, 1)));
+        assert_eq!(sheet.inbetween(7, 4), None, "image sautée");
+        assert_eq!(sheet.inbetween(1, 0), None, "pas à rebours");
+        assert_eq!(sheet.inbetween(8, 9), None, "demi-tour : pas d'images");
+
+        // Une bande d'images intermédiaires doit en avoir une par image.
+        let err = parse_pet_toml(&strips_with_inbetweens(), |name| {
+            if name == "ed/marche.png" {
+                Ok(png_header(64 * 3, 64))
+            } else {
+                inbetweens_resolve(name)
+            }
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("ed/marche.png"), "{err}");
+    }
+
+    #[test]
+    fn a_single_sheet_can_have_inbetweens() {
+        let toml = r#"
+            [pet]
+            id = "p"
+            name = "P"
+            [appearance]
+            sprites = "p.png"
+            tiles = [4, 1]
+            inbetweens = "e.toml"
+            [[behavior]]
+            name = "pas"
+            frames = [0, 1, 2]
+        "#;
+        let resolve = |pairs: &'static str| {
+            move |name: &str| match name {
+                "p.png" => Ok(png_header(64, 16)),
+                "e.png" => Ok(png_header(48, 32)),
+                "e.toml" => Ok(
+                    format!("sprites = \"e.png\"\ntiles = [3, 2]\npairs = {pairs}").into_bytes(),
+                ),
+                other => panic!("{other}"),
+            }
+        };
+        let def = parse_pet_toml(toml, resolve("[[0, 1, 0, 3], [1, 2, 3, 2]]")).unwrap();
+        let sheet = def.sprites().unwrap();
+        assert_eq!(sheet.inbetween(0, 1), Some((4, 3)));
+        assert_eq!(sheet.inbetween(1, 2), Some((7, 2)));
+        assert_eq!(sheet.inbetween(2, 0), None);
+        let err = parse_pet_toml(toml, resolve("[[0, 9, 0, 1]]"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0 → 9"), "{err}");
+        let err = parse_pet_toml(toml, resolve("[[0, 1, 5, 2]]"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("6 cases"), "{err}");
     }
 
     #[test]

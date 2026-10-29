@@ -54,6 +54,8 @@ pub struct SpriteFrames {
     pub anchor: (f32, f32),
     /// Cases d'une variante de couleur, les deux sens compris.
     skin_block: u32,
+    /// Cases de la planche principale : les images intermédiaires suivent.
+    regular: u32,
 }
 
 impl SpriteFrames {
@@ -66,10 +68,15 @@ impl SpriteFrames {
         let workers = std::thread::available_parallelism()
             .map_or(1, std::num::NonZero::get)
             .clamp(1, 8);
-        let per_worker = sheet.pages.len().div_ceil(workers);
+        // Les images intermédiaires suivent celles de la planche principale.
+        let pages: Vec<&SpritePage> = sheet
+            .pages
+            .iter()
+            .chain(sheet.inbetweens.iter().flat_map(|i| i.pages.iter()))
+            .collect();
+        let per_worker = pages.len().div_ceil(workers);
         let decoded: Vec<Result<Vec<DecodedPage>, SpriteError>> = std::thread::scope(|scope| {
-            let jobs: Vec<_> = sheet
-                .pages
+            let jobs: Vec<_> = pages
                 .chunks(per_worker)
                 .map(|pages| {
                     scope.spawn(move || {
@@ -88,7 +95,9 @@ impl SpriteFrames {
                 .collect()
         });
         let mut tile: Option<(u32, u32)> = None;
-        let mut frames = Vec::with_capacity(sheet.tile_count() as usize);
+        let regular = sheet.tile_count();
+        let mut frames =
+            Vec::with_capacity(pages.iter().map(|p| p.tiles_x * p.tiles_y).sum::<u32>() as usize);
         for page in decoded
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
@@ -112,7 +121,8 @@ impl SpriteFrames {
             tile_width,
             tile_height,
             scale: sheet.scale,
-            skin_block: (frames.len() as u32 / sheet.skins.max(1)).max(1),
+            skin_block: (regular / sheet.skins.max(1)).max(1),
+            regular,
             frames,
             facings: sheet.facings,
             anchor: (ax, ay),
@@ -137,9 +147,18 @@ impl SpriteFrames {
                 faces_right: self.facings == Facings::Right,
             }),
             Facings::Both => {
-                let half = self.skin_block / 2;
-                let base = index / self.skin_block * self.skin_block;
-                let within = index % self.skin_block;
+                // Images de la planche principale, par variante de couleur ;
+                // images intermédiaires à la suite, elles aussi dans les deux sens.
+                let (base, block) = if index >= self.regular {
+                    (
+                        self.regular,
+                        (self.frames.len() as u32 - self.regular).max(1),
+                    )
+                } else {
+                    (index / self.skin_block * self.skin_block, self.skin_block)
+                };
+                let half = block / 2;
+                let within = index - base;
                 let tile = if right && within < half {
                     base + half + within
                 } else {
@@ -398,6 +417,8 @@ pub fn encode_png_rgba(bitmap: &Bitmap) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mouflon_core::Inbetweens;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn png(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
@@ -486,6 +507,36 @@ mod tests {
         assert!(right.faces_right);
         assert_eq!(&right.frame.bitmap.rgba.data()[..2], &[200, 1]);
         assert_eq!(right.anchor_x, 6.0, "point d'appui en miroir");
+    }
+
+    #[test]
+    fn inbetweens_follow_the_sheet_in_both_facings() {
+        let strip = |shade: u8| SpritePage {
+            png: Arc::from(png(16, 8, move |x, _| [shade, (x / 8) as u8, 0, 255])),
+            tiles_x: 2,
+            tiles_y: 1,
+        };
+        let sheet = SpriteSheet {
+            pages: vec![strip(10), strip(200)],
+            facings: Facings::Both,
+            inbetweens: Some(Arc::new(Inbetweens {
+                pages: vec![strip(30), strip(230)],
+                pairs: HashMap::from([((0, 1), (4, 1)), ((1, 0), (5, 1))]),
+            })),
+            ..SpriteSheet::single(Arc::from(Vec::new()), 1, 1)
+        };
+        let frames = SpriteFrames::decode(&sheet).unwrap();
+        assert_eq!(frames.frames.len(), 8);
+        // Seconde image intermédiaire : vers la gauche, puis vers la droite.
+        let left = frames.pick(5, -1.0).unwrap();
+        assert!(!left.faces_right);
+        assert_eq!(&left.frame.bitmap.rgba.data()[..2], &[30, 1]);
+        let right = frames.pick(5, 1.0).unwrap();
+        assert!(right.faces_right);
+        assert_eq!(&right.frame.bitmap.rgba.data()[..2], &[230, 1]);
+        // La planche principale ne change pas.
+        let main = frames.pick(1, 1.0).unwrap();
+        assert_eq!(&main.frame.bitmap.rgba.data()[..2], &[200, 1]);
     }
 
     #[test]

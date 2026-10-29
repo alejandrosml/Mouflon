@@ -86,26 +86,26 @@ fn lainou_loads_and_paints_both_ways() {
         );
     }
 
-    // Tenu par le curseur : la laine du dos sous le curseur, l'ombre de
-    // Mouflon au sol.
+    // Tenu par le curseur : pris par le dos et emporté plus haut, il reste
+    // pris au même endroit, avec l'ombre de Mouflon au sol.
+    let caught = pet.position() + Vec2::new(12.0, -40.0);
+    pet.grab(caught, &world);
     let cursor = Vec2::new(640.0, 600.0);
-    pet.grab(cursor, &world);
     for _ in 0..(3.0 / TICK) as usize {
         pet.drag_to(cursor);
         pet.step(TICK, &world, &input);
     }
     let view = pet.view(1.0);
-    let hold = def.physics.hold.expect("point de prise");
-    let held = view.ground + Vec2::new(-hold.x * view.facing, hold.y);
+    let held = view.ground + Vec2::new(12.0, -40.0);
     assert!(
-        (held - cursor).length() < 1.0,
-        "{:?} {:?} {} {:?} {}",
+        (held - cursor).length() < 1e-3,
+        "{:?} {:?} {:?} {}",
         view.ground,
         held,
-        view.facing,
         view.support,
         view.behavior
     );
+    assert_eq!(view.grip, Some(cursor));
     let canvas = art.canvas();
     let origin = view.ground - canvas.anchor;
     let mut list = DisplayList::new((canvas.width * 2.0) as u32, (canvas.height * 2.0) as u32);

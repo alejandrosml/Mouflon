@@ -39,8 +39,6 @@ pub struct PetArt {
     /// Corps de l'animal, en points : demi-largeur et hauteur au-dessus du
     /// point d'appui (le curseur l'attrape là, les clics passent ailleurs).
     pub body: (f32, f32),
-    /// Point de prise par rapport au point d'appui, tourné vers la gauche.
-    pub hold: Option<CoreVec2>,
     /// Effets déjà dessinés dans les images.
     pub drawn: Drawn,
 }
@@ -66,7 +64,6 @@ impl PetArt {
                     look: Look::Rig(Arc::new(rig)),
                     lighting: 0.6,
                     body: (width * 0.46, *height * 1.02),
-                    hold: None,
                     drawn: Drawn::default(),
                 })
             }
@@ -79,7 +76,6 @@ impl PetArt {
                     look: Look::Sprites(Arc::new(frames)),
                     lighting: 0.0,
                     body: (p.width * 0.46, p.height * 1.02),
-                    hold: p.hold,
                     drawn: sheet.drawn,
                 })
             }
@@ -376,11 +372,9 @@ fn paint_sprite(
     }
     // En mouvement : écrasement depuis les pattes, balancement sous la main qui
     // le tient, inclinaison en vol, culbute, demi-tour qui pivote.
-    let facing = f64::from(view.facing.clamp(-1.0, 1.0)).signum();
-    let pivot = match (view.support, art.hold) {
-        (Support::Held, Some(hold)) => {
-            Point::new(g.x - f64::from(hold.x) * facing, g.y + f64::from(hold.y))
-        }
+    // Tenu, il se balance autour du point où le curseur le tient.
+    let pivot = match (view.support, view.grip) {
+        (Support::Held, Some(grip)) => pt(grip),
         (Support::Held, None) => {
             Point::new(g.x, g.y - f64::from(frames.tile_height) * s * 0.95 + offset)
         }

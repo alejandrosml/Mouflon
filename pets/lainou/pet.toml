@@ -22,7 +22,6 @@ strips_right = "planches/droite/{name}.png"
 frame = [256, 256]
 scale = 0.375                 # une image de 256 pixels fait 96 points
 anchor = [128, 226]           # milieu des sabots, sur le sol
-hold = [163, 102]             # la laine du dos, par où on l'attrape
 drawn = ["shadow", "dust", "squash"]
 
 [physics]

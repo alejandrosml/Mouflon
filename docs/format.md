@@ -143,7 +143,6 @@ strips_right = "planches/droite/{name}.png"   # facultatif : sinon, miroir des i
 frame = [256, 256]            # taille d'une image dans les bandes (pixels)
 scale = 0.375                 # points par pixel : 256 px font 96 points
 anchor = [128, 226]           # milieu des pattes, posé sur le sol (pixels)
-hold = [163, 102]             # point par lequel on l'attrape (image tournée à gauche)
 drawn = ["shadow", "dust", "squash"]   # effets déjà dessinés : Mouflon ne les ajoute pas
 
 [physics]
