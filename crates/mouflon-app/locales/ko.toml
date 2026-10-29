@@ -1,0 +1,21 @@
+# 한국어
+
+add_pet = "펫 추가"
+add_menu = "추가…"
+remove_all = "모두 제거"
+together = "모두 함께"
+pause = "일시 정지"
+frontmost_only = "맨 앞의 앱 위에서만 걷기"
+collisions = "펫 간 충돌"
+size = "크기"
+size_small = "작게"
+size_normal = "보통"
+size_large = "크게"
+size_huge = "아주 크게"
+open_pets_folder = "펫 폴더 열기"
+about = "Mouflon에 관하여"
+quit = "Mouflon 종료"
+
+# '관하여' 윈도우
+description = "가볍고 아름다운 데스크탑 친구 관리자."
+credits = "Adriano Petrucci의 desktopPet(eSheep) 펫과 호환됩니다. 전부 Rust로 작성되었습니다."

@@ -27,7 +27,10 @@ fn main() {
         .as_ref()
         .map(|p| settings::Settings::load(&p.settings))
         .unwrap_or_default();
-    let mut library = library::Library::load(paths.as_ref().map(|p| p.pets.as_path()));
+    let mut library = library::Library::load(
+        paths.as_ref().map(|p| p.pets.as_path()),
+        settings.size_factor(),
+    );
     // `mouflon chemin/vers/animal…` : charge ces animaux en plus et lance le
     // premier (pratique pour essayer un animal sans l'installer).
     let mut first = None;

@@ -431,6 +431,7 @@ impl App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
+                self.settings.size_index(),
             ) {
                 Ok(menu) => {
                     menu.set_paused(self.paused);
@@ -472,10 +473,47 @@ impl App {
         }
     }
 
+    /// Tous les animaux disent au revoir : chacun joue son animation d'adieu
+    /// et s'efface ; leurs fenêtres se ferment quand ils sont partis.
     fn remove_all(&mut self) {
-        self.flock.clear();
+        let input = self.input();
+        self.flock.leave_all(&self.world, &input);
+        self.pointer = Pointer::default();
+    }
+
+    /// Change la taille de tous les animaux, sans les interrompre.
+    fn set_size(&mut self, index: usize) {
+        let size = crate::settings::SIZES[index.min(crate::settings::SIZES.len() - 1)];
+        let old = self.settings.size_factor();
+        if (size - old).abs() < f32::EPSILON {
+            return;
+        }
+        self.settings.size = size;
+        if let Some(paths) = &self.paths {
+            self.settings.save(&paths.settings);
+        }
+        self.library.set_size(size);
+        let mut gone = Vec::new();
+        for pet in self.flock.pets_mut() {
+            let resized = self
+                .library
+                .current(pet.def())
+                .is_some_and(|entry| pet.rescale(Arc::clone(&entry.def), size / old));
+            if !resized {
+                // Plus dans la bibliothèque : on n'a plus de quoi le dessiner.
+                gone.push(pet.id());
+            }
+        }
+        for id in gone {
+            self.flock.remove(id);
+        }
+        // Les fenêtres sont refaites à la nouvelle taille.
         self.windows.clear();
         self.pointer = Pointer::default();
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(menu) = &self.menu {
+            menu.set_size(index);
+        }
     }
 
     fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
@@ -499,6 +537,15 @@ impl App {
                 }
             }
             Action::RemoveAll => self.remove_all(),
+            Action::Together => {
+                let input = self.input();
+                let count = self.flock.together(&self.world, &input);
+                log::info!("tous ensemble : {count} animal(aux)");
+            }
+            Action::SetSize(index) => {
+                self.set_size(index);
+                self.sync_windows(event_loop);
+            }
             Action::TogglePause => {
                 self.paused = !self.paused;
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -702,6 +749,7 @@ impl ApplicationHandler<UserEvent> for App {
                 &self.library,
                 self.settings.frontmost_only,
                 self.settings.collisions,
+                self.settings.size_index(),
             ) {
                 Ok(menu) => self.menu = Some(menu),
                 Err(e) => log::error!("impossible de créer le menu : {e}"),

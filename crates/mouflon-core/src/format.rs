@@ -248,6 +248,8 @@ pub fn parse_pet_toml(
             on_fall: resolve_list(&b.name, &b.on_fall)?,
             on_land: resolve_list(&b.name, &b.on_land)?,
             on_ceiling: Vec::new(),
+            on_meet: resolve_list(&b.name, &b.on_meet)?,
+            on_window_side: resolve_list(&b.name, &b.on_window_side)?,
             // Une animation image par image vérifie qu'elle a encore un appui.
             gravity: b.gravity.unwrap_or(scripted),
             flip_at_end: b.turns,
@@ -269,6 +271,10 @@ pub fn parse_pet_toml(
         wall: resolve_list("wall", &r.wall)?,
         poke: resolve_list("poke", &r.poke)?,
         bump: resolve_list("bump", &r.bump)?,
+        meet: resolve_list("meet", &r.meet)?,
+        window_side: resolve_list("window_side", &r.window_side)?,
+        leave: resolve_list("leave", &r.leave)?,
+        together: resolve_list("together", &r.together)?,
     };
 
     Ok(PetDef::new(meta, appearance, physics, behaviors, reflexes)?)
@@ -629,6 +635,10 @@ struct ReflexesToml {
     wall: Option<TransitionsToml>,
     poke: Option<TransitionsToml>,
     bump: Option<TransitionsToml>,
+    meet: Option<TransitionsToml>,
+    window_side: Option<TransitionsToml>,
+    leave: Option<TransitionsToml>,
+    together: Option<TransitionsToml>,
 }
 
 #[derive(Deserialize)]
@@ -646,6 +656,8 @@ struct BehaviorToml {
     on_wall: Option<TransitionsToml>,
     on_fall: Option<TransitionsToml>,
     on_land: Option<TransitionsToml>,
+    on_meet: Option<TransitionsToml>,
+    on_window_side: Option<TransitionsToml>,
     /// Sans transition de bord : continuer tout droit et tomber du rebord.
     #[serde(default)]
     walk_off_edges: bool,
@@ -990,6 +1002,33 @@ pub(crate) mod tests {
         );
         assert_eq!(def.default_ground(), 0);
         assert_eq!(def.default_air(), Some(3));
+    }
+
+    #[test]
+    fn parses_encounters_window_sides_and_farewells() {
+        let social = SAMPLE
+            .replace(
+                "edge = [{ to = \"turn\", weight = 3 }",
+                "meet = [{ to = \"stand\", weight = 2 }, { to = \"turn\", weight = 0 }]\n        \
+                 window_side = \"turn\"\n        leave = \"stand\"\n        together = \"turn\"\n        \
+                 edge = [{ to = \"turn\", weight = 3 }",
+            )
+            .replace(
+                "speed = 40.0",
+                "speed = 40.0\n        on_meet = \"turn\"\n        on_window_side = \"stand\"",
+            );
+        let def = parse_pet_toml(&social, fake_resolve).unwrap();
+        let r = &def.reflexes;
+        assert_eq!((r.meet.len(), r.meet[1].weight), (2, 0.0));
+        assert_eq!(
+            (r.window_side[0].to, r.leave[0].to, r.together[0].to),
+            (2, 0, 2)
+        );
+        let walk = &def.behaviors[1];
+        assert_eq!((walk.on_meet[0].to, walk.on_window_side[0].to), (2, 0));
+        // Une cible inconnue est signalée, comme ailleurs.
+        let broken = social.replace("leave = \"stand\"", "leave = \"bye\"");
+        assert!(parse_pet_toml(&broken, fake_resolve).is_err());
     }
 
     #[test]

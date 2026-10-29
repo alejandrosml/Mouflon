@@ -24,11 +24,15 @@ throw them across the desktop.
 - **Compatible with desktopPet**: Mouflon reads the pets of
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 and the
   community's pets) as they are, with all their scenes: climbing the screen
-  edges, walking on the ceiling, going down windows, secondary characters.
+  edges, walking on the ceiling, going down windows, secondary characters,
+  pets that meet and do things together, window sides that block the way.
 - **And much more**: high-definition sheets for desktopPet pets, a native
-  format with images drawn for both directions, a collision mode, pets that
-  walk on floating panels such as the Keyboard Viewer, install by drag and
-  drop, a menu in the language of macOS (English, French, Spanish).
+  format with images drawn for both directions, pets that greet each other or
+  tumble in collision mode, *All Together*, a goodbye before leaving, four
+  sizes, pets that walk on floating panels such as the Keyboard Viewer,
+  install by drag and drop, a menu in the language of macOS (English, French,
+  Spanish, German, Italian, Dutch, Portuguese, Russian, Japanese, Korean,
+  Chinese).
 - **Written entirely in Rust**: `unsafe` code only at the boundary with macOS,
   in a single crate, each block justified.
 
@@ -56,8 +60,9 @@ cargo run --release
 
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
 `animaux/` folder: Poete drops onto your frontmost window if it is there,
-Pelote otherwise. The menu bar icon adds pets, removes them all, pauses, turns
-collisions on, opens the pets folder and shows *About Mouflon*.
+Pelote otherwise. The menu bar icon adds pets, gets them all to play together,
+says goodbye to them, pauses, turns collisions on, changes their size, opens
+the pets folder and shows *About Mouflon*.
 
 To try a pet without installing it, pass its file or folder: it is loaded with
 the others, and it is the one that appears.
@@ -182,13 +187,10 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 ### Roadmap
 
-- Encounters: reactions when two pets meet (Lainou bleats, rejoices…), beyond
-  collisions; desktopPet's `petSide`.
-- desktopPet: sounds, window sides as obstacles, the `kill` and `sync` animations.
+- Sounds (desktopPet's included).
 - Non-activating windows (catching a pet no longer steals the focus).
 - Exact Dock, and window tracking through accessibility notifications.
-- A settings window (pet size…), sounds.
-- More languages.
+- A settings window.
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
 
@@ -220,12 +222,17 @@ se laissent attraper et lancer à travers le bureau.
 - **Compatible desktopPet** : Mouflon lit tels quels les animaux de
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 et ceux
   de la communauté), avec toutes leurs scènes : escalade des bords de l'écran,
-  marche au plafond, descente des fenêtres, personnages secondaires.
+  marche au plafond, descente des fenêtres, personnages secondaires, animaux
+  qui se rencontrent et font des choses ensemble, côtés des fenêtres qui
+  barrent le chemin.
 - **Et bien plus** : des planches haute définition pour les animaux desktopPet,
-  un format natif aux images dessinées dans les deux sens, un mode collisions,
-  des animaux qui marchent sur les panneaux flottants comme le visualiseur de
-  clavier, l'installation par glisser-déposer, un menu dans la langue de macOS
-  (anglais, français, espagnol).
+  un format natif aux images dessinées dans les deux sens, des animaux qui se
+  saluent, ou qui culbutent en mode collisions, « Tous ensemble », un au revoir
+  avant de partir, quatre tailles, des animaux qui marchent sur les panneaux
+  flottants comme le visualiseur de clavier, l'installation par
+  glisser-déposer, un menu dans la langue de macOS (anglais, français,
+  espagnol, allemand, italien, néerlandais, portugais, russe, japonais, coréen,
+  chinois).
 - **Écrit entièrement en Rust** : du code `unsafe` seulement à la frontière
   avec macOS, dans un seul crate, chaque bloc justifié.
 
@@ -253,9 +260,9 @@ cargo run --release
 
 Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du
 dossier `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est,
-sinon Pelote. L'icône de la barre des menus ajoute des animaux, les retire
-tous, met en pause, active les collisions, ouvre le dossier des animaux et
-affiche « À propos de Mouflon ».
+sinon Pelote. L'icône de la barre des menus ajoute des animaux, les fait jouer
+tous ensemble, leur dit au revoir, met en pause, active les collisions, change
+leur taille, ouvre le dossier des animaux et affiche « À propos de Mouflon ».
 
 Pour essayer un animal sans l'installer, passe son fichier ou son dossier en
 argument : il est chargé en plus des autres, et c'est lui qui apparaît.
@@ -382,13 +389,10 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 
 ### Feuille de route
 
-- Rencontres : réactions quand deux animaux se croisent (Lainou bêle, se
-  réjouit…), au-delà des collisions ; `petSide` de desktopPet.
-- desktopPet : sons, côtés des fenêtres comme obstacles, animations `kill` et `sync`.
+- Sons (ceux de desktopPet compris).
 - Fenêtres non activantes (attraper un animal ne vole plus le focus).
 - Dock exact et suivi des fenêtres par notifications d'accessibilité.
-- Fenêtre de réglages (taille des animaux…), sons.
-- D'autres langues.
+- Fenêtre de réglages.
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.
 

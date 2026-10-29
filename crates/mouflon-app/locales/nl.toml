@@ -1,0 +1,21 @@
+# Nederlands
+
+add_pet = "Voeg een dier toe"
+add_menu = "Voeg toe…"
+remove_all = "Verwijder alle"
+together = "Allemaal samen"
+pause = "Pauzeer"
+frontmost_only = "Loop alleen over de app op de voorgrond"
+collisions = "Botsingen tussen dieren"
+size = "Grootte"
+size_small = "Klein"
+size_normal = "Normaal"
+size_large = "Groot"
+size_huge = "Heel groot"
+open_pets_folder = "Open de map met dieren"
+about = "Over Mouflon"
+quit = "Stop Mouflon"
+
+# Venster ‘Over’
+description = "Een lichte en mooie beheerder van bureaubladmaatjes."
+credits = "Compatibel met de desktopPet-dieren (eSheep) van Adriano Petrucci. Volledig geschreven in Rust."

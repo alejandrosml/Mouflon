@@ -41,6 +41,24 @@ impl Surface {
     }
 }
 
+/// Partie visible du côté vertical d'une fenêtre : elle barre le chemin d'un
+/// animal qui marche vers la fenêtre (`windowSide` de desktopPet).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wall {
+    /// Fenêtre dont c'est le côté.
+    pub window: u64,
+    pub x: f32,
+    /// Haut et bas de la partie visible.
+    pub y0: f32,
+    pub y1: f32,
+    /// Côté vers lequel il regarde : -1 pour le côté gauche de la fenêtre
+    /// (il arrête un animal qui va vers la droite), 1 pour le côté droit.
+    pub facing: f32,
+}
+
+/// Un côté plus court que ceci (le reste est caché) ne barre rien.
+const MIN_WALL: f32 = 4.0;
+
 /// Un écran : son cadre complet et sa zone utile (sans barre des menus ni Dock).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Screen {
@@ -80,6 +98,7 @@ impl Default for LedgeOptions {
 pub struct World {
     screens: Vec<Screen>,
     surfaces: Vec<Surface>,
+    walls: Vec<Wall>,
     arena: Rect,
     bounds: Rect,
 }
@@ -119,11 +138,41 @@ impl World {
         }
     }
 
-    /// Remplace les rebords de fenêtres à partir de la liste fournie par le système.
+    /// Remplace les rebords et les côtés des fenêtres à partir de la liste
+    /// fournie par le système.
     pub fn set_windows(&mut self, windows: &[WindowRect], options: LedgeOptions) {
         let ledges = visible_ledges(windows, &self.screens, options);
         self.surfaces.retain(|s| s.kind == SurfaceKind::Floor);
         self.surfaces.extend(ledges);
+        self.walls = visible_walls(windows);
+    }
+
+    /// Côtés visibles des fenêtres.
+    #[must_use]
+    pub fn walls(&self) -> &[Wall] {
+        &self.walls
+    }
+
+    /// Premier côté de fenêtre que franchit l'avant d'un animal qui va de
+    /// l'abscisse `from` à `to`, son corps couvrant les hauteurs `top` à
+    /// `bottom`. Seul compte un côté tourné vers lui : on sort librement
+    /// d'une fenêtre devant laquelle on se trouve.
+    #[must_use]
+    pub fn wall_crossed(&self, from: f32, to: f32, top: f32, bottom: f32) -> Option<&Wall> {
+        if to == from {
+            return None;
+        }
+        let dir = (to - from).signum();
+        self.walls
+            .iter()
+            .filter(|w| {
+                w.facing == -dir
+                    && (w.x - from) * dir >= 0.0
+                    && (to - w.x) * dir > 0.0
+                    && w.y0 < bottom - 1.0
+                    && w.y1 > top + 1.0
+            })
+            .min_by(|a, b| ((a.x - from) * dir).total_cmp(&((b.x - from) * dir)))
     }
 
     #[must_use]
@@ -271,6 +320,41 @@ pub fn visible_ledges(
     out
 }
 
+/// Calcule les parties visibles des côtés de chaque fenêtre : une fenêtre
+/// placée devant cache la partie d'un côté qu'elle recouvre.
+#[must_use]
+pub fn visible_walls(windows: &[WindowRect]) -> Vec<Wall> {
+    let mut out = Vec::new();
+    for (index, window) in windows.iter().enumerate() {
+        let f = window.frame;
+        for (x, facing) in [(f.left(), -1.0), (f.right(), 1.0)] {
+            let mut spans = vec![(f.top(), f.bottom())];
+            for front in &windows[..index] {
+                let g = front.frame;
+                if g.left() < x && g.right() > x {
+                    spans = subtract_span(&spans, g.top(), g.bottom());
+                    if spans.is_empty() {
+                        break;
+                    }
+                }
+            }
+            out.extend(
+                spans
+                    .into_iter()
+                    .filter(|(y0, y1)| y1 - y0 >= MIN_WALL)
+                    .map(|(y0, y1)| Wall {
+                        window: window.id,
+                        x,
+                        y0,
+                        y1,
+                        facing,
+                    }),
+            );
+        }
+    }
+    out
+}
+
 fn subtract_span(spans: &[(f32, f32)], cut0: f32, cut1: f32) -> Vec<(f32, f32)> {
     let mut out = Vec::with_capacity(spans.len() + 1);
     for &(a, b) in spans {
@@ -336,6 +420,63 @@ mod tests {
             frame: Rect::new(0.0, 25.0, 1440.0, 800.0),
         }];
         assert!(visible_ledges(&windows, &[screen()], LedgeOptions::default()).is_empty());
+    }
+
+    #[test]
+    fn front_window_hides_part_of_a_side() {
+        let windows = [
+            WindowRect {
+                id: 1,
+                frame: Rect::new(50.0, 300.0, 200.0, 100.0),
+            },
+            WindowRect {
+                id: 2,
+                frame: Rect::new(100.0, 200.0, 600.0, 400.0),
+            },
+        ];
+        let walls = visible_walls(&windows);
+        let back_left: Vec<_> = walls
+            .iter()
+            .filter(|w| w.window == 2 && w.facing < 0.0)
+            .map(|w| (w.x, w.y0, w.y1))
+            .collect();
+        assert_eq!(
+            back_left,
+            vec![(100.0, 200.0, 300.0), (100.0, 400.0, 600.0)]
+        );
+        let back_right: Vec<_> = walls
+            .iter()
+            .filter(|w| w.window == 2 && w.facing > 0.0)
+            .map(|w| (w.x, w.y0, w.y1))
+            .collect();
+        assert_eq!(back_right, vec![(700.0, 200.0, 600.0)]);
+        // La fenêtre de devant garde ses deux côtés entiers.
+        assert_eq!(walls.iter().filter(|w| w.window == 1).count(), 2);
+    }
+
+    #[test]
+    fn a_side_stops_only_who_walks_into_it() {
+        let mut world = World::new(vec![screen()]);
+        world.set_windows(
+            &[WindowRect {
+                id: 7,
+                frame: Rect::new(500.0, 600.0, 400.0, 400.0),
+            }],
+            LedgeOptions::default(),
+        );
+        // Au sol (corps de 765 à 825), vers la droite : le côté gauche l'arrête.
+        let wall = world.wall_crossed(498.0, 501.0, 765.0, 825.0).unwrap();
+        assert_eq!((wall.x, wall.facing), (500.0, -1.0));
+        // Vers la gauche, de l'autre côté : le côté droit.
+        let wall = world.wall_crossed(902.0, 899.0, 765.0, 825.0).unwrap();
+        assert_eq!((wall.x, wall.facing), (900.0, 1.0));
+        // Devant la fenêtre, il en sort librement.
+        assert!(world.wall_crossed(899.0, 902.0, 765.0, 825.0).is_none());
+        assert!(world.wall_crossed(501.0, 498.0, 765.0, 825.0).is_none());
+        // Au-dessus de la fenêtre (sur un rebord plus haut), rien ne l'arrête.
+        assert!(world.wall_crossed(498.0, 501.0, 500.0, 560.0).is_none());
+        // Pas encore arrivé au côté.
+        assert!(world.wall_crossed(480.0, 483.0, 765.0, 825.0).is_none());
     }
 
     #[test]

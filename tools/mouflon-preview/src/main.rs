@@ -114,6 +114,12 @@ fn main() -> Result<(), Error> {
         let count = render_meeting(&def, &art, &frames, &walk)?;
         println!("{count} images dans {}", frames.display());
     }
+    if mode == "salut" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_greeting(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
     if mode == "planche" {
         for (facing, name) in [(-1.0, "planche-gauche.png"), (1.0, "planche-droite.png")] {
             let path = out_dir.join(name);
@@ -239,6 +245,124 @@ fn render_meeting(
         }
     }
     Ok(frames)
+}
+
+// ---------------------------------------------------------------- salut
+
+/// Sans mode collisions : deux animaux se rencontrent et réagissent, un
+/// troisième bute contre le côté d'une fenêtre, puis « Tous ensemble » et
+/// « Au revoir ».
+fn render_greeting(
+    def: &Arc<mouflon_core::PetDef>,
+    art: &PetArt,
+    dir: &Path,
+) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let mut world = World::new(vec![screen()]);
+    // Une fenêtre qui descend jusqu'au Dock, à droite.
+    let window = Rect::new(700.0, 300.0, 240.0, SCREEN_H - DOCK_H - 300.0 + 20.0);
+    world.set_windows(
+        &[WindowRect {
+            id: 1,
+            frame: window,
+        }],
+        LedgeOptions::default(),
+    );
+    let walk = ["walk", "marche"]
+        .into_iter()
+        .find(|n| def.behavior_index(n).is_some())
+        .unwrap_or("walk");
+    let mut flock = Flock::new();
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(250.0));
+    let b = flock.spawn(Arc::clone(def), 5, &world, Some(430.0));
+    let c = flock.spawn(Arc::clone(def), 8, &world, Some(600.0));
+    let input = Input {
+        cursor: None,
+        local_hour: 15.0,
+    };
+    // Une fois tout le monde posé (la chute d'un animal desktopPet est
+    // lente), les deux premiers marchent l'un vers l'autre et le troisième
+    // vers la fenêtre ; puis « Tous ensemble » et « Au revoir ».
+    let landing = [
+        "fall",
+        "fall soft",
+        "fall hard",
+        "arrivee",
+        "atterrit",
+        "atterrit_sonne",
+    ];
+    let mut start: Option<f32> = None;
+    let mut frame = 0;
+    loop {
+        let t = frame as f32 / RATE as f32;
+        let settled = flock.pets().iter().all(|p| {
+            matches!(p.support(), Support::Ground { .. }) && !landing.contains(&p.behavior_name())
+        });
+        if start.is_none() && t >= 1.0 && (settled || t > 12.0) {
+            start = Some(t);
+            for (id, facing) in [(a, 1.0), (b, -1.0), (c, 1.0)] {
+                if let Some(pet) = flock.get_mut(id) {
+                    pet.face(facing);
+                    pet.force(walk);
+                }
+            }
+        }
+        let since = start.map_or(-1.0, |s| t - s);
+        let at = |s: f32| (since - s).abs() < 0.5 / RATE as f32;
+        if since > 12.5 || flock.pets().is_empty() && since > 0.0 {
+            break;
+        }
+        if at(7.0) {
+            println!(
+                "{t:4.1} s : tous ensemble ({})",
+                flock.together(&world, &input)
+            );
+        }
+        if at(9.5) {
+            println!("{t:4.1} s : au revoir");
+            flock.leave_all(&world, &input);
+        }
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        let script = Script {
+            w1: window,
+            w2: Rect::new(-1000.0, 0.0, 1.0, 1.0),
+        };
+        paint_desktop(&mut list, &script, 0.0);
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &Frame {
+                    origin: Vec2::ZERO,
+                    scale: SCALE,
+                },
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 2) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@{:.0}{}",
+                        p.behavior_name(),
+                        p.position().x,
+                        if p.is_leaving() { " (s'en va)" } else { "" }
+                    )
+                })
+                .collect();
+            println!("{t:4.1} s : {}", states.join(", "));
+        }
+        frame += 1;
+    }
+    Ok(frame)
 }
 
 // ---------------------------------------------------------------- planche

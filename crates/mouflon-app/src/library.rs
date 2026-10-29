@@ -19,7 +19,10 @@ const MASCOTS: [&str; 3] = ["poete", "pelote", "lainou"];
 
 #[derive(Clone, Debug)]
 pub struct Entry {
+    /// L'animal à la taille choisie dans le menu.
     pub def: Arc<PetDef>,
+    /// L'animal à la taille prévue par son fichier.
+    base: Arc<PetDef>,
     /// Dessin préparé à la première apparition : décoder des centaines
     /// d'images prend un moment, et elles n'occupent la mémoire que si
     /// l'animal sert.
@@ -27,11 +30,19 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn new(def: PetDef) -> Self {
+    fn new(def: PetDef, size: f32) -> Self {
+        let base = Arc::new(def);
         Self {
-            def: Arc::new(def),
+            def: Arc::new(base.scaled(size)),
+            base,
             art: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Met l'animal à une autre taille ; son dessin sera refait à la demande.
+    fn resize(&mut self, size: f32) {
+        self.def = Arc::new(self.base.scaled(size));
+        self.art = Arc::new(OnceLock::new());
     }
 
     /// Dessin de l'animal, préparé à la première demande ; `None` s'il est
@@ -68,6 +79,8 @@ pub struct Library {
     bundled: Vec<String>,
     /// Animaux passés en argument, rechargés avec le reste.
     extra: Vec<PathBuf>,
+    /// Taille des animaux, par rapport à celle prévue par chacun.
+    size: f32,
     /// État du dossier au dernier chargement.
     stamp: Stamp,
 }
@@ -181,13 +194,29 @@ fn builtin_mannequin() -> Result<PetDef, LoadError> {
 
 impl Library {
     #[must_use]
-    pub fn load(user_dir: Option<&Path>) -> Self {
+    pub fn load(user_dir: Option<&Path>, size: f32) -> Self {
         let mut library = Self {
             dir: user_dir.map(Path::to_path_buf),
+            size,
             ..Self::default()
         };
         library.reload();
         library
+    }
+
+    /// Met tous les animaux à une autre taille (1 : celle prévue par chacun).
+    pub fn set_size(&mut self, size: f32) {
+        self.size = size;
+        for entry in &mut self.pets {
+            entry.resize(size);
+        }
+    }
+
+    /// L'animal de la bibliothèque dont `def` est une version (même
+    /// identifiant), à la taille courante.
+    #[must_use]
+    pub fn current(&self, def: &PetDef) -> Option<&Entry> {
+        self.pets.iter().find(|e| e.def.meta.id == def.meta.id)
     }
 
     /// Recharge tout : l'animal intégré, le dossier de l'utilisateur et les
@@ -226,7 +255,7 @@ impl Library {
     }
 
     fn add(&mut self, def: PetDef, origin: &str) {
-        let entry = Entry::new(def);
+        let entry = Entry::new(def, self.size);
         // Un dessin vectoriel se lit vite : on le vérifie tout de suite. Les
         // images attendent la première apparition (leurs en-têtes sont déjà vérifiés).
         if matches!(entry.def.appearance, Appearance::Rig { .. }) && entry.art().is_none() {
@@ -366,7 +395,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut library = Library::load(Some(&pets));
+        let mut library = Library::load(Some(&pets), 1.0);
         assert_eq!(library.pets.len(), 1);
         assert!(!library.changed());
         let id = library.install(&source.join("pet.toml")).unwrap();
@@ -377,6 +406,16 @@ mod tests {
 
         std::fs::create_dir_all(pets.join("vide")).unwrap();
         assert!(library.changed(), "un nouveau dossier est remarqué");
+
+        // Plus grand : le dessin et le corps suivent, l'original ne change pas.
+        let height = |library: &Library| library.pets[0].art().unwrap().height;
+        let normal = height(&library);
+        let width = library.pets[0].def.physics.width;
+        library.set_size(1.5);
+        assert!((height(&library) - normal * 1.5).abs() < 0.01);
+        assert!((library.pets[0].def.physics.width - width * 1.5).abs() < 0.01);
+        library.set_size(1.0);
+        assert!((height(&library) - normal).abs() < 0.01);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -51,11 +51,23 @@ pub enum PetEvent {
     Bumped {
         speed: f32,
     },
+    /// A rencontré un autre animal et réagit.
+    Met {
+        other: u32,
+    },
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
 /// relever avant qu'un autre ne puisse le renverser de nouveau.
 const BUMP_COOLDOWN: f32 = 3.5;
+
+/// Pause entre deux rencontres d'un même animal (secondes).
+const MEET_COOLDOWN: f32 = 2.5;
+
+/// Au revoir : durée du fondu, et durée au-delà de laquelle l'animation
+/// d'adieu est écourtée.
+const FADE_TIME: f32 = 1.2;
+const LEAVE_MAX: f32 = 6.0;
 
 /// Un animal qui tombe se pose sur une surface dont le bord est à moins de
 /// cette fraction de sa largeur (ses pattes la touchent encore).
@@ -288,10 +300,23 @@ pub struct Pet {
     knocked: bool,
     /// Temps avant de pouvoir être heurté de nouveau.
     bump_cooldown: f32,
+    /// Temps avant de pouvoir rencontrer un autre animal.
+    meet_cooldown: f32,
+    /// En train de dire au revoir.
+    leaving: Option<Leaving>,
     anim: Anim,
     particles: Vec<Particle>,
     events: Vec<PetEvent>,
     shadow: Option<Shadow>,
+}
+
+/// Au revoir : l'animal joue son animation d'adieu, puis s'efface.
+#[derive(Clone, Copy, Debug)]
+struct Leaving {
+    /// Temps écoulé depuis l'au revoir.
+    time: f32,
+    /// Opacité restante, une fois le fondu commencé.
+    fade: Option<f32>,
 }
 
 /// Demande d'apparition d'un personnage secondaire.
@@ -523,6 +548,8 @@ impl Pet {
             children: Vec::new(),
             knocked: false,
             bump_cooldown: 0.0,
+            meet_cooldown: 0.0,
+            leaving: None,
             anim,
             particles: Vec::new(),
             events: Vec::new(),
@@ -621,7 +648,7 @@ impl Pet {
 
     /// Le curseur attrape l'animal.
     pub fn grab(&mut self, cursor: Vec2, world: &World) {
-        if self.is_child() {
+        if self.is_child() || self.leaving.is_some() {
             return;
         }
         self.hold = Some(Hold {
@@ -690,6 +717,30 @@ impl Pet {
         }
     }
 
+    /// Change la taille de l'animal sans l'interrompre. `def` est la même
+    /// définition à une autre échelle (voir [`PetDef::scaled`]) et `ratio`
+    /// le rapport de la nouvelle taille à l'ancienne ; ses pattes restent
+    /// où elles sont. Renvoie `false` (et ne change rien) si `def` n'a pas
+    /// les mêmes comportements.
+    pub fn rescale(&mut self, def: Arc<PetDef>, ratio: f32) -> bool {
+        let same = def.behaviors.len() == self.def.behaviors.len()
+            && def
+                .behaviors
+                .iter()
+                .zip(&self.def.behaviors)
+                .all(|(a, b)| a.name == b.name);
+        if !same || ratio.is_nan() || ratio <= 0.0 {
+            return false;
+        }
+        self.def = def;
+        self.vel *= ratio;
+        self.script = [self.script[0] * ratio, self.script[1] * ratio];
+        if let Some(hold) = &mut self.hold {
+            hold.offset *= ratio;
+        }
+        true
+    }
+
     /// Tourne l'animal d'un coup vers la droite (1) ou la gauche (-1) : outils et tests.
     pub fn face(&mut self, facing: f32) {
         self.facing = if facing < 0.0 { -1.0 } else { 1.0 };
@@ -699,7 +750,128 @@ impl Pet {
     /// Peut-il être heurté par un autre animal (mode collisions) ?
     #[must_use]
     pub fn can_bump(&self) -> bool {
-        !self.is_child() && !self.finished && !self.is_held() && self.bump_cooldown <= 0.0
+        !self.is_child()
+            && !self.finished
+            && !self.is_held()
+            && self.leaving.is_none()
+            && self.bump_cooldown <= 0.0
+    }
+
+    /// En train de dire au revoir (il s'efface ensuite).
+    #[must_use]
+    pub fn is_leaving(&self) -> bool {
+        self.leaving.is_some()
+    }
+
+    /// Dit au revoir : l'animal joue son animation d'adieu s'il en a une et
+    /// qu'il est posé, puis s'efface et quitte le troupeau.
+    pub fn leave(&mut self, world: &World, input: &Input) {
+        if self.leaving.is_some() || self.finished {
+            return;
+        }
+        let mut leaving = Leaving {
+            time: 0.0,
+            fade: Some(1.0),
+        };
+        if self.hold.is_some() {
+            self.release(world);
+        } else if matches!(self.support, Support::Ground { .. }) && !self.is_child() {
+            let def = Arc::clone(&self.def);
+            if let Some(next) = self.choose(&def.reflexes.leave, world, input) {
+                self.enter(next);
+                leaving.fade = None;
+            }
+        }
+        self.leaving = Some(leaving);
+    }
+
+    /// Tous ensemble : l'animal joue son comportement `together` s'il en a
+    /// un et qu'il est libre (posé, ni tenu ni en partance). Renvoie `true`
+    /// s'il le joue.
+    pub fn together(&mut self, world: &World, input: &Input) -> bool {
+        if self.is_child()
+            || self.leaving.is_some()
+            || !matches!(self.support, Support::Ground { .. })
+        {
+            return false;
+        }
+        let def = Arc::clone(&self.def);
+        match self.choose(&def.reflexes.together, world, input) {
+            Some(next) => {
+                self.enter(next);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Peut-il en rencontrer un autre (hors mode collisions) ?
+    fn can_meet(&self) -> bool {
+        !self.is_child()
+            && !self.finished
+            && self.hold.is_none()
+            && self.leaving.is_none()
+            && self.meet_cooldown <= 0.0
+            && matches!(self.support, Support::Ground { .. })
+    }
+
+    /// Réactions possibles à une rencontre pendant le comportement en cours.
+    /// Un animal desktopPet suit son animation ; un animal Mouflon prend le
+    /// réflexe `meet` quand il est en chemin, et ne réagit au repos que si
+    /// son comportement le prévoit.
+    fn meet_reactions<'d>(&self, def: &'d PetDef) -> &'d [Transition] {
+        let behavior = &def.behaviors[self.behavior];
+        if !behavior.on_meet.is_empty() || def.rules == Rules::DesktopPet {
+            &behavior.on_meet
+        } else if self.vel.x.abs() > 1.0 {
+            &def.reflexes.meet
+        } else {
+            &[]
+        }
+    }
+
+    /// Le côté d'une fenêtre barre le chemin de l'animal qui avance de `dx` :
+    /// renvoie sa réaction et l'abscisse où il s'arrête, ou rien (il passe
+    /// alors devant la fenêtre). Un animal Mouflon en l'air ne réagit que si
+    /// son comportement le prévoit.
+    fn window_side(
+        &mut self,
+        dx: f32,
+        world: &World,
+        input: &Input,
+        grounded: bool,
+    ) -> Option<(usize, f32)> {
+        let def = Arc::clone(&self.def);
+        let p = def.physics;
+        let behavior = &def.behaviors[self.behavior];
+        let list: &[Transition] = if !behavior.on_window_side.is_empty() {
+            &behavior.on_window_side
+        } else if grounded {
+            &def.reflexes.window_side
+        } else {
+            &[]
+        };
+        if list.is_empty() || dx == 0.0 {
+            return None;
+        }
+        let dir = dx.signum();
+        let half = p.width * 0.5;
+        let front = self.pos.x + dir * half;
+        let wall = world.wall_crossed(front, front + dx, self.pos.y - p.height, self.pos.y)?;
+        // Pas la place de se tenir entre la fenêtre et le bord de l'écran : on
+        // l'ignore (desktopPet).
+        let arena = world.arena();
+        let room = if dir > 0.0 {
+            wall.x - arena.left()
+        } else {
+            arena.right() - wall.x
+        };
+        if room < p.width {
+            return None;
+        }
+        let x = wall.x - dir * half;
+        let next = self.choose(list, world, input)?;
+        Some((next, x))
     }
 
     /// Heurté par un autre animal : il part en arrière avec l'élan `push`
@@ -759,7 +931,7 @@ impl Pet {
 
     /// Un clic sans glisser.
     pub fn poke(&mut self, world: &World, input: &Input) {
-        if self.is_child() {
+        if self.is_child() || self.leaving.is_some() {
             return;
         }
         self.events.push(PetEvent::Poked);
@@ -778,6 +950,19 @@ impl Pet {
     pub fn step(&mut self, dt: f32, world: &World, input: &Input) {
         self.prev_pos = self.pos;
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
+        self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
+        if let Some(leaving) = &mut self.leaving {
+            leaving.time += dt;
+            if leaving.fade.is_none() && leaving.time >= LEAVE_MAX {
+                leaving.fade = Some(1.0);
+            }
+            if let Some(fade) = &mut leaving.fade {
+                *fade -= dt / FADE_TIME;
+                if *fade <= 0.0 {
+                    self.finished = true;
+                }
+            }
+        }
         self.update_screen(world);
         let scripted = matches!(self.def.behaviors[self.behavior].motion, Motion::Script(_));
         match self.support {
@@ -815,6 +1000,15 @@ impl Pet {
         };
         self.vel.x = approach(self.vel.x, desired, accel * dt);
         self.vel.y = 0.0;
+        // Le côté d'une fenêtre barre le chemin : il réagit, ou passe devant.
+        if desired != 0.0
+            && let Some((next, x)) = self.window_side(self.vel.x * dt, world, input, true)
+        {
+            self.pos.x = x;
+            self.vel.x = 0.0;
+            self.enter(next);
+            return;
+        }
         self.pos.x += self.vel.x * dt;
 
         // Bords de la surface : le museau prévient avant que les pattes n'y arrivent,
@@ -1065,6 +1259,11 @@ impl Pet {
             Duration::Forever => false,
         };
         if !finished || self.support == Support::Held || self.finished {
+            return;
+        }
+        // L'animation d'adieu est finie : il s'efface sur sa dernière image.
+        if let Some(leaving) = &mut self.leaving {
+            leaving.fade.get_or_insert(1.0);
             return;
         }
         if behavior.flip_at_end {
@@ -1559,6 +1758,11 @@ impl Pet {
             }
             None => (None, 0.0, 1.0),
         };
+        let fade = self
+            .leaving
+            .and_then(|l| l.fade)
+            .map_or(1.0, |f| f.clamp(0.0, 1.0));
+        let opacity = opacity * fade;
         PetView {
             id: self.id,
             ground: self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
@@ -1634,6 +1838,100 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
     Some((push(&pa, -side), push(&pb, side)))
 }
 
+/// `a` vient-il, en marchant, de toucher `b` posé au même niveau ?
+fn meeting(a: &Pet, b: &Pet) -> bool {
+    if !a.can_meet() || !b.can_meet() || (a.pos.y - b.pos.y).abs() > 2.0 {
+        return false;
+    }
+    let dx = b.pos.x - a.pos.x;
+    if dx == 0.0 || a.vel.x * dx.signum() <= 1.0 {
+        return false;
+    }
+    // Ils se touchent à ce pas-ci (corps côte à côte, de leur largeur).
+    let reach = 0.5 * (a.def.physics.width + b.def.physics.width);
+    let before = (b.prev_pos.x - a.prev_pos.x).abs();
+    dx.abs() <= reach && before > reach
+}
+
+/// `a` a touché `b` : ce que chacun fait, comme dans desktopPet.
+///
+/// 1. S'ils ont des réactions en commun (même nom, poids non nul), les
+///    deux font la même chose.
+/// 2. Sinon, si `b` joue une réaction que `a` connaît (même de poids nul),
+///    `a` l'imite une fois sur deux.
+/// 3. Sinon, chacun réagit de son côté ; `b` seulement s'il fait face à `a`.
+///
+/// Sans réaction, `a` passe son chemin (il croise l'autre).
+fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
+    let (def_a, def_b) = (Arc::clone(&a.def), Arc::clone(&b.def));
+    let list_a = a.meet_reactions(&def_a);
+    let list_b = b.meet_reactions(&def_b);
+    let name_a = |t: &Transition| def_a.behaviors[t.to].name.as_str();
+    let current_b = def_b.behaviors[b.behavior].name.as_str();
+    // Même sens (ou `b` dans son dos) : `a` ne peut qu'imiter.
+    let same_direction = a.facing == b.facing
+        || (a.facing < 0.0 && b.pos.x > a.pos.x)
+        || (a.facing > 0.0 && b.pos.x < a.pos.x);
+    let mut common = Vec::new();
+    let mut mimic = None;
+    for t in list_a {
+        if name_a(t) == current_b {
+            mimic = Some(t.to);
+        }
+        if same_direction {
+            if mimic.is_some() {
+                break;
+            }
+            continue;
+        }
+        if t.weight > 0.0
+            && list_b
+                .iter()
+                .any(|u| u.weight > 0.0 && def_b.behaviors[u.to].name == name_a(t))
+        {
+            common.push(t.clone());
+        }
+    }
+
+    let mut a_reacts = false;
+    let mut b_reacts = false;
+    if !common.is_empty() {
+        if let Some(next) = a.choose(&common, world, input) {
+            a.enter(next);
+            a_reacts = true;
+            if let Some(next_b) = def_b.behavior_index(&def_a.behaviors[next].name) {
+                b.enter(next_b);
+                b_reacts = true;
+            }
+        }
+    } else if let Some(next) = mimic.filter(|_| a.rng.chance(0.5)) {
+        a.enter(next);
+        a_reacts = true;
+    } else {
+        if let Some(next) = a.choose(list_a, world, input) {
+            a.enter(next);
+            a_reacts = true;
+        }
+        if !same_direction && let Some(next) = b.choose(list_b, world, input) {
+            b.enter(next);
+            b_reacts = true;
+        }
+    }
+    if a_reacts {
+        // Il s'arrête contre l'autre, sans le chevaucher.
+        let dir = (b.pos.x - a.pos.x).signum();
+        let reach = 0.5 * (def_a.physics.width + def_b.physics.width);
+        a.pos.x = b.pos.x - dir * reach;
+        a.vel.x = 0.0;
+    }
+    if a_reacts || b_reacts {
+        a.meet_cooldown = MEET_COOLDOWN;
+        b.meet_cooldown = MEET_COOLDOWN;
+        a.events.push(PetEvent::Met { other: b.id });
+        b.events.push(PetEvent::Met { other: a.id });
+    }
+}
+
 impl Flock {
     #[must_use]
     pub fn new() -> Self {
@@ -1691,6 +1989,8 @@ impl Flock {
             }
             if self.collisions {
                 self.collide(world, input);
+            } else {
+                self.meet(world, input);
             }
             self.adopt_children(world);
             self.accumulator -= TICK;
@@ -1710,6 +2010,43 @@ impl Flock {
                 right[0].knock(push_j, world, input);
             }
         }
+    }
+
+    /// Rencontres : un animal qui en atteint un autre en marchant réagit,
+    /// et l'autre parfois avec lui (`petSide` de desktopPet).
+    fn meet(&mut self, world: &World, input: &Input) {
+        for i in 0..self.pets.len() {
+            for j in 0..self.pets.len() {
+                if i == j || !meeting(&self.pets[i], &self.pets[j]) {
+                    continue;
+                }
+                let (a, b) = if i < j {
+                    let (left, right) = self.pets.split_at_mut(j);
+                    (&mut left[i], &mut right[0])
+                } else {
+                    let (left, right) = self.pets.split_at_mut(i);
+                    (&mut right[0], &mut left[j])
+                };
+                encounter(a, b, world, input);
+            }
+        }
+    }
+
+    /// Tous les animaux disent au revoir : chacun joue son animation
+    /// d'adieu, s'efface, puis quitte le troupeau.
+    pub fn leave_all(&mut self, world: &World, input: &Input) {
+        for pet in &mut self.pets {
+            pet.leave(world, input);
+        }
+    }
+
+    /// Tous ensemble : chaque animal libre joue son comportement `together`.
+    /// Renvoie le nombre d'animaux qui le jouent.
+    pub fn together(&mut self, world: &World, input: &Input) -> usize {
+        self.pets
+            .iter_mut()
+            .filter_map(|pet| pet.together(world, input).then_some(()))
+            .count()
     }
 
     /// Fait apparaître les personnages secondaires demandés et retire ceux
@@ -2279,12 +2616,20 @@ mod tests {
 
     #[test]
     fn lainou_lives_a_long_life() {
-        let (def, seconds_in) = long_life("lainou", 30.0, 40.0, true);
+        // Sans collisions, les Lainou se rencontrent et se saluent.
+        let (def, seconds_in) = long_life("lainou", 30.0, 40.0, false);
         let never: Vec<&str> = never_played(&def, &seconds_in)
             .into_iter()
-            .filter(|n| !matches!(*n, "tenu" | "tombe"))
+            .filter(|n| !matches!(*n, "tenu" | "tombe" | "au_revoir" | "culbute"))
             .collect();
         assert!(never.len() <= 3, "jamais joués : {never:?}");
+        assert!(
+            seconds_in.contains_key("salue") || seconds_in.contains_key("fete"),
+            "ils ne se sont jamais rencontrés"
+        );
+        // En mode collisions, ils se bousculent et ne restent pas coincés.
+        let (_, seconds_in) = long_life("lainou", 10.0, 40.0, true);
+        assert!(seconds_in.contains_key("culbute"));
     }
 
     #[test]
@@ -2313,5 +2658,299 @@ mod tests {
         let down = seconds_in.get("fall soft").copied().unwrap_or(0.0)
             + seconds_in.get("toss").copied().unwrap_or(0.0);
         assert!(down < total * 0.3, "{down} s à terre sur {total} s");
+    }
+
+    /// Animal qui salue ceux qu'il rencontre, se retourne devant les
+    /// fenêtres, dit au revoir et sait jouer avec les autres.
+    const SOCIAL: &str = r#"
+        [pet]
+        id = "s"
+        name = "S"
+        [appearance]
+        rig = "a.svg"
+        height = 60.0
+        [reflexes]
+        spawn = "fall"
+        fall = "fall"
+        land = "stand"
+        thrown = "fall"
+        edge = "turn"
+        wall = "turn"
+        meet = "greet"
+        window_side = "turn"
+        leave = "wave"
+        together = "hop"
+        [[behavior]]
+        name = "stand"
+        motion = "stand"
+        duration = 0.5
+        next = "walk"
+        [[behavior]]
+        name = "walk"
+        motion = "walk"
+        speed = 60.0
+        duration = 30
+        next = "stand"
+        [[behavior]]
+        name = "rest"
+        motion = "sit"
+        duration = 30
+        next = "stand"
+        [[behavior]]
+        name = "turn"
+        motion = "turn"
+        duration = 0.2
+        next = "walk"
+        [[behavior]]
+        name = "greet"
+        motion = "stand"
+        duration = 0.6
+        next = "turn"
+        [[behavior]]
+        name = "wave"
+        motion = "stand"
+        duration = 0.5
+        next = "stand"
+        [[behavior]]
+        name = "hop"
+        motion = "sit"
+        duration = 0.4
+        next = "stand"
+        [[behavior]]
+        name = "fall"
+        motion = "fall"
+        duration = "forever"
+    "#;
+
+    fn social() -> Arc<PetDef> {
+        Arc::new(parse_pet_toml(SOCIAL, |_| Ok(b"<svg/>".to_vec())).unwrap())
+    }
+
+    /// Pose un animal du troupeau sur le sol, tourné et occupé comme voulu.
+    fn put(flock: &mut Flock, world: &World, id: u32, x: f32, facing: f32, behavior: &str) {
+        let floor = *world.floor_under(x).unwrap();
+        let pet = flock.get_mut(id).unwrap();
+        pet.pos = Vec2::new(x, floor.y);
+        pet.prev_pos = pet.pos;
+        pet.vel = Vec2::ZERO;
+        pet.set_ground(&floor);
+        pet.face(facing);
+        assert!(pet.force(behavior));
+    }
+
+    fn advance(flock: &mut Flock, world: &World, seconds: f32) {
+        let input = Input {
+            cursor: None,
+            local_hour: 14.0,
+        };
+        for _ in 0..(seconds / TICK).round() as usize {
+            flock.advance(TICK, world, &input);
+        }
+    }
+
+    #[test]
+    fn pets_meeting_face_to_face_greet_each_other_then_part() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(social(), 1, &world, None);
+        let b = flock.spawn(social(), 2, &world, None);
+        put(&mut flock, &world, a, 400.0, 1.0, "walk");
+        put(&mut flock, &world, b, 560.0, -1.0, "walk");
+        let reach = flock.pets()[0].def.physics.width;
+        let mut met_at = None;
+        for i in 0..(4.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            let (pa, pb) = (&flock.pets()[0], &flock.pets()[1]);
+            assert!(
+                pb.position().x - pa.position().x >= reach - 1.5,
+                "ils se chevauchent"
+            );
+            if met_at.is_none() && pa.behavior_name() == "greet" {
+                assert_eq!(pb.behavior_name(), "greet", "ils se saluent ensemble");
+                met_at = Some(i);
+            }
+        }
+        assert!(met_at.is_some(), "ils se sont rencontrés");
+        let events: Vec<PetEvent> = flock.pets_mut()[0].take_events();
+        assert!(events.contains(&PetEvent::Met { other: b }), "{events:?}");
+        // Après le salut, demi-tour : chacun repart de son côté.
+        let gap = flock.pets()[1].position().x - flock.pets()[0].position().x;
+        advance(&mut flock, &world, 2.0);
+        let later = flock.pets()[1].position().x - flock.pets()[0].position().x;
+        assert!(later > gap + 50.0, "{gap} → {later}");
+    }
+
+    #[test]
+    fn a_resting_pet_is_left_alone() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(social(), 1, &world, None);
+        let b = flock.spawn(social(), 2, &world, None);
+        put(&mut flock, &world, a, 400.0, 1.0, "walk");
+        put(&mut flock, &world, b, 520.0, -1.0, "rest");
+        let mut greeted = false;
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            greeted |= flock.pets()[0].behavior_name() == "greet";
+            assert_eq!(
+                flock.pets()[1].behavior_name(),
+                "rest",
+                "il ne se dérange pas"
+            );
+        }
+        assert!(greeted, "celui qui marche salue quand même");
+    }
+
+    #[test]
+    fn pets_without_greetings_walk_past_each_other() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(def(), 1, &world, None);
+        let b = flock.spawn(def(), 2, &world, None);
+        put(&mut flock, &world, a, 400.0, 1.0, "walk");
+        put(&mut flock, &world, b, 560.0, -1.0, "walk");
+        advance(&mut flock, &world, 3.0);
+        assert!(
+            flock.pets()[0].position().x > flock.pets()[1].position().x,
+            "ils se sont croisés"
+        );
+    }
+
+    #[test]
+    fn the_side_of_a_window_turns_a_pet_back_or_lets_it_pass() {
+        let mut world = world();
+        world.set_windows(
+            &[WindowRect {
+                id: 4,
+                frame: Rect::new(500.0, 600.0, 400.0, 400.0),
+            }],
+            LedgeOptions::default(),
+        );
+        let mut flock = Flock::new();
+        let a = flock.spawn(social(), 1, &world, None);
+        put(&mut flock, &world, a, 380.0, 1.0, "walk");
+        let half = flock.pets()[0].def.physics.width * 0.5;
+        let mut furthest: f32 = 0.0;
+        for _ in 0..(4.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            furthest = furthest.max(flock.pets()[0].position().x);
+        }
+        assert!(furthest <= 500.0 - half + 0.5, "{furthest}");
+        assert_eq!(flock.pets()[0].facing, -1.0, "il a fait demi-tour");
+
+        // Sans réaction prévue, il passe devant la fenêtre.
+        let mut flock = Flock::new();
+        let b = flock.spawn(def(), 1, &world, None);
+        put(&mut flock, &world, b, 380.0, 1.0, "walk");
+        advance(&mut flock, &world, 4.0);
+        assert!(flock.pets()[0].position().x > 560.0);
+    }
+
+    #[test]
+    fn a_pet_says_goodbye_then_fades_away() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(social(), 3, &world, None);
+        put(&mut flock, &world, a, 600.0, 1.0, "stand");
+        flock.leave_all(&world, &Input::default());
+        let pet = &flock.pets()[0];
+        assert!(pet.is_leaving());
+        assert_eq!(pet.behavior_name(), "wave");
+        advance(&mut flock, &world, 0.4);
+        assert_eq!(flock.pets()[0].view(1.0).opacity, 1.0, "il salue d'abord");
+        advance(&mut flock, &world, 0.5);
+        let opacity = flock.pets()[0].view(1.0).opacity;
+        assert!(opacity < 1.0 && opacity > 0.0, "puis s'efface : {opacity}");
+        assert_eq!(
+            flock.pets()[0].behavior_name(),
+            "wave",
+            "sur sa dernière pose"
+        );
+        advance(&mut flock, &world, 1.2);
+        assert!(flock.pets().is_empty(), "il est parti");
+    }
+
+    #[test]
+    fn a_pet_without_farewell_fades_at_once_even_when_held() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(def(), 3, &world, None);
+        let b = flock.spawn(def(), 4, &world, None);
+        put(&mut flock, &world, a, 600.0, 1.0, "walk");
+        put(&mut flock, &world, b, 900.0, 1.0, "stand");
+        let held = flock.get_mut(b).unwrap();
+        held.grab(Vec2::new(900.0, 790.0), &world);
+        flock.leave_all(&world, &Input::default());
+        assert!(flock.pets().iter().all(|p| !p.is_held() && p.is_leaving()));
+        advance(&mut flock, &world, 0.3);
+        assert!(flock.pets().iter().all(|p| p.view(1.0).opacity < 1.0));
+        // Il ne s'attrape plus pendant qu'il s'en va.
+        let pet = flock.get_mut(a).unwrap();
+        pet.grab(Vec2::new(600.0, 800.0), &world);
+        assert!(!pet.is_held());
+        advance(&mut flock, &world, 1.0);
+        assert!(flock.pets().is_empty());
+    }
+
+    #[test]
+    fn two_lainous_who_meet_do_the_same_thing() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/lainou/pet.toml");
+        let lainou = Arc::new(crate::format::load_pet(&path).unwrap());
+        let world = world();
+        for seed in 0..12 {
+            let mut flock = Flock::new();
+            let a = flock.spawn(Arc::clone(&lainou), seed, &world, None);
+            let b = flock.spawn(Arc::clone(&lainou), seed + 100, &world, None);
+            put(&mut flock, &world, a, 500.0, 1.0, "marche");
+            put(&mut flock, &world, b, 640.0, -1.0, "marche");
+            let mut reaction = None;
+            for _ in 0..(3.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+                if flock.pets()[0].meet_cooldown > 0.0 {
+                    let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+                    reaction = Some(names.join(" + "));
+                    break;
+                }
+            }
+            let reaction = reaction.expect("ils se rencontrent");
+            assert!(
+                [
+                    "salue + salue",
+                    "fete + fete",
+                    "demi_tour + demi_tour",
+                    "surpris + surpris"
+                ]
+                .contains(&reaction.as_str()),
+                "{reaction}"
+            );
+        }
+    }
+
+    #[test]
+    fn together_makes_every_free_pet_play_along() {
+        let world = world();
+        let mut flock = Flock::new();
+        let ids: Vec<u32> = (0..3)
+            .map(|i| flock.spawn(social(), i, &world, None))
+            .collect();
+        for (k, id) in ids.iter().enumerate() {
+            put(
+                &mut flock,
+                &world,
+                *id,
+                300.0 + 200.0 * k as f32,
+                1.0,
+                "walk",
+            );
+        }
+        assert_eq!(flock.together(&world, &Input::default()), 3);
+        assert!(flock.pets().iter().all(|p| p.behavior_name() == "hop"));
+        // Un animal sans « together » ne bouge pas.
+        let mut flock = Flock::new();
+        let id = flock.spawn(def(), 1, &world, None);
+        put(&mut flock, &world, id, 300.0, 1.0, "walk");
+        assert_eq!(flock.together(&world, &Input::default()), 0);
+        assert_eq!(flock.pets()[0].behavior_name(), "walk");
     }
 }

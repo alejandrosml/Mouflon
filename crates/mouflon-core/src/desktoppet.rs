@@ -10,7 +10,10 @@
 //! - `border` réagit aux bords (côtés et haut de l'écran, sol, bout de la
 //!   fenêtre sous les pattes, haut d'une fenêtre en descendant), `gravity`
 //!   à l'absence d'appui ; l'attribut `only` réserve une suite à un type de bord ;
-//! - les noms `drag`, `fall`, `toss`, `fall soft` et `fall hard` sont réservés ;
+//! - les noms `drag`, `fall`, `toss`, `fall soft`, `fall hard`, `kill`
+//!   (au revoir) et `sync` (tous ensemble) sont réservés ;
+//! - les suites `only="windowSide"` réagissent au côté d'une fenêtre qui
+//!   barre le chemin, `only="petSide"` à la rencontre d'un autre animal ;
 //! - `child` fait apparaître des personnages secondaires.
 //!
 //! Le lancer (`toss`) passe par la physique de Mouflon, et le déplacement
@@ -595,6 +598,9 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
                 .unwrap_or_default(),
             on_land: landing(&a.border),
             on_ceiling: for_event(&a.border, Only::Horizontal),
+            // Les suites de poids nul comptent : l'animal peut imiter l'autre.
+            on_meet: for_event(&a.border, Only::PetSide),
+            on_window_side: for_event(&a.border, Only::WindowSide),
             gravity: a.gravity.is_some(),
             flip_at_end: a.flip,
             walk_off_edges: true,
@@ -629,6 +635,14 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             when: Vec::new(),
         }]
     };
+    // `kill` et `sync` ne comptent que s'ils ne sont pas l'animation 1
+    // (desktopPet : identifiant supérieur à 1).
+    let reserved = |wanted: &str| {
+        named(wanted)
+            .filter(|&i| raws[i].id > 1)
+            .map(one)
+            .unwrap_or_default()
+    };
     let fall = named("fall").unwrap_or(first);
     let reflexes = Reflexes {
         spawn: one(fall),
@@ -641,6 +655,11 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         wall: Vec::new(),
         poke: Vec::new(),
         bump: Vec::new(),
+        // Les rencontres et les côtés des fenêtres dépendent de l'animation en cours.
+        meet: Vec::new(),
+        window_side: Vec::new(),
+        leave: reserved("kill"),
+        together: reserved("sync"),
     };
     // L'animation `toss` de desktopPet fait déjà tourner l'animal sur lui-même.
     sheet.drawn.roll = named("toss").is_some();
@@ -808,6 +827,11 @@ pub(crate) mod tests {
         // Côté de l'écran : demi-tour ou escalade ; bout de fenêtre : demi-tour ou regard.
         assert_eq!(names(&def, &walk.on_wall), ["rotate", "climb"]);
         assert_eq!(names(&def, &walk.on_edge), ["rotate", "look_down"]);
+        // Côté d'une fenêtre (« none » et « windowSide »), rencontre (« none »).
+        assert_eq!(names(&def, &walk.on_window_side), ["rotate", "rotate"]);
+        assert_eq!(names(&def, &walk.on_meet), ["rotate"]);
+        // Sans animation `kill` ni `sync`, pas d'au revoir ni de jeu commun.
+        assert!(def.reflexes.leave.is_empty() && def.reflexes.together.is_empty());
         // Fin de séquence : « only » devient une condition.
         assert_eq!(walk.next[1].when, vec![Condition::OnWindow]);
         assert_eq!(walk.next[2].when, vec![Condition::OnFloor]);

@@ -1,0 +1,21 @@
+# Português (Portugal)
+
+add_pet = "Adicionar um animal"
+add_menu = "Adicionar…"
+remove_all = "Remover todos"
+together = "Todos juntos"
+pause = "Pausa"
+frontmost_only = "Andar só sobre a aplicação em primeiro plano"
+collisions = "Colisões entre animais"
+size = "Tamanho"
+size_small = "Pequeno"
+size_normal = "Normal"
+size_large = "Grande"
+size_huge = "Muito grande"
+open_pets_folder = "Abrir a pasta dos animais"
+about = "Acerca do Mouflon"
+quit = "Sair do Mouflon"
+
+# Janela “Acerca”
+description = "Um gestor leve e bonito de companheiros para a secretária."
+credits = "Compatível com os animais do desktopPet (eSheep) de Adriano Petrucci. Escrito inteiramente em Rust."

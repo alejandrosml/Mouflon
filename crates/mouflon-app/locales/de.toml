@@ -1,0 +1,21 @@
+# Deutsch
+
+add_pet = "Tier hinzufügen"
+add_menu = "Hinzufügen …"
+remove_all = "Alle entfernen"
+together = "Alle zusammen"
+pause = "Pause"
+frontmost_only = "Nur auf der App im Vordergrund laufen"
+collisions = "Kollisionen zwischen Tieren"
+size = "Größe"
+size_small = "Klein"
+size_normal = "Normal"
+size_large = "Groß"
+size_huge = "Sehr groß"
+open_pets_folder = "Ordner der Tiere öffnen"
+about = "Über Mouflon"
+quit = "Mouflon beenden"
+
+# Fenster „Über“
+description = "Ein leichter und schöner Manager für Desktop-Begleiter."
+credits = "Kompatibel mit den desktopPet-Tieren (eSheep) von Adriano Petrucci. Vollständig in Rust geschrieben."

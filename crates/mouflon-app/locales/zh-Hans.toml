@@ -1,0 +1,21 @@
+# 简体中文
+
+add_pet = "添加宠物"
+add_menu = "添加…"
+remove_all = "全部移除"
+together = "一起来"
+pause = "暂停"
+frontmost_only = "只在最前面的应用上行走"
+collisions = "宠物之间的碰撞"
+size = "大小"
+size_small = "小"
+size_normal = "标准"
+size_large = "大"
+size_huge = "特大"
+open_pets_folder = "打开宠物文件夹"
+about = "关于 Mouflon"
+quit = "退出 Mouflon"
+
+# “关于”窗口
+description = "一个轻巧而美观的桌面伙伴管理器。"
+credits = "兼容 Adriano Petrucci 的 desktopPet（eSheep）宠物。完全用 Rust 编写。"

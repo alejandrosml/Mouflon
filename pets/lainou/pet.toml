@@ -43,6 +43,16 @@ poke = [
     { to = "content", weight = 2 },
     { to = "bele", weight = 1 },
 ]
+# Il croise un autre animal en chemin : il le salue, se réjouit ou fait
+# demi-tour. Deux Lainou qui se rencontrent font la même chose ensemble.
+meet = [
+    { to = "salue", weight = 3 },
+    { to = "fete", weight = 2 },
+    { to = "demi_tour", weight = 2 },
+    { to = "surpris", weight = 1 },
+]
+leave = "au_revoir"           # un dernier bêlement avant de s'effacer
+together = "content"          # « Tous ensemble » : tout le troupeau saute de joie
 
 # Ce qu'il a envie de faire quand il a fini quelque chose.
 [choices]
@@ -100,6 +110,8 @@ loops = [6, 10]
 move = [13, 0]
 on_wall = "se_cogne"
 on_edge = [{ to = "demi_tour", weight = 2 }, { to = "course_vide", weight = 1 }]
+# Lancé, il rentre dans l'autre, ou freine juste à temps.
+on_meet = [{ to = "se_cogne", weight = 2 }, { to = "surpris", weight = 1 }]
 next = "envie"
 
 # Il continue au bout de la fenêtre et saute dans le vide.
@@ -166,6 +178,29 @@ next = "repos_face"
 
 [[behavior]]
 name = "bele"
+fps = 10
+next = "repos"
+
+# ------------------------------------------------------------------ rencontres
+
+# Il bêle pour saluer l'autre, puis repart de son côté.
+[[behavior]]
+name = "salue"
+strip = "bele"
+fps = 10
+next = "demi_tour"
+
+[[behavior]]
+name = "fete"
+strip = "content"
+fps = 10
+loops = 2
+next = "demi_tour"
+
+# Au revoir : il bêle une dernière fois, puis s'efface.
+[[behavior]]
+name = "au_revoir"
+strip = "bele"
 fps = 10
 next = "repos"
 

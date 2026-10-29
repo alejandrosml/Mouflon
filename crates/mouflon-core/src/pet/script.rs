@@ -1,8 +1,8 @@
 //! Animations scriptées façon desktopPet.
 //!
 //! Le corps suit le déplacement prévu à chaque pas de la séquence ; les bords
-//! (côtés et haut de l'écran, sol, rebords de fenêtres) déclenchent les
-//! transitions, et la « gravité » fait passer à l'animation de chute quand
+//! (côtés et haut de l'écran, sol, rebords et côtés de fenêtres) déclenchent
+//! les transitions, et la « gravité » fait passer à l'animation de chute quand
 //! plus rien ne porte l'animal. Là où desktopPet avance par à-coups à chaque
 //! pas, Mouflon répartit le déplacement sur la durée du pas : le mouton
 //! glisse à 120 Hz.
@@ -91,6 +91,12 @@ impl Pet {
                     return;
                 }
                 // desktopPet : sans réaction prévue, il sort de l'écran (et réapparaîtra).
+            } else if let Some((next, x)) = self.window_side(dx, world, input, support.is_some()) {
+                // Le côté d'une fenêtre lui barre le chemin (avant le bout du
+                // rebord : une fenêtre posée devant est un mur, pas un vide).
+                self.pos.x = x;
+                self.enter(next);
+                return;
             } else if let Some(s) = support.filter(|s| s.kind == SurfaceKind::Window) {
                 let edge = if dir < 0.0 { s.x0 } else { s.x1 };
                 if !self.walking_off && (front + dx - edge) * dir > 0.0 {
@@ -688,6 +694,138 @@ mod tests {
             }
             assert_eq!(flock.pets()[0].position().y, FLOOR, "il finit au sol");
         }
+    }
+
+    #[test]
+    fn the_side_of_a_window_stops_the_sheep() {
+        let mut world = world();
+        world.set_windows(
+            &[WindowRect {
+                id: 2,
+                frame: Rect::new(500.0, 600.0, 400.0, 400.0),
+            }],
+            LedgeOptions::default(),
+        );
+        // walk : demi-tour (« none ») ou demi-tour (« windowSide ») ; 2 points par pas.
+        let mut pet = standing(&world, 470.0, floor(&world), "walk", 1.0);
+        let half = pet.def.physics.width * 0.5;
+        let mut furthest: f32 = 0.0;
+        let mut rotated = false;
+        let input = Input::default();
+        for _ in 0..(6.0 / TICK) as usize {
+            pet.step(TICK, &world, &input);
+            furthest = furthest.max(pet.position().x);
+            rotated |= pet.behavior_name() == "rotate";
+        }
+        assert!(furthest <= 500.0 - half + 0.01, "{furthest}");
+        assert!(rotated);
+        assert_eq!(pet.facing, -1.0);
+    }
+
+    #[test]
+    fn sheep_meeting_face_to_face_turn_back_together() {
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(def(), 1, &world, None);
+        let b = flock.spawn(def(), 2, &world, None);
+        for (id, x, facing) in [(a, 300.0, 1.0), (b, 320.0, -1.0)] {
+            let surface = floor(&world);
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos = Vec2::new(x, surface.y);
+            pet.prev_pos = pet.pos;
+            pet.set_ground(&surface);
+            pet.facing = facing;
+            assert!(pet.force("walk"));
+        }
+        let input = Input::default();
+        let mut together = false;
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+            let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+            together |= names == ["rotate", "rotate"];
+        }
+        assert!(together, "les deux font demi-tour en même temps");
+        let (pa, pb) = (&flock.pets()[0], &flock.pets()[1]);
+        assert_eq!((pa.facing, pb.facing), (-1.0, 1.0));
+        assert!(pb.position().x - pa.position().x > 4.0);
+    }
+
+    #[test]
+    fn a_sheep_may_imitate_the_one_it_meets() {
+        // Comme dans eSheep : une suite « petSide » de poids nul ne se tire
+        // jamais au sort, mais se copie sur l'autre une fois sur deux.
+        let xml = sample().replace(
+            r#"<next probability="50" only="windowSide">2</next>"#,
+            r#"<next probability="50" only="windowSide">2</next><next probability="0" only="petSide">3</next>"#,
+        );
+        let def = Arc::new(import(&xml).unwrap());
+        let world = world();
+        let mut imitated = 0;
+        for seed in 0..400 {
+            let surface = floor(&world);
+            let mut a = Pet::spawn_at(0, Arc::clone(&def), seed, &world, Vec2::new(300.0, 0.0));
+            let mut b = Pet::spawn_at(1, Arc::clone(&def), seed, &world, Vec2::new(304.0, 0.0));
+            for (pet, x) in [(&mut a, 300.0), (&mut b, 304.0)] {
+                pet.pos = Vec2::new(x, surface.y);
+                pet.prev_pos = pet.pos;
+                pet.set_ground(&surface);
+                pet.facing = 1.0;
+            }
+            assert!(a.force("walk") && b.force("look_down"));
+            crate::pet::encounter(&mut a, &mut b, &world, &Input::default());
+            match a.behavior_name() {
+                "look_down" => imitated += 1,
+                other => assert_eq!(other, "rotate"),
+            }
+            assert_eq!(b.behavior_name(), "look_down", "l'autre lui tourne le dos");
+        }
+        assert!((140..=260).contains(&imitated), "{imitated} sur 400");
+    }
+
+    #[test]
+    fn kill_says_goodbye_and_sync_plays_together() {
+        let xml = sample().replace(
+            "</animations>\n  <childs>",
+            r#"<animation id="12"><name>kill</name>
+      <start><x>0</x><y>0</y><interval>100</interval></start><end><x>0</x><y>0</y><interval>100</interval></end>
+      <sequence repeat="2" repeatfrom="0"><frame>0</frame><frame>1</frame><next probability="100">1</next></sequence>
+    </animation>
+    <animation id="13"><name>sync</name>
+      <start><x>0</x><y>0</y><interval>50</interval></start><end><x>0</x><y>0</y><interval>50</interval></end>
+      <sequence repeat="3" repeatfrom="0"><frame>1</frame><next probability="100">1</next></sequence>
+    </animation>
+  </animations>
+  <childs>"#,
+        );
+        let def = Arc::new(import(&xml).unwrap());
+        let world = world();
+        let mut flock = Flock::new();
+        let id = flock.spawn(Arc::clone(&def), 1, &world, None);
+        let pet = flock.get_mut(id).unwrap();
+        let surface = floor(&world);
+        pet.pos = Vec2::new(600.0, surface.y);
+        pet.prev_pos = pet.pos;
+        pet.set_ground(&surface);
+        assert!(pet.force("walk"));
+        let input = Input::default();
+        assert_eq!(flock.together(&world, &input), 1);
+        assert_eq!(flock.pets()[0].behavior_name(), "sync");
+        flock.leave_all(&world, &input);
+        assert_eq!(flock.pets()[0].behavior_name(), "kill");
+        // kill : 6 pas de 100 ms, un pas de plus, puis le fondu.
+        for _ in 0..(0.65 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+        }
+        assert_eq!(flock.pets()[0].view(1.0).opacity, 1.0);
+        for _ in 0..(0.5 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+        }
+        assert!(flock.pets()[0].view(1.0).opacity < 1.0);
+        assert_eq!(flock.pets()[0].behavior_name(), "kill");
+        for _ in 0..(1.5 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+        }
+        assert!(flock.pets().is_empty());
     }
 
     #[test]

@@ -10,9 +10,13 @@ pub enum Action {
     /// Ajoute cet animal de la bibliothèque, qui devient le préféré.
     Add(usize),
     RemoveAll,
+    /// Tous les animaux jouent ensemble (`sync` de desktopPet).
+    Together,
     TogglePause,
     ToggleFrontmostOnly,
     ToggleCollisions,
+    /// Taille des animaux : rang dans [`crate::settings::SIZES`].
+    SetSize(usize),
     OpenPetsFolder,
     Quit,
 }
@@ -33,9 +37,11 @@ mod native {
         add: Vec<(MenuId, usize)>,
         add_default: MenuId,
         remove_all: MenuId,
+        together: MenuId,
         pause: CheckMenuItem,
         frontmost: CheckMenuItem,
         collisions: CheckMenuItem,
+        sizes: Vec<CheckMenuItem>,
         open_folder: MenuId,
         quit: MenuId,
     }
@@ -51,6 +57,7 @@ mod native {
             library: &Library,
             frontmost_only: bool,
             collisions_on: bool,
+            size: usize,
         ) -> Result<Self, Box<dyn std::error::Error>> {
             let t = crate::i18n::texts();
             let menu = Menu::new();
@@ -67,6 +74,8 @@ mod native {
                 }
                 menu.append(&submenu)?;
             }
+            let together = MenuItem::new(&t.together, true, None);
+            menu.append(&together)?;
             let remove_all = MenuItem::new(&t.remove_all, true, None);
             menu.append(&remove_all)?;
             menu.append(&PredefinedMenuItem::separator())?;
@@ -77,6 +86,17 @@ mod native {
             menu.append(&frontmost)?;
             let collisions = CheckMenuItem::new(&t.collisions, true, collisions_on, None);
             menu.append(&collisions)?;
+            let size_menu = Submenu::new(&t.size, true);
+            let mut sizes = Vec::new();
+            for (i, label) in [&t.size_small, &t.size_normal, &t.size_large, &t.size_huge]
+                .into_iter()
+                .enumerate()
+            {
+                let item = CheckMenuItem::new(label, true, i == size, None);
+                size_menu.append(&item)?;
+                sizes.push(item);
+            }
+            menu.append(&size_menu)?;
             let open_folder = MenuItem::new(&t.open_pets_folder, true, None);
             menu.append(&open_folder)?;
             menu.append(&PredefinedMenuItem::separator())?;
@@ -112,9 +132,11 @@ mod native {
                 add,
                 add_default: first.id().clone(),
                 remove_all: remove_all.id().clone(),
+                together: together.id().clone(),
                 pause,
                 frontmost,
                 collisions,
+                sizes,
                 open_folder: open_folder.id().clone(),
                 quit: quit.id().clone(),
             })
@@ -128,8 +150,13 @@ mod native {
             if id == &self.add_default {
                 return Some(Action::AddDefault);
             }
+            if let Some(i) = self.sizes.iter().position(|item| item.id() == id) {
+                return Some(Action::SetSize(i));
+            }
             if id == &self.remove_all {
                 Some(Action::RemoveAll)
+            } else if id == &self.together {
+                Some(Action::Together)
             } else if id == self.pause.id() {
                 Some(Action::TogglePause)
             } else if id == self.frontmost.id() {
@@ -155,6 +182,13 @@ mod native {
 
         pub fn set_collisions(&self, value: bool) {
             self.collisions.set_checked(value);
+        }
+
+        /// Coche la taille choisie, et elle seule.
+        pub fn set_size(&self, size: usize) {
+            for (i, item) in self.sizes.iter().enumerate() {
+                item.set_checked(i == size);
+            }
         }
     }
 }

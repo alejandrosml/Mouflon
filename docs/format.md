@@ -56,6 +56,8 @@ next = [
 on_edge = "turn"              # au bord d'une fenêtre (sinon : réflexe edge)
 on_wall = "turn"              # contre le bord de l'écran (sinon : réflexe wall)
 on_fall = "fall"              # si le sol disparaît (sinon : réflexe fall)
+on_meet = "surprise"          # en rencontrant un autre animal (sinon : réflexe meet)
+on_window_side = "turn"       # le côté d'une fenêtre barre le chemin (sinon : réflexe window_side)
 ```
 
 Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit`, `sleep`,
@@ -84,7 +86,33 @@ edge = [{ to = "turn", weight = 5 }, { to = "hop_down", weight = 1 }]
 wall = "turn"
 poke = "hop"                  # simple clic
 bump = "tumble"               # heurté par un autre animal (mode collisions) ; sinon : thrown
+meet = "greet"                # rencontre un autre animal en chemin (hors mode collisions)
+window_side = "turn"          # le côté d'une fenêtre lui barre le chemin
+leave = "wave"                # au revoir (« Tout retirer ») : il le joue, puis s'efface
+together = "hop"              # « Tous ensemble » : tous les animaux le jouent en même temps
 ```
+
+Sans `meet`, deux animaux qui se croisent passent l'un devant l'autre ;
+sans `window_side`, l'animal passe devant la fenêtre ; sans `leave`, il
+s'efface aussitôt.
+
+### Rencontres
+
+Hors mode collisions, un animal qui en atteint un autre en marchant (au
+même niveau, en allant vers lui) réagit, et l'autre parfois avec lui, comme
+dans desktopPet :
+
+1. s'ils ont des réactions en commun (même nom, poids non nul), les deux
+   font la même chose : deux Lainou se saluent ensemble ;
+2. sinon, si l'autre joue une réaction que le premier connaît, même de poids
+   nul, le premier l'imite une fois sur deux (`{ to = "dort", weight = 0 }` :
+   il ne s'endort jamais de lui-même en rencontrant quelqu'un, mais peut
+   rejoindre un animal endormi) ;
+3. sinon, chacun réagit de son côté, l'autre seulement s'il lui fait face.
+
+Un animal en chemin prend le réflexe `meet` ; au repos (assis, endormi…),
+il ne réagit que si son comportement a un `on_meet`. Après une rencontre,
+chacun attend un peu avant la suivante.
 
 ## Listes de suites nommées
 
@@ -185,11 +213,13 @@ ou tout le dossier de l'animal, dans le dossier des animaux.
 Tout le moteur d'animation d'origine est repris : nombre de pas et
 répétitions (y compris tirées au hasard), déplacements interpolés,
 demi-tours `flip`, réactions aux bords (`border`, avec les restrictions
-`only`), gravité, points d'apparition, personnages secondaires (`child` :
-la fleur que mange le mouton, le bain, le mouton noir…), variantes de
-couleur (`skins`), expressions (`screenW`, `areaH`, `imageW`, `random`,
-`randS`, `Convert(…, System.Int32)`…) et animations réservées (`drag`,
-`fall`, `toss`, `fall soft`, `fall hard`).
+`only`, dont `windowSide` pour le côté d'une fenêtre et `petSide` pour la
+rencontre d'un autre animal), gravité, points d'apparition, personnages
+secondaires (`child` : la fleur que mange le mouton, le bain, le mouton
+noir…), variantes de couleur (`skins`), expressions (`screenW`, `areaH`,
+`imageW`, `random`, `randS`, `Convert(…, System.Int32)`…) et animations
+réservées (`drag`, `fall`, `toss`, `fall soft`, `fall hard`, `kill` pour
+l'au revoir, `sync` pour « Tous ensemble »).
 
 Ce que Mouflon fait mieux :
 
@@ -202,9 +232,8 @@ Ce que Mouflon fait mieux :
 - une fenêtre fermée sous un animal le fait tomber tout de suite ;
 - il se promène d'un écran à l'autre.
 
-Pas encore repris : les sons, les réactions propres aux rencontres entre
-animaux (`petSide` ; le mode collisions de Mouflon les fait culbuter), les
-côtés des fenêtres comme obstacles (`windowSide`), `kill` et `sync`.
+Pas encore repris : les sons. En mode collisions, Mouflon fait culbuter les
+animaux qui se rentrent dedans au lieu de jouer leurs rencontres `petSide`.
 
 ### Redessiner un animal desktopPet
 

@@ -1,0 +1,21 @@
+# Русский
+
+add_pet = "Добавить питомца"
+add_menu = "Добавить…"
+remove_all = "Убрать всех"
+together = "Все вместе"
+pause = "Пауза"
+frontmost_only = "Ходить только по активному приложению"
+collisions = "Столкновения питомцев"
+size = "Размер"
+size_small = "Маленький"
+size_normal = "Обычный"
+size_large = "Большой"
+size_huge = "Очень большой"
+open_pets_folder = "Открыть папку питомцев"
+about = "О программе Mouflon"
+quit = "Завершить Mouflon"
+
+# Окно «О программе»
+description = "Лёгкий и красивый менеджер компаньонов для рабочего стола."
+credits = "Совместим с питомцами desktopPet (eSheep) от Adriano Petrucci. Полностью написан на Rust."

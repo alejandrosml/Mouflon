@@ -1,0 +1,21 @@
+# Português (Brasil)
+
+add_pet = "Adicionar um pet"
+add_menu = "Adicionar…"
+remove_all = "Remover todos"
+together = "Todos juntos"
+pause = "Pausar"
+frontmost_only = "Andar só sobre o app em primeiro plano"
+collisions = "Colisões entre pets"
+size = "Tamanho"
+size_small = "Pequeno"
+size_normal = "Normal"
+size_large = "Grande"
+size_huge = "Muito grande"
+open_pets_folder = "Abrir a pasta dos pets"
+about = "Sobre o Mouflon"
+quit = "Encerrar Mouflon"
+
+# Janela “Sobre”
+description = "Um gerenciador leve e bonito de companheiros para a área de trabalho."
+credits = "Compatível com os pets do desktopPet (eSheep) de Adriano Petrucci. Escrito inteiramente em Rust."

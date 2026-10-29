@@ -412,6 +412,14 @@ pub struct Behavior {
     pub on_land: Vec<Transition>,
     /// En montant, l'animal touche le haut de l'écran (animations scriptées).
     pub on_ceiling: Vec<Transition>,
+    /// Remplace le réflexe `meet` quand l'animal en rencontre un autre
+    /// pendant ce comportement (`petSide` de desktopPet). Une suite de poids
+    /// nul n'est jamais tirée au sort, mais l'animal peut imiter l'autre
+    /// s'il est en train de la jouer.
+    pub on_meet: Vec<Transition>,
+    /// Remplace le réflexe `window_side` quand le côté d'une fenêtre barre le
+    /// chemin pendant ce comportement (`windowSide` de desktopPet).
+    pub on_window_side: Vec<Transition>,
     /// Animations scriptées : vérifie à chaque pas que l'animal a encore un appui
     /// et passe sinon à `on_fall` (élément `gravity` de desktopPet).
     pub gravity: bool,
@@ -461,6 +469,18 @@ pub struct Reflexes {
     pub poke: Vec<Transition>,
     /// Heurté par un autre animal (mode collisions) ; à défaut, `thrown`.
     pub bump: Vec<Transition>,
+    /// Rencontre d'un autre animal en marchant (hors mode collisions). Sans
+    /// réaction, les deux animaux se croisent.
+    pub meet: Vec<Transition>,
+    /// Le côté d'une fenêtre barre le chemin. Sans réaction, l'animal passe
+    /// devant la fenêtre.
+    pub window_side: Vec<Transition>,
+    /// Au revoir, quand on retire l'animal (`kill` de desktopPet) : il joue
+    /// ce comportement, puis s'efface.
+    pub leave: Vec<Transition>,
+    /// Tous ensemble : tous les animaux jouent ce comportement en même temps
+    /// (`sync` de desktopPet).
+    pub together: Vec<Transition>,
 }
 
 /// Règles du moteur pour ce qui n'est pas prévu par l'animal.
@@ -542,6 +562,8 @@ impl PetDef {
             check(&b.name, &b.on_fall)?;
             check(&b.name, &b.on_land)?;
             check(&b.name, &b.on_ceiling)?;
+            check(&b.name, &b.on_meet)?;
+            check(&b.name, &b.on_window_side)?;
             if let Some(c) = b.children.iter().find(|c| c.next >= behaviors.len()) {
                 return Err(DefError::UnknownTarget {
                     from: b.name.clone(),
@@ -560,6 +582,10 @@ impl PetDef {
             ("wall", &reflexes.wall),
             ("poke", &reflexes.poke),
             ("bump", &reflexes.bump),
+            ("meet", &reflexes.meet),
+            ("window_side", &reflexes.window_side),
+            ("leave", &reflexes.leave),
+            ("together", &reflexes.together),
         ] {
             check(name, list)?;
         }
@@ -622,6 +648,57 @@ impl PetDef {
     #[must_use]
     pub fn behavior_index(&self, name: &str) -> Option<usize> {
         self.by_name.get(name).copied()
+    }
+
+    /// Le même animal, `k` fois plus grand : dessin, corps, vitesses et
+    /// pesanteur suivent, pour que tout bouge comme à sa taille d'origine,
+    /// en plus grand. Les comportements gardent leur rang.
+    #[must_use]
+    pub fn scaled(&self, k: f32) -> Self {
+        let mut def = self.clone();
+        // Pas de taille nulle, négative ou indéfinie ; 1 : rien à changer.
+        if k.is_nan() || k <= 0.0 || k == 1.0 {
+            return def;
+        }
+        match &mut def.appearance {
+            Appearance::Rig { height, .. } => *height *= k,
+            Appearance::Sprites(sheet) => sheet.scale *= k,
+        }
+        let p = &mut def.physics;
+        for length in [
+            &mut p.gravity,
+            &mut p.terminal_velocity,
+            &mut p.walk_accel,
+            &mut p.ground_friction,
+            &mut p.bounce_min_speed,
+            &mut p.hard_landing_speed,
+            &mut p.max_throw_speed,
+            &mut p.width,
+            &mut p.height,
+        ] {
+            *length *= k;
+        }
+        p.hold = p.hold.map(|h| h * k);
+        for b in &mut def.behaviors {
+            match &mut b.motion {
+                Motion::Walk { speed } | Motion::Run { speed } => *speed *= k,
+                Motion::Jump { vx, vy } => {
+                    *vx *= k;
+                    *vy *= k;
+                }
+                Motion::Script(script) => {
+                    let mut s = (**script).clone();
+                    s.scale *= k;
+                    *script = Arc::new(s);
+                }
+                _ => {}
+            }
+            if let Some(clip) = &mut b.clip {
+                clip.offset_y *= k;
+                clip.offset_y_end *= k;
+            }
+        }
+        def
     }
 
     /// Comportement au sol utilisé quand rien d'autre ne s'applique.

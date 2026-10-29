@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Tailles proposées dans le menu (petite, normale, grande, très grande) :
+/// facteur appliqué à la taille prévue par chaque animal.
+pub const SIZES: [f32; 4] = [0.75, 1.0, 1.5, 2.0];
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -17,6 +21,8 @@ pub struct Settings {
     pub frontmost_only: bool,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     pub collisions: bool,
+    /// Taille des animaux, par rapport à celle prévue par chacun.
+    pub size: f32,
 }
 
 impl Default for Settings {
@@ -26,11 +32,28 @@ impl Default for Settings {
             default_pet: None,
             frontmost_only: true,
             collisions: false,
+            size: 1.0,
         }
     }
 }
 
 impl Settings {
+    /// Rang de la taille dans [`SIZES`] (la plus proche, pour une valeur écrite à la main).
+    #[must_use]
+    pub fn size_index(&self) -> usize {
+        SIZES
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (*a - self.size).abs().total_cmp(&(*b - self.size).abs()))
+            .map_or(1, |(i, _)| i)
+    }
+
+    /// Taille à appliquer : une valeur de [`SIZES`].
+    #[must_use]
+    pub fn size_factor(&self) -> f32 {
+        SIZES[self.size_index()]
+    }
+
     #[must_use]
     pub fn load(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
@@ -119,6 +142,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_size_snaps_to_a_menu_step() {
+        let with = |size: f32| Settings {
+            size,
+            ..Settings::default()
+        };
+        assert_eq!(Settings::default().size_index(), 1);
+        assert_eq!(with(2.0).size_factor(), 2.0);
+        // Une valeur écrite à la main prend la taille du menu la plus proche.
+        assert_eq!(with(1.4).size_factor(), 1.5);
+        assert_eq!(with(0.1).size_index(), 0);
+        // Les anciens réglages, sans taille, gardent la taille normale.
+        let old: Settings = toml::from_str("collisions = true").unwrap();
+        assert_eq!(old.size_factor(), 1.0);
+    }
+
+    #[test]
     fn takes_over_the_old_pets_and_settings_once() {
         let root = std::env::temp_dir().join(format!("mouflon-migration-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -137,6 +176,7 @@ mod tests {
             default_pet: Some("esheep".into()),
             frontmost_only: false,
             collisions: true,
+            size: 1.0,
         }
         .save(&old.settings);
 
