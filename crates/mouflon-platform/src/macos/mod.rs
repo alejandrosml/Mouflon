@@ -215,24 +215,7 @@ pub fn window_max_fps(window: &impl HasWindowHandle) -> Option<f64> {
 /// apps en plein écran, ignorée par ⌘-Tab et Mission Control, jamais masquée
 /// quand Mouflon passe en arrière-plan.
 pub fn prepare_pet_window(window: &impl HasWindowHandle) {
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-        return;
-    };
-    if MainThreadMarker::new().is_none() {
-        return;
-    }
-    // SAFETY: winit garantit que `ns_view` pointe vers une NSView vivante tant
-    // que la fenêtre existe ; on est sur le fil principal (vérifié ci-dessus)
-    // et on ne garde qu'une référence comptée pendant l'appel.
-    let view: Retained<NSView> =
-        match unsafe { Retained::retain(appkit.ns_view.as_ptr().cast::<NSView>()) } {
-            Some(view) => view,
-            None => return,
-        };
-    let Some(ns_window) = view.window() else {
+    let Some((_, ns_window)) = view_and_window(window) else {
         return;
     };
     make_non_activating(&ns_window);
@@ -244,6 +227,60 @@ pub fn prepare_pet_window(window: &impl HasWindowHandle) {
     );
     ns_window.setHidesOnDeactivate(false);
     ns_window.setHasShadow(false);
+}
+
+/// La vue et la fenêtre AppKit d'une fenêtre winit (sur le fil principal).
+fn view_and_window(
+    window: &impl HasWindowHandle,
+) -> Option<(Retained<NSView>, Retained<NSWindow>)> {
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        return None;
+    };
+    MainThreadMarker::new()?;
+    // SAFETY: winit garantit que `ns_view` pointe vers une NSView vivante tant
+    // que la fenêtre existe ; on est sur le fil principal (vérifié ci-dessus)
+    // et on ne garde que des références comptées.
+    let view: Retained<NSView> =
+        unsafe { Retained::retain(appkit.ns_view.as_ptr().cast::<NSView>()) }?;
+    let ns_window = view.window()?;
+    Some((view, ns_window))
+}
+
+thread_local! {
+    /// Fenêtres d'animaux fermées, gardées jusqu'à la fin du processus (voir
+    /// [`keep_pet_window`]). Seul le fil principal y touche.
+    static KEPT: std::cell::RefCell<Vec<Retained<NSWindow>>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+/// Garde en vie, jusqu'à la fin du processus, la fenêtre d'un animal qui va
+/// être fermée. Devenue un panneau après sa création, elle ne peut pas être
+/// libérée sans dommage : AppKit, en la libérant, voudrait défaire des
+/// observations qu'il avait posées sous son ancienne classe, et lèverait une
+/// exception (`NSRangeException`) qui arrêterait l'app. Fermée, elle ne
+/// coûte presque rien : on lui retire en plus ses calques de dessin (Metal),
+/// qui gardent des images de la taille de la fenêtre.
+pub fn keep_pet_window(window: &impl HasWindowHandle) {
+    let Some((view, ns_window)) = view_and_window(window) else {
+        return;
+    };
+    if !ns_window.isKindOfClass(NSPanel::class()) {
+        // Classe d'origine : la fenêtre se libère sans problème.
+        return;
+    }
+    if let Some(layer) = view.layer() {
+        // SAFETY: lecture de la liste des sous-calques, sur le fil principal ;
+        // chacun est retiré de son calque parent (celui de la vue), ce qui ne
+        // touche pas à la fenêtre ni à ses observations.
+        if let Some(sublayers) = unsafe { layer.sublayers() } {
+            for sublayer in &sublayers {
+                sublayer.removeFromSuperlayer();
+            }
+        }
+    }
+    KEPT.with(|kept| kept.borrow_mut().push(ns_window));
 }
 
 /// Fait de la fenêtre d'un animal un panneau « non activant » : un clic ou

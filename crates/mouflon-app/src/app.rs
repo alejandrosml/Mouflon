@@ -632,10 +632,12 @@ impl App {
     /// personnages secondaires des scènes desktopPet) et on ferme celles des partis.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
         let alive: Vec<u32> = self.flock.pets().iter().map(|p| p.id()).collect();
-        if let Some(stats) = &self.stats {
-            for w in self.windows.values().filter(|w| !alive.contains(&w.pet)) {
+        for w in self.windows.values().filter(|w| !alive.contains(&w.pet)) {
+            if let Some(stats) = &self.stats {
                 stats.note(format_args!("fenêtre fermée (n° {})", w.pet));
             }
+            // Fermée mais jamais libérée (voir `keep_pet_window`).
+            platform::keep_pet_window(&*w.window);
         }
         self.windows.retain(|_, w| alive.contains(&w.pet));
         if self.windows.len() == alive.len() {
@@ -727,6 +729,7 @@ impl App {
             Ok(s) => s,
             Err(e) => {
                 log::error!("rendu indisponible : {e}");
+                platform::keep_pet_window(&*window);
                 self.flock.remove(id);
                 return;
             }

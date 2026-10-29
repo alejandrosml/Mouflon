@@ -120,8 +120,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
     FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
-    open_folder, play_sound, preferred_languages, prepare_pet_window, request_accessibility,
-    screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
+    keep_pet_window, open_folder, play_sound, preferred_languages, prepare_pet_window,
+    request_accessibility, screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -151,6 +151,9 @@ mod fallback {
     }
 
     pub fn prepare_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
+
+    /// Les fenêtres d'animaux restent ici des fenêtres ordinaires : rien à garder.
+    pub fn keep_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
 
     /// Pas de fréquence d'écran connue ici (celle de winit sert).
     #[must_use]
@@ -266,8 +269,8 @@ mod fallback {
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
     FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
-    open_folder, play_sound, preferred_languages, prepare_pet_window, request_accessibility,
-    screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
+    keep_pet_window, open_folder, play_sound, preferred_languages, prepare_pet_window,
+    request_accessibility, screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]
