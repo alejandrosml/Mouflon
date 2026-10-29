@@ -920,6 +920,14 @@ impl App {
         }
     }
 
+    /// Avant de quitter : le journal d'un essai interrompu (Quitter pendant
+    /// l'essai) reçoit son bilan et part sur le disque.
+    pub fn shutdown(&mut self) {
+        if let Some(stats) = &mut self.stats {
+            stats.finish();
+        }
+    }
+
     /// Une étape de l'essai, notée au journal.
     fn trial_step(&mut self, event_loop: &ActiveEventLoop, step: TrialStep) {
         if let Some(stats) = &self.stats {
@@ -1617,12 +1625,22 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(duration) = trial {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
-            if let Some(&species) = starters.first() {
-                let half = Instant::now() + duration / 2;
-                self.trial_steps = vec![
-                    (half, TrialStep::Goodbye(species)),
-                    (half + Duration::from_secs(5), TrialStep::Add(species)),
-                ];
+            // À la moitié, puis aux trois quarts, le dernier arrivé d'une
+            // espèce s'en va (sa fenêtre se ferme) et un autre arrive.
+            let start = Instant::now();
+            let mut species: Vec<usize> = Vec::new();
+            for &i in &starters {
+                if !species.contains(&i) {
+                    species.push(i);
+                }
+            }
+            for (k, at) in [duration / 2, duration * 3 / 4].into_iter().enumerate() {
+                if let Some(&kind) = species.get(k % species.len().max(1)) {
+                    self.trial_steps
+                        .push((start + at, TrialStep::Goodbye(kind)));
+                    self.trial_steps
+                        .push((start + at + Duration::from_secs(5), TrialStep::Add(kind)));
+                }
             }
             if let Some(stats) = &self.stats {
                 for (i, screen) in self.world.screens().iter().enumerate() {
