@@ -171,9 +171,9 @@ struct DecodedPage {
 fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, SpriteError> {
     let (width, height, mut rgba) = decode_png_rgba(&page.png)?;
     if let Some([kr, kg, kb]) = sheet.key_color {
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             if px[0] == kr && px[1] == kg && px[2] == kb {
-                px.copy_from_slice(&[0, 0, 0, 0]);
+                *px = [0, 0, 0, 0];
             }
         }
     }
@@ -251,7 +251,9 @@ fn coverage(source: u32, target: u32) -> Vec<Vec<(usize, f32)>> {
 /// couvertes, couleurs pondérées par leur opacité : pas de liseré sombre.
 fn resample(rgba: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Vec<u8> {
     let premultiplied: Vec<[f32; 4]> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| {
             let a = f32::from(p[3]) / 255.0;
             [
@@ -359,12 +361,16 @@ pub fn decode_png_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), SpriteError>
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf[..pixels * 4].to_vec(),
         png::ColorType::Rgb => buf[..pixels * 3]
-            .chunks_exact(3)
-            .flat_map(|c| [c[0], c[1], c[2], 255])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
             .collect(),
         png::ColorType::GrayscaleAlpha => buf[..pixels * 2]
-            .chunks_exact(2)
-            .flat_map(|c| [c[0], c[0], c[0], c[1]])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[g, a]| [g, g, g, a])
             .collect(),
         png::ColorType::Grayscale => buf[..pixels].iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => {

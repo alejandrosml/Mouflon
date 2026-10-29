@@ -14,7 +14,7 @@ jobs:
     name: Tests (moteur et rendu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -27,7 +27,7 @@ jobs:
     name: Bundle macOS (Apple Silicon)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
@@ -56,7 +56,7 @@ jobs:
           echo "NOTARY_PROFILE=mouflon" >> $GITHUB_ENV
 
       - run: bash scripts/bundle-macos.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Mouflon-macos-arm64
           path: dist/*.zip

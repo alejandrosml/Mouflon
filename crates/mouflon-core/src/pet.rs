@@ -2119,6 +2119,60 @@ mod tests {
     }
 
     #[test]
+    fn desktoppet_pets_turn_their_backs_after_a_bump() {
+        // Sans idée à lui, un animal desktopPet repartirait droit sur l'autre :
+        // après la culbute, il se pose le dos tourné au choc.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/pelote/pet.toml");
+        let def = Arc::new(crate::format::load_pet(&path).unwrap());
+        let world = world();
+        let mut flock = Flock::new();
+        let a = flock.spawn(Arc::clone(&def), 1, &world, Some(600.0));
+        let b = flock.spawn(Arc::clone(&def), 2, &world, Some(720.0));
+        let input = Input::default();
+        for _ in 0..(9.0 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+        }
+        for (id, x, facing) in [(a, 600.0, 1.0), (b, 720.0, -1.0)] {
+            let pet = flock.get_mut(id).unwrap();
+            assert!(
+                matches!(pet.support(), Support::Ground { .. }),
+                "{}",
+                pet.behavior_name()
+            );
+            pet.pos.x = x;
+            pet.prev_pos = pet.pos;
+            pet.facing = facing;
+            pet.anim.flip = facing;
+            assert!(pet.force("walk"));
+        }
+        flock.set_collisions(true);
+        let mut bumped = Vec::new();
+        let mut landed: Vec<(u32, f32)> = Vec::new();
+        for _ in 0..(5.0 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+            for pet in flock.pets_mut() {
+                for e in pet.take_events() {
+                    match e {
+                        PetEvent::Bumped { .. } => bumped.push(pet.id()),
+                        PetEvent::Landed { .. }
+                            if bumped.contains(&pet.id())
+                                && !landed.iter().any(|(id, _)| *id == pet.id()) =>
+                        {
+                            landed.push((pet.id(), pet.facing));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        bumped.sort_unstable();
+        assert_eq!(bumped, vec![a, b], "les deux sont heurtés, une seule fois");
+        landed.sort_by_key(|(id, _)| *id);
+        assert_eq!(landed, vec![(a, -1.0), (b, 1.0)], "dos à dos");
+    }
+
+    #[test]
     fn collisions_are_off_by_default() {
         let world = world();
         let mut flock = Flock::new();
