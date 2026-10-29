@@ -4,6 +4,7 @@
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use mouflon_render::DisplayList;
 use mouflon_render::vello::util::RenderContext;
@@ -48,6 +49,18 @@ pub struct Gpu {
     renderer: Option<Renderer>,
     blitter: Option<(wgpu::TextureFormat, TextureBlitter)>,
     scene: Scene,
+    timings: Timings,
+}
+
+/// Temps passé à dessiner (voir [`Gpu::take_timings`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Timings {
+    /// Scène encodée et travail de Vello envoyé au GPU.
+    pub paint: Duration,
+    /// Attente d'une image d'écran libre.
+    pub acquire: Duration,
+    /// Recopie dans la fenêtre et envoi à l'écran.
+    pub present: Duration,
 }
 
 impl std::fmt::Debug for Gpu {
@@ -89,7 +102,13 @@ impl Gpu {
             renderer: None,
             blitter: None,
             scene: Scene::new(),
+            timings: Timings::default(),
         }
+    }
+
+    /// Temps passé à dessiner depuis le dernier appel.
+    pub fn take_timings(&mut self) -> Timings {
+        std::mem::take(&mut self.timings)
     }
 
     /// Crée la surface d'une fenêtre (et le GPU au premier appel).
@@ -275,6 +294,7 @@ impl Gpu {
             return false;
         };
         let handle = &self.context.devices[surface.dev_id];
+        let started = Instant::now();
         self.scene.reset();
         mouflon_render::vello_scene::encode(list, &mut self.scene);
         let params = RenderParams {
@@ -293,6 +313,8 @@ impl Gpu {
             log::warn!("rendu Vello : {e}");
             return false;
         }
+        let painted = Instant::now();
+        self.timings.paint += painted - started;
         let frame = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -302,6 +324,8 @@ impl Gpu {
             }
             _ => return false,
         };
+        let acquired = Instant::now();
+        self.timings.acquire += acquired - painted;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -332,6 +356,7 @@ impl Gpu {
         handle.queue.submit([encoder.finish()]);
         window.pre_present_notify();
         handle.queue.present(frame);
+        self.timings.present += acquired.elapsed();
         true
     }
 }

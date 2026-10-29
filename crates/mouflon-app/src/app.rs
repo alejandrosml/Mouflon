@@ -153,6 +153,10 @@ pub struct App {
     shown_at: Option<f64>,
     /// Fin de la mise en route du lancement.
     settle_until: Option<Instant>,
+    /// Prochaine image prévue par la minuterie (`None` : tout de suite). Les
+    /// autres événements (souris, fenêtres déplacées…) ne la font pas venir
+    /// plus tôt, sauf ceux qui changent quelque chose à l'écran.
+    next_frame: Option<Instant>,
     /// Animaux demandés dont le dessin se prépare encore (identifiant → nombre).
     pending: HashMap<String, usize>,
     /// Dessins en préparation sur un fil à part (identifiants).
@@ -281,6 +285,7 @@ impl App {
             clock_beat: None,
             shown_at: None,
             settle_until: None,
+            next_frame: None,
             pending: HashMap::new(),
             decoding: HashSet::new(),
             trial_end: None,
@@ -573,6 +578,7 @@ impl App {
 
     /// Les dessins d'un animal sont prêts : ceux qui l'attendaient arrivent.
     fn art_ready(&mut self, event_loop: &ActiveEventLoop, id: &str) {
+        self.next_frame = None;
         self.decoding.remove(id);
         let count = self.pending.remove(id).unwrap_or(0);
         if count == 0 {
@@ -900,6 +906,8 @@ impl App {
     }
 
     fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
+        // Ce que l'on vient de choisir se voit tout de suite.
+        self.next_frame = None;
         match action {
             Action::AddDefault => {
                 let index = self
@@ -1056,6 +1064,7 @@ impl App {
         };
         self.shown_at = shown_at;
         self.last_tick = now;
+        let mut phases = crate::stats::Phases::default();
 
         if now >= self.next_screen_poll {
             self.refresh_screens(event_loop);
@@ -1075,6 +1084,8 @@ impl App {
             self.next_screen_poll = now + SCREEN_POLL;
         }
         self.apply_watch(event_loop, now);
+        let mut mark = Instant::now();
+        phases.watch = mark - now;
 
         // Mise en route du lancement : les fenêtres sont ouvertes mais vides,
         // les animaux attendent.
@@ -1110,10 +1121,13 @@ impl App {
         } else {
             self.flock.advance(elapsed, &self.world, &input)
         };
+        phases.sim = lap(&mut mark);
         if !settling {
             self.play_sounds();
         }
+        phases.sounds = lap(&mut mark);
         self.sync_windows(event_loop);
+        phases.windows = lap(&mut mark);
 
         let Self {
             windows,
@@ -1137,9 +1151,11 @@ impl App {
                 / scale;
             let moved = pw.position != Some((ox, oy));
             if moved {
+                let started = Instant::now();
                 pw.window.set_outer_position(LogicalPosition::new(ox, oy));
                 pw.position = Some((ox, oy));
                 pw.placed = placed_at(&pw.window, scale).unwrap_or((ox, oy));
+                phases.moves += started.elapsed();
             }
             if settling {
                 // Une image vide : la fenêtre s'affiche et l'affichage se met en
@@ -1191,18 +1207,27 @@ impl App {
                 origin: Vec2::new(pw.placed.0 as f32, pw.placed.1 as f32),
                 scale,
             };
+            let started = Instant::now();
             paint_pet(&pw.art, &view, &frame, style, list);
+            phases.paint += started.elapsed();
+            phases.renders += 1;
             if gpu.render(&mut pw.surface, list, &pw.window) {
                 pw.last_render = Some(now);
                 pw.sprite = sprite;
                 pw.drawn_offset = offset;
             }
         }
+        if let Some(gpu) = self.gpu.as_mut() {
+            let timings = gpu.take_timings();
+            phases.paint += timings.paint;
+            phases.acquire = timings.acquire;
+            phases.present = timings.present;
+        }
 
         self.schedule(event_loop, now, settling);
 
         if let Some(stats) = &mut self.stats {
-            stats.record(now, shown_at.is_some());
+            stats.record(now, shown_at.is_some(), phases);
             if self.trial_end.is_some_and(|end| now >= end) {
                 log::info!("essai terminé : {}", stats.report());
                 event_loop.exit();
@@ -1235,6 +1260,7 @@ impl App {
             }
             self.shown_at = None;
             let wake = Duration::from_millis(if self.paused { 250 } else { 500 });
+            self.next_frame = Some(now + wake);
             event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
             return;
         };
@@ -1253,8 +1279,17 @@ impl App {
             }
             None => interval,
         };
+        self.next_frame = Some(now + wake);
         event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
     }
+}
+
+/// Temps écoulé depuis `mark`, qui passe à maintenant.
+fn lap(mark: &mut Instant) -> Duration {
+    let now = Instant::now();
+    let lap = now - *mark;
+    *mark = now;
+    lap
 }
 
 /// Fréquence de l'écran d'une fenêtre, en images par seconde : celle que
@@ -1306,15 +1341,19 @@ impl ApplicationHandler<UserEvent> for App {
         // Préchargement, avant la première image : dessins des animaux du
         // lancement, GPU, sons, premier relevé des fenêtres. Rien de tout
         // cela ne doit tomber pendant la première chute.
+        let mut mark = Instant::now();
+        let mut steps = vec![("menu", mark - begun)];
         let index = self
             .library
             .default_index(self.settings.default_pet.as_deref());
         if let Some(entry) = self.library.pets.get(index) {
             let _ = entry.art();
         }
+        steps.push(("dessins", lap(&mut mark)));
         if self.settings.sounds {
             self.warm_up_sounds();
         }
+        steps.push(("sons", lap(&mut mark)));
         let first = watcher.wait_first(Duration::from_millis(500));
         self.watcher = Some(watcher);
         self.refresh_screens(event_loop);
@@ -1322,18 +1361,29 @@ impl ApplicationHandler<UserEvent> for App {
             Some(snapshot) => self.apply_snapshot(event_loop, snapshot, Instant::now()),
             None => self.refresh_windows(Instant::now()),
         }
+        steps.push(("relevé des fenêtres", lap(&mut mark)));
         for _ in 0..self.settings.start_count.clamp(1, 32) {
             self.spawn(event_loop, index);
         }
+        steps.push(("fenêtres et programmes du GPU", lap(&mut mark)));
         self.warm_up_gpu();
+        steps.push(("image d'essai", lap(&mut mark)));
         self.start_clock();
         self.settle_until = Some(Instant::now() + SETTLE);
         self.last_tick = Instant::now();
-        log::info!("préchargement : {} ms", begun.elapsed().as_millis());
+        let detail: Vec<String> = steps
+            .iter()
+            .map(|(step, time)| format!("{step} {}", time.as_millis()))
+            .collect();
+        log::info!(
+            "préchargement : {} ms ({})",
+            begun.elapsed().as_millis(),
+            detail.join(", ")
+        );
         if let Some(duration) = crate::stats::trial() {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
-            self.stats = Some(crate::stats::FrameStats::default());
+            self.stats = Some(crate::stats::FrameStats::new(Instant::now()));
         }
     }
 
@@ -1382,8 +1432,10 @@ impl ApplicationHandler<UserEvent> for App {
                 ElementState::Pressed => {
                     self.pointer.window = Some(window_id);
                     self.pointer.pressed = self.cursor();
+                    self.next_frame = None;
                 }
                 ElementState::Released => {
+                    self.next_frame = None;
                     let input = self.input();
                     if let Some(id) = self.pointer.dragging.take() {
                         if let Some(pet) = self.flock.get_mut(id) {
@@ -1445,8 +1497,14 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // L'horloge de l'écran donne le rythme ; sans elle (ou si elle se
-        // tait), on avance ici, au réveil de la minuterie.
-        if self.started && !self.clocked(Instant::now()) {
+        // tait), on avance ici, à l'heure prévue par la minuterie.
+        let now = Instant::now();
+        if self.started
+            && !self.clocked(now)
+            && self
+                .next_frame
+                .is_none_or(|next| now + Duration::from_millis(1) >= next)
+        {
             self.frame(event_loop, None);
         }
     }
