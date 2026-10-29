@@ -21,7 +21,8 @@ pub mod pet;
 pub mod world;
 
 pub use def::{
-    Appearance, Drawn, Facings, Inbetweens, PetDef, Pose, Rules, SpritePage, SpriteSheet,
+    Appearance, Drawn, Facings, Inbetweens, PetDef, Pose, Rules, Sound, SoundCue, SpritePage,
+    SpriteSheet,
 };
 pub use format::{LoadError, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};

@@ -17,6 +17,9 @@ license = "MIT OR Apache-2.0"
 sprites = "pelote.png"        # 12 × 10 images de 240 pixels
 tiles = [12, 10]
 scale = 0.33333334            # 240 pixels → 80 points
+# Images intermédiaires entre les poses (calculées par tools/inbetween) :
+# 270 images pour adoucir 104 passages.
+inbetweens = "entre-deux.toml"
 
 [desktoppet]
 animations = "animations.xml"

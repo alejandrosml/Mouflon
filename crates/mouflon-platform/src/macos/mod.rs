@@ -1,7 +1,9 @@
 //! Implémentation macOS.
 
+mod sound;
 mod ui;
 
+pub use sound::play_sound;
 pub use ui::{close_note, show_about, show_note};
 
 use std::ptr::NonNull;

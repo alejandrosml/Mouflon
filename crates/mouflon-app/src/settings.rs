@@ -29,6 +29,8 @@ pub struct Settings {
     /// marchent sur le Dock.
     #[serde(alias = "walk_on_dock")]
     pub walk_under_dock: bool,
+    /// Les animaux font entendre leurs sons (bêlements, clochette…).
+    pub sounds: bool,
 }
 
 impl Default for Settings {
@@ -40,6 +42,7 @@ impl Default for Settings {
             collisions: false,
             size: 1.0,
             walk_under_dock: false,
+            sounds: true,
         }
     }
 }
@@ -193,6 +196,7 @@ mod tests {
             collisions: true,
             size: 1.0,
             walk_under_dock: false,
+            sounds: true,
         }
         .save(&old.settings);
 

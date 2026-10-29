@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use chrono::Timelike;
 use mouflon_core::{
-    Activity, Flock, Input, LedgeOptions, PetView, Rect, Screen, Support, Vec2, WindowRect, World,
-    exact_dock,
+    Activity, Flock, Input, LedgeOptions, PetEvent, PetView, Rect, Screen, Support, Vec2,
+    WindowRect, World, exact_dock,
 };
 use mouflon_platform as platform;
 use mouflon_render::{Canvas, DisplayList, Frame, Look, PetArt, SpriteMotion, Style, paint_pet};
@@ -157,6 +157,10 @@ fn show_about() {
         lines: &lines,
     });
 }
+
+/// Volume de l'ensemble des sons des animaux (de 0 à 1) : discret, c'est un
+/// compagnon de bureau.
+const VOLUME: f32 = 0.55;
 
 /// Mention de copyright de la fenêtre « À propos ».
 const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
@@ -513,6 +517,7 @@ impl App {
             self.menu = None;
             match crate::menu::TrayMenu::new(
                 &self.library,
+                self.settings.sounds,
                 self.settings.frontmost_only,
                 self.settings.collisions,
                 self.settings.walk_under_dock,
@@ -523,6 +528,23 @@ impl App {
                     self.menu = Some(menu);
                 }
                 Err(e) => log::error!("impossible de recréer le menu : {e}"),
+            }
+        }
+    }
+
+    /// Joue les sons que les animaux viennent de faire (s'ils ont la parole),
+    /// et vide la liste de leurs événements.
+    fn play_sounds(&mut self) {
+        let audible = self.settings.sounds && !self.paused;
+        for pet in self.flock.pets_mut() {
+            for event in pet.take_events() {
+                if let PetEvent::Sound { sound, clip } = event
+                    && audible
+                    && let Some(sound) = pet.def().sounds.get(sound)
+                    && let Some(data) = sound.clips.get(clip)
+                {
+                    platform::play_sound(data, sound.volume * VOLUME);
+                }
             }
         }
     }
@@ -679,6 +701,16 @@ impl App {
                 self.set_size(index);
                 self.sync_windows(event_loop);
             }
+            Action::ToggleSounds => {
+                self.settings.sounds = !self.settings.sounds;
+                if let Some(paths) = &self.paths {
+                    self.settings.save(&paths.settings);
+                }
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                if let Some(menu) = &self.menu {
+                    menu.set_sounds(self.settings.sounds);
+                }
+            }
             Action::TogglePause => {
                 self.paused = !self.paused;
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -785,6 +817,7 @@ impl App {
         } else {
             self.flock.advance(elapsed, &self.world, &input)
         };
+        self.play_sounds();
         self.sync_windows(event_loop);
 
         let Self {
@@ -896,6 +929,7 @@ impl ApplicationHandler<UserEvent> for App {
             }));
             match crate::menu::TrayMenu::new(
                 &self.library,
+                self.settings.sounds,
                 self.settings.frontmost_only,
                 self.settings.collisions,
                 self.settings.walk_under_dock,

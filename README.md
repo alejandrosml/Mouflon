@@ -165,11 +165,12 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 | `mouflon-app` | transparent windows (winit), GPU (wgpu), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
+| `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
 
-All the code is Rust. Only the boundary with macOS contains `unsafe`, in
+All the app's code is Rust. Only the boundary with macOS contains `unsafe`, in
 `mouflon-platform`, with a justification for each block. The rest of the
-repository is data (pets in TOML, SVG and PNG, translations, documentation)
-and a build script in bash.
+repository is data (pets in TOML, SVG and PNG, translations, documentation),
+a build script in bash and a Python script that prepares in-between images.
 
 ### Off-screen preview
 
@@ -376,11 +377,13 @@ ses comportements : [docs/format.md](docs/format.md).
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
+| `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |
 
-Tout le code est en Rust. Seule la frontière avec macOS contient de l'`unsafe`,
-dans `mouflon-platform`, avec une justification pour chaque bloc. Le reste du
-dépôt est fait de données (animaux en TOML, SVG et PNG, traductions,
-documentation) et d'un script de construction en bash.
+Tout le code de l'app est en Rust. Seule la frontière avec macOS contient de
+l'`unsafe`, dans `mouflon-platform`, avec une justification pour chaque bloc.
+Le reste du dépôt est fait de données (animaux en TOML, SVG et PNG,
+traductions, documentation), d'un script de construction en bash et d'un
+script Python qui prépare les images intermédiaires.
 
 ### Aperçu hors écran
 

@@ -422,6 +422,28 @@ impl SpriteClip {
     }
 }
 
+/// Un son de l'animal : une ou plusieurs prises (fichiers audio : MP3, AAC,
+/// WAV…), l'une tirée au hasard à chaque fois.
+#[derive(Clone, Debug)]
+pub struct Sound {
+    pub name: String,
+    pub clips: Vec<Arc<[u8]>>,
+    /// Volume, de 0 à 1.
+    pub volume: f32,
+}
+
+/// Un son qu'un comportement fait entendre.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundCue {
+    /// Rang dans [`PetDef::sounds`].
+    pub sound: usize,
+    /// Chance de l'entendre à chaque occasion (de 0 à 1).
+    pub chance: f32,
+    /// Image de la séquence (rang dans ses images) qui le déclenche, à chaque
+    /// passage ; sans valeur, au début du comportement.
+    pub frame: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Behavior {
     pub name: String,
@@ -457,6 +479,8 @@ pub struct Behavior {
     /// Personnages secondaires qui apparaissent avec ce comportement
     /// (la fleur que le mouton mange, le mouton noir…).
     pub children: Vec<ChildSpawn>,
+    /// Sons qu'il fait entendre.
+    pub sounds: Vec<SoundCue>,
 }
 
 /// Personnage secondaire (élément `child` de desktopPet). Il joue ses propres
@@ -533,6 +557,8 @@ pub struct PetDef {
     /// Points d'apparition ; vide : l'animal tombe du haut de l'écran.
     pub spawns: Vec<SpawnPoint>,
     pub rules: Rules,
+    /// Sons de l'animal (voir [`Behavior::sounds`]).
+    pub sounds: Vec<Sound>,
     by_name: HashMap<String, usize>,
     default_ground: usize,
     default_air: Option<usize>,
@@ -596,6 +622,12 @@ impl PetDef {
                     to: format!("#{}", c.next),
                 });
             }
+            if let Some(cue) = b.sounds.iter().find(|c| !(0.0..=1.0).contains(&c.chance)) {
+                return Err(DefError::Invalid(format!(
+                    "« {} » : chance de son {} (attendu entre 0 et 1)",
+                    b.name, cue.chance
+                )));
+            }
         }
         for (name, list) in [
             ("spawn", &reflexes.spawn),
@@ -638,10 +670,31 @@ impl PetDef {
             reflexes,
             spawns: Vec::new(),
             rules: Rules::Mouflon,
+            sounds: Vec::new(),
             by_name,
             default_ground,
             default_air,
         })
+    }
+
+    /// Donne ses sons à l'animal ; chaque son désigné par un comportement doit exister.
+    pub fn set_sounds(&mut self, sounds: Vec<Sound>) -> Result<(), DefError> {
+        for b in &self.behaviors {
+            if let Some(cue) = b.sounds.iter().find(|c| c.sound >= sounds.len()) {
+                return Err(DefError::Invalid(format!(
+                    "« {} » : son #{} inconnu",
+                    b.name, cue.sound
+                )));
+            }
+        }
+        if let Some(sound) = sounds.iter().find(|s| s.clips.is_empty()) {
+            return Err(DefError::Invalid(format!(
+                "le son « {} » n'a aucun fichier",
+                sound.name
+            )));
+        }
+        self.sounds = sounds;
+        Ok(())
     }
 
     /// Images de l'animal, s'il est fait de sprites.

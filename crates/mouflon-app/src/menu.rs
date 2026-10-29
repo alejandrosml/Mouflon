@@ -13,6 +13,8 @@ pub enum Action {
     /// Tous les animaux jouent ensemble (`sync` de desktopPet).
     Together,
     TogglePause,
+    /// Les animaux font entendre leurs sons, ou se taisent.
+    ToggleSounds,
     ToggleFrontmostOnly,
     ToggleCollisions,
     /// Marcher sous le Dock (il faut l'autorisation d'Accessibilité).
@@ -43,6 +45,7 @@ mod native {
         remove_all: MenuId,
         together: MenuId,
         pause: CheckMenuItem,
+        sounds: CheckMenuItem,
         frontmost: CheckMenuItem,
         collisions: CheckMenuItem,
         walk_under_dock: CheckMenuItem,
@@ -62,6 +65,7 @@ mod native {
     impl TrayMenu {
         pub fn new(
             library: &Library,
+            sounds_on: bool,
             frontmost_only: bool,
             collisions_on: bool,
             walk_under_dock_on: bool,
@@ -90,6 +94,8 @@ mod native {
 
             let pause = CheckMenuItem::new(&t.pause, true, false, None);
             menu.append(&pause)?;
+            let sounds = CheckMenuItem::new(&t.sounds, true, sounds_on, None);
+            menu.append(&sounds)?;
             let frontmost = CheckMenuItem::new(&t.frontmost_only, true, frontmost_only, None);
             menu.append(&frontmost)?;
             let collisions = CheckMenuItem::new(&t.collisions, true, collisions_on, None);
@@ -139,6 +145,7 @@ mod native {
                 remove_all: remove_all.id().clone(),
                 together: together.id().clone(),
                 pause,
+                sounds,
                 frontmost,
                 collisions,
                 walk_under_dock,
@@ -167,6 +174,8 @@ mod native {
                 Some(Action::Together)
             } else if id == self.pause.id() {
                 Some(Action::TogglePause)
+            } else if id == self.sounds.id() {
+                Some(Action::ToggleSounds)
             } else if id == self.frontmost.id() {
                 Some(Action::ToggleFrontmostOnly)
             } else if id == self.collisions.id() {
@@ -188,6 +197,10 @@ mod native {
 
         pub fn set_paused(&self, paused: bool) {
             self.pause.set_checked(paused);
+        }
+
+        pub fn set_sounds(&self, value: bool) {
+            self.sounds.set_checked(value);
         }
 
         pub fn set_frontmost_only(&self, value: bool) {

@@ -28,7 +28,8 @@ use roxmltree::{Document, Node};
 
 use crate::def::{
     Appearance, Behavior, ChildSpawn, Condition, Duration, Motion, PetDef, PetMeta, Physics,
-    Reflexes, Rules, Script, SpawnPoint, SpriteClip, SpriteSheet, Transition, png_size,
+    Reflexes, Rules, Script, Sound, SoundCue, SpawnPoint, SpriteClip, SpriteSheet, Transition,
+    png_size,
 };
 use crate::expr::Expr;
 use crate::format::LoadError;
@@ -627,6 +628,7 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
                 opacity_end: a.end.opacity,
             }),
             children: own_children,
+            sounds: Vec::new(),
         });
     }
 
@@ -716,6 +718,35 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
     )?;
     def.set_spawns(spawns)?;
     def.rules = Rules::DesktopPet;
+
+    // Sons (MP3) : chacun joué au début de son animation, selon sa probabilité (%).
+    let mut sounds = Vec::new();
+    if let Some(list) = element(root, "sounds") {
+        for node in elements(list, "sound") {
+            let Some(&behavior) = node
+                .attribute("animationid")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .and_then(|id| index.get(&id))
+            else {
+                continue;
+            };
+            let Some(mp3) = text(node, "base64").and_then(|t| decode_base64(&t).ok()) else {
+                continue;
+            };
+            let chance = number::<f32>(node, "probability").unwrap_or(100.0);
+            def.behaviors[behavior].sounds.push(SoundCue {
+                sound: sounds.len(),
+                chance: (chance / 100.0).clamp(0.0, 1.0),
+                frame: None,
+            });
+            sounds.push(Sound {
+                name: def.behaviors[behavior].name.clone(),
+                clips: vec![Arc::from(mp3)],
+                volume: 1.0,
+            });
+        }
+    }
+    def.set_sounds(sounds)?;
     Ok(def)
 }
 
@@ -867,6 +898,26 @@ pub(crate) mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn reads_the_sounds_of_its_animations() {
+        let mp3 = base64::engine::general_purpose::STANDARD.encode(b"ID3 bee");
+        let xml = sample().replace(
+            "  <childs>",
+            &format!(
+                "  <sounds><sound animationid=\"8\"><probability>40</probability><loop>0</loop>\
+                 <base64>{mp3}</base64></sound></sounds>\n  <childs>"
+            ),
+        );
+        let def = import(&xml).unwrap();
+        assert_eq!(def.sounds.len(), 1);
+        assert_eq!(&*def.sounds[0].clips[0], b"ID3 bee");
+        let eat = behavior(&def, "eat");
+        assert_eq!(eat.sounds.len(), 1);
+        assert!((eat.sounds[0].chance - 0.4).abs() < 1e-6);
+        assert_eq!(eat.sounds[0].frame, None);
+        assert!(behavior(&def, "drag").sounds.is_empty());
     }
 
     #[test]

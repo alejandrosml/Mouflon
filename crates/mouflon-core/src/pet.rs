@@ -56,6 +56,11 @@ pub enum PetEvent {
     Met {
         other: u32,
     },
+    /// Fait entendre un son : rang dans [`PetDef::sounds`] et prise choisie.
+    Sound {
+        sound: usize,
+        clip: usize,
+    },
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
@@ -1244,7 +1249,7 @@ impl Pet {
         self.behavior_time += dt;
         let def = Arc::clone(&self.def);
         let behavior = &def.behaviors[self.behavior];
-        if behavior.clip.is_some() {
+        if let Some(clip) = &behavior.clip {
             self.clip_timer += dt;
             loop {
                 let interval = self.clip_interval();
@@ -1253,6 +1258,10 @@ impl Pet {
                 }
                 self.clip_timer -= interval;
                 self.clip_step += 1;
+                let looping = behavior.duration != Duration::Clip || self.support == Support::Held;
+                if looping || self.clip_step < self.clip_total {
+                    self.cue_sounds(Some(clip.frame_index_at(self.clip_step)));
+                }
             }
         }
         let desktoppet = def.rules == Rules::DesktopPet;
@@ -1299,6 +1308,27 @@ impl Pet {
                     def.default_ground()
                 };
                 self.enter(next);
+            }
+        }
+    }
+
+    /// Sons du comportement en cours prévus au début (`frame` vide) ou sur
+    /// cette image de sa séquence, chacun selon sa chance.
+    fn cue_sounds(&mut self, frame: Option<usize>) {
+        if self.leaving.is_some_and(|l| l.fade.is_some()) {
+            return;
+        }
+        let def = Arc::clone(&self.def);
+        for cue in &def.behaviors[self.behavior].sounds {
+            if cue.frame == frame && self.rng.chance(cue.chance) {
+                let clips = def.sounds.get(cue.sound).map_or(0, |s| s.clips.len());
+                if clips > 0 {
+                    let clip = self.rng.next_u32() as usize % clips;
+                    self.events.push(PetEvent::Sound {
+                        sound: cue.sound,
+                        clip,
+                    });
+                }
             }
         }
     }
@@ -1353,6 +1383,11 @@ impl Pet {
             }),
             Duration::Forever => f32::INFINITY,
         };
+        self.cue_sounds(None);
+        // L'image du premier pas peut aussi avoir son son.
+        if behavior.clip.is_some() {
+            self.cue_sounds(Some(0));
+        }
         match &behavior.motion {
             Motion::Turn => {
                 self.facing = -self.facing;
@@ -2367,6 +2402,43 @@ mod tests {
         assert_eq!(&seen[..6], &[4, 34, 5, 35, 6, 36], "{seen:?}");
         // Après la dernière image de la marche, rien : elle est sautée.
         assert!(!seen.contains(&37), "{seen:?}");
+    }
+
+    #[test]
+    fn behaviors_play_their_sounds() {
+        let world = world();
+        let def = Arc::new(
+            parse_pet_toml(
+                &crate::format::tests::strips_with_sounds(),
+                crate::format::tests::sounds_resolve,
+            )
+            .unwrap(),
+        );
+        let sounds = |pet: &mut Pet| -> Vec<usize> {
+            pet.take_events()
+                .into_iter()
+                .filter_map(|e| match e {
+                    PetEvent::Sound { sound, clip } => {
+                        assert!(clip < pet.def.sounds[sound].clips.len());
+                        Some(sound)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // Le repos bêle dès qu'il commence.
+        let mut pet = standing(Arc::clone(&def), &world, 700.0, -1.0, "repos");
+        assert_eq!(sounds(&mut pet), vec![0]);
+        // La marche fait tinter la clochette sur sa troisième image, à chaque
+        // passage (trois passages de quatre images à 10 images par seconde).
+        let mut pet = standing(def, &world, 700.0, -1.0, "marche");
+        pet.take_events();
+        let mut bells = 0;
+        for _ in 0..(1.15 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            bells += sounds(&mut pet).iter().filter(|s| **s == 1).count();
+        }
+        assert_eq!(bells, 3);
     }
 
     /// Animal posé au sol, dans le comportement voulu.

@@ -64,8 +64,8 @@ use serde::Deserialize;
 
 use crate::def::{
     Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Inbetweens, Motion,
-    PetDef, PetMeta, Physics, Reflexes, Script, SpriteClip, SpritePage, SpriteSheet, Transition,
-    png_size,
+    PetDef, PetMeta, Physics, Reflexes, Script, Sound, SoundCue, SpriteClip, SpritePage,
+    SpriteSheet, Transition, png_size,
 };
 use crate::expr::Expr;
 use crate::math::Vec2;
@@ -226,9 +226,11 @@ pub fn parse_pet_toml(
         Appearance::Sprites(sheet) => sheet.scale,
         Appearance::Rig { .. } => 1.0,
     };
+    let sounds = load_sounds(&file.sounds, &resolve)?;
     let mut behaviors = Vec::with_capacity(file.behaviors.len());
     for b in &file.behaviors {
         let clip = b.clip(&frames)?;
+        let cues = sound_cues(&b.name, b.sound.as_ref(), &sounds, clip.as_ref())?;
         let motion = b.motion(clip.as_ref(), scale)?;
         let scripted = matches!(motion, Motion::Script(_));
         behaviors.push(Behavior {
@@ -253,6 +255,7 @@ pub fn parse_pet_toml(
             walk_off_edges: b.walk_off_edges,
             clip,
             children: Vec::new(),
+            sounds: cues,
         });
     }
 
@@ -274,7 +277,89 @@ pub fn parse_pet_toml(
         together: resolve_list("together", &r.together)?,
     };
 
-    Ok(PetDef::new(meta, appearance, physics, behaviors, reflexes)?)
+    let mut def = PetDef::new(meta, appearance, physics, behaviors, reflexes)?;
+    def.set_sounds(sounds)?;
+    Ok(def)
+}
+
+/// Sons nommés de la section [sounds] : leurs fichiers sont lus tout de suite.
+fn load_sounds(
+    table: &BTreeMap<String, SoundToml>,
+    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+) -> Result<Vec<Sound>, LoadError> {
+    table
+        .iter()
+        .map(|(name, sound)| {
+            let (files, volume) = match sound {
+                SoundToml::One(file) => (std::slice::from_ref(file), 1.0),
+                SoundToml::Many { files, volume } => (files.as_slice(), *volume),
+            };
+            if files.is_empty() {
+                return Err(format_error(format!("son « {name} » : aucun fichier")));
+            }
+            if !(0.0..=1.0).contains(&volume) {
+                return Err(format_error(format!(
+                    "son « {name} » : volume {volume} (attendu entre 0 et 1)"
+                )));
+            }
+            let clips = files
+                .iter()
+                .map(|file| resolve(file).map(Arc::from))
+                .collect::<Result<_, _>>()?;
+            Ok(Sound {
+                name: name.clone(),
+                clips,
+                volume,
+            })
+        })
+        .collect()
+}
+
+/// Sons d'un comportement (`sound = …`), d'après les noms de la section [sounds].
+fn sound_cues(
+    behavior: &str,
+    cues: Option<&SoundCuesToml>,
+    sounds: &[Sound],
+    clip: Option<&SpriteClip>,
+) -> Result<Vec<SoundCue>, LoadError> {
+    let bad = |what: String| format_error(format!("comportement « {behavior} » : {what}"));
+    let list: Vec<&SoundCueToml> = match cues {
+        None => Vec::new(),
+        Some(SoundCuesToml::One(cue)) => vec![cue],
+        Some(SoundCuesToml::Many(cues)) => cues.iter().collect(),
+    };
+    list.into_iter()
+        .map(|cue| {
+            let (name, chance, frame) = match cue {
+                SoundCueToml::Name(name) => (name, 1.0, None),
+                SoundCueToml::Full {
+                    name,
+                    chance,
+                    frame,
+                } => (name, *chance, *frame),
+            };
+            let sound = sounds
+                .iter()
+                .position(|s| s.name == *name)
+                .ok_or_else(|| bad(format!("son « {name} » inconnu (voir [sounds])")))?;
+            if !(0.0..=1.0).contains(&chance) {
+                return Err(bad(format!("chance {chance} (attendu entre 0 et 1)")));
+            }
+            if let Some(f) = frame {
+                let frames = clip.map_or(0, |c| c.frames.len());
+                if f >= frames {
+                    return Err(bad(format!(
+                        "son sur l'image {f}, mais la séquence n'en a que {frames}"
+                    )));
+                }
+            }
+            Ok(SoundCue {
+                sound,
+                chance,
+                frame,
+            })
+        })
+        .collect()
 }
 
 fn parse_appearance(
@@ -606,14 +691,39 @@ fn parse_desktoppet_sidecar(
     };
     let xml = String::from_utf8(resolve(&desktoppet.animations)?)
         .map_err(|_| format_error(format!("{} n'est pas en UTF-8", desktoppet.animations)))?;
-    crate::desktoppet::import_with(
+    let mut def = crate::desktoppet::import_with(
         xml.trim_start_matches('\u{feff}'),
         crate::desktoppet::Overrides {
             meta: Some(meta),
             sprites,
             original_tile: desktoppet.tile.map(|[w, h]| (w, h)),
         },
-    )
+    )?;
+    // Sons du pet.toml, après ceux du fichier XML, joués avec les animations
+    // nommées dans [desktoppet.sounds].
+    let mut sounds = std::mem::take(&mut def.sounds);
+    let first = sounds.len();
+    sounds.extend(load_sounds(&file.sounds, resolve)?);
+    for (animation, cues) in &desktoppet.sounds {
+        let index = def.behavior_index(animation).ok_or_else(|| {
+            format_error(format!(
+                "[desktoppet.sounds] : l'animation « {animation} » n'existe pas"
+            ))
+        })?;
+        let behavior = &mut def.behaviors[index];
+        let cues = sound_cues(
+            animation,
+            Some(cues),
+            &sounds[first..],
+            behavior.clip.as_ref(),
+        )?;
+        behavior.sounds.extend(cues.into_iter().map(|cue| SoundCue {
+            sound: cue.sound + first,
+            ..cue
+        }));
+    }
+    def.set_sounds(sounds)?;
+    Ok(def)
 }
 
 fn parse_hex_color(s: &str) -> Result<[u8; 3], LoadError> {
@@ -661,6 +771,9 @@ struct PetFile {
     /// Listes de suites nommées, réutilisables par `next = "nom"`.
     #[serde(default)]
     choices: BTreeMap<String, Vec<TransitionToml>>,
+    /// Sons nommés : un fichier, ou `{ files = [...], volume = … }`.
+    #[serde(default)]
+    sounds: BTreeMap<String, SoundToml>,
     #[serde(rename = "behavior", default)]
     behaviors: Vec<BehaviorToml>,
 }
@@ -684,6 +797,10 @@ struct DesktopPetToml {
     /// Taille des cases d'origine, si l'image a été retirée du fichier XML
     /// (les déplacements y sont exprimés à cette taille).
     tile: Option<[u32; 2]>,
+    /// Sons à jouer avec les animations du fichier : nom de l'animation →
+    /// son(s) de la section [sounds].
+    #[serde(default)]
+    sounds: BTreeMap<String, SoundCuesToml>,
 }
 
 #[derive(Deserialize)]
@@ -832,6 +949,9 @@ struct BehaviorToml {
     /// Vérifier à chaque pas qu'il a encore un appui (par défaut pour les
     /// animations image par image).
     gravity: Option<bool>,
+    /// Sons : un nom de la section [sounds] (joué au début), ou
+    /// `{ name = …, chance = 0.3, frame = 2 }`, ou une liste.
+    sound: Option<SoundCuesToml>,
 }
 
 impl BehaviorToml {
@@ -1005,6 +1125,39 @@ impl BehaviorToml {
 enum LoopsToml {
     Fixed(u32),
     Range([u32; 2]),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SoundToml {
+    One(String),
+    Many {
+        files: Vec<String>,
+        #[serde(default = "one")]
+        volume: f32,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SoundCuesToml {
+    One(SoundCueToml),
+    Many(Vec<SoundCueToml>),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SoundCueToml {
+    Name(String),
+    Full {
+        name: String,
+        /// Chance de l'entendre à chaque occasion (de 0 à 1).
+        #[serde(default = "one")]
+        chance: f32,
+        /// Image de la séquence (rang dans ses images) qui le déclenche, à
+        /// chaque passage ; sans valeur, au début du comportement.
+        frame: Option<usize>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -1481,6 +1634,85 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("6 cases"), "{err}");
+    }
+
+    /// Le même animal, qui bêle et dont la clochette tinte en marchant.
+    pub(crate) fn strips_with_sounds() -> String {
+        STRIPS
+            .replace(
+                "[choices]",
+                "[sounds]\n        bele = { files = [\"s/bele-1.mp3\", \"s/bele-2.mp3\"], volume = 0.8 }\n        clochette = \"s/clochette.mp3\"\n\n        [choices]",
+            )
+            .replace(
+                "name = \"repos\"\n        fps = 8",
+                "name = \"repos\"\n        sound = \"bele\"\n        fps = 8",
+            )
+            .replace(
+                "name = \"marche\"\n        fps = 10",
+                "name = \"marche\"\n        sound = [{ name = \"clochette\", frame = 2 }, { name = \"bele\", chance = 0.25 }]\n        fps = 10",
+            )
+    }
+
+    pub(crate) fn sounds_resolve(name: &str) -> Result<Vec<u8>, LoadError> {
+        match name.strip_prefix("s/") {
+            Some(file) => Ok(file.as_bytes().to_vec()),
+            None => strips_resolve(name),
+        }
+    }
+
+    #[test]
+    fn behaviors_can_make_sounds() {
+        let def = parse_pet_toml(&strips_with_sounds(), sounds_resolve).unwrap();
+        assert_eq!(def.sounds.len(), 2);
+        let bele = &def.sounds[0];
+        assert_eq!((bele.name.as_str(), bele.volume), ("bele", 0.8));
+        assert_eq!(&*bele.clips[1], b"bele-2.mp3");
+        assert_eq!(def.sounds[1].volume, 1.0);
+        let get = |name: &str| &def.behaviors[def.behavior_index(name).unwrap()];
+        assert_eq!(
+            get("repos").sounds,
+            vec![SoundCue {
+                sound: 0,
+                chance: 1.0,
+                frame: None
+            }]
+        );
+        assert_eq!(
+            get("marche").sounds,
+            vec![
+                SoundCue {
+                    sound: 1,
+                    chance: 1.0,
+                    frame: Some(2)
+                },
+                SoundCue {
+                    sound: 0,
+                    chance: 0.25,
+                    frame: None
+                },
+            ]
+        );
+        assert!(get("demi_tour").sounds.is_empty());
+
+        for (broken, expected) in [
+            (
+                strips_with_sounds().replace("sound = \"bele\"", "sound = \"meuh\""),
+                "meuh",
+            ),
+            (
+                strips_with_sounds().replace("frame = 2", "frame = 4"),
+                "image 4",
+            ),
+            (
+                strips_with_sounds().replace("chance = 0.25", "chance = 25"),
+                "chance 25",
+            ),
+        ] {
+            let err = parse_pet_toml(&broken, sounds_resolve)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "{err}");
+        }
     }
 
     #[test]

@@ -24,6 +24,12 @@ Mouflon is a tribute to the “screen mates” that have lived on desktops since
 - **Baaaa** (pda): a macOS port whose notes on the pitfalls of
   `CGWindowListCopyWindowInfo` guided window detection (no code taken).
 
+- **RIFE** (Zhewei Huang et al., MIT License,
+  <https://github.com/hzwer/Practical-RIFE>): the in-between images of Lainou
+  and Pelote are computed with this frame interpolation network, in the ONNX
+  export `walterlow/RIFE_fp32_timestep` (MIT); the network is not part of the
+  app.
+
 The rights in the characters belong to their respective owners.
 
 ### Characters in this repository
@@ -69,6 +75,12 @@ Mouflon est un hommage aux « screen mates » qui peuplent les bureaux depuis 19
   `animations.xml`.
 - **Baaaa** (pda) : portage macOS dont la description des pièges de
   `CGWindowListCopyWindowInfo` a guidé la détection des fenêtres (aucun code repris).
+
+- **RIFE** (Zhewei Huang et al., licence MIT,
+  <https://github.com/hzwer/Practical-RIFE>) : les images intermédiaires de
+  Lainou et de Pelote sont calculées avec ce réseau d'interpolation, dans
+  l'export ONNX `walterlow/RIFE_fp32_timestep` (MIT) ; le réseau ne fait pas
+  partie de l'app.
 
 Les droits sur les personnages appartiennent à leurs auteurs respectifs.
 

@@ -21,6 +21,12 @@ fn pelote_loads_at_80_points_and_paints_both_ways() {
     assert_eq!((art.width, art.height), (80.0, 80.0));
     assert!(frames.frames.len() >= 119, "{}", frames.frames.len());
     assert!(frames.frames.iter().all(|f| f.bitmap.width <= 160));
+    // Ses images intermédiaires suivent la planche : la marche (images 1 et
+    // 0) en a trois dans chaque sens.
+    let sheet = def.sprites().expect("planche");
+    let (first, count) = sheet.inbetween(1, 0).expect("marche adoucie");
+    assert_eq!(count, 3);
+    assert!(first >= 120 && (first + count) as usize <= frames.frames.len());
 
     let world = World::new(vec![Screen {
         frame: Rect::new(0.0, 0.0, 1280.0, 800.0),

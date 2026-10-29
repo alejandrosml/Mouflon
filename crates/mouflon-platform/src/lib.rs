@@ -120,8 +120,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
     accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
-    preferred_languages, prepare_pet_window, request_accessibility, screens, show_about, show_note,
-    windows,
+    play_sound, preferred_languages, prepare_pet_window, request_accessibility, screens,
+    show_about, show_note, windows,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -208,6 +208,11 @@ mod fallback {
 
     pub fn close_note() {}
 
+    /// Pas encore de sons sur ce système.
+    pub fn play_sound(_data: &[u8], _volume: f32) -> bool {
+        false
+    }
+
     /// Ouvre un dossier dans le gestionnaire de fichiers du système.
     pub fn open_folder(path: &std::path::Path) -> bool {
         let opener = if cfg!(target_os = "windows") {
@@ -222,8 +227,8 @@ mod fallback {
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
     accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid, open_folder,
-    preferred_languages, prepare_pet_window, request_accessibility, screens, show_about, show_note,
-    windows,
+    play_sound, preferred_languages, prepare_pet_window, request_accessibility, screens,
+    show_about, show_note, windows,
 };
 
 #[cfg(test)]

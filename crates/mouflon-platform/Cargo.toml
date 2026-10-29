@@ -14,7 +14,7 @@ raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject"] }
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData"] }
 objc2-app-kit = { workspace = true, features = [
     "libc",
     "NSScreen",
@@ -42,6 +42,8 @@ objc2-app-kit = { workspace = true, features = [
     "NSText",
     "NSTextField",
     "NSViewController",
+    # Sons des animaux.
+    "NSSound",
 ] }
 objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes"] }

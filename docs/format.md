@@ -203,6 +203,76 @@ Une planche unique marche aussi : `sprites = "planche.png"`, `tiles =
 [colonnes, lignes]`, `facing = "right"` si les images regardent vers la
 droite, et `frames = [numéros des cases]` dans chaque comportement.
 
+## Images intermédiaires
+
+Pour un mouvement plus fluide, un animal en images peut avoir des images
+intermédiaires entre deux images qui se suivent. Vers la fin de chaque pas,
+Mouflon montre celles qui mènent à l'image suivante : une pose longue reste
+tenue, puis l'animal change de pose en douceur (80 ms au plus par image
+intermédiaire). Elles sont décrites par un fichier à part :
+
+```toml
+[appearance]
+inbetweens = "entre-deux.toml"
+```
+
+L'outil `tools/inbetween` les calcule et écrit ce fichier (avec le réseau
+RIFE, qui estime le mouvement entre deux images ; il laisse sans image
+intermédiaire les paires trop différentes, comme un demi-tour de profil à
+face). Pour des bandes, chaque bande a la sienne, avec `count` images après
+chacune de ses images (après la dernière, vers la première) :
+
+```toml
+count = 1
+strips_left = "entre-deux/gauche/{name}.png"
+strips_right = "entre-deux/droite/{name}.png"
+
+[skip]
+demi_tour = [0, 1, 2]         # pas d'image intermédiaire après ces images
+```
+
+Pour une planche unique (un animal desktopPet redessiné, par exemple), une
+planche à part, de mêmes cases, et la liste des paires d'images :
+
+```toml
+sprites = "entre-deux.png"
+tiles = [12, 23]
+# [image de départ, image d'arrivée, première case, nombre de cases]
+pairs = [
+    [1, 0, 0, 3],
+    [0, 1, 3, 3],
+]
+```
+
+Une bande sans la sienne, ou une paire absente de la liste, reste telle
+qu'elle est dessinée.
+
+## Sons
+
+Les sons d'un animal ont un nom ; chacun est un fichier audio (MP3, AAC, WAV),
+ou plusieurs prises dont l'une est tirée au hasard à chaque fois, avec un
+volume de 0 à 1. Un comportement fait entendre un son au début, ou sur une
+image de sa séquence à chaque passage, selon une chance de 0 à 1 :
+
+```toml
+[sounds]
+bele = { files = ["sons/agneau-1.mp3", "sons/agneau-2.mp3"], volume = 0.8 }
+clochette = { files = ["sons/clochette-1.mp3", "sons/clochette-2.mp3"], volume = 0.5 }
+broute = "sons/broute.mp3"
+
+[[behavior]]
+name = "bele"
+sound = "bele"                # au début du comportement
+fps = 10
+
+[[behavior]]
+name = "course"
+sound = [{ name = "clochette", frame = 2, chance = 0.15 }]   # sur la troisième image, une fois sur sept environ
+fps = 14
+```
+
+Les sons se coupent dans le menu (« Sons »).
+
 ## Animaux desktopPet
 
 Mouflon lit directement les fichiers `animations.xml` de
@@ -231,8 +301,10 @@ Ce que Mouflon fait mieux :
 - une fenêtre fermée sous un animal le fait tomber tout de suite ;
 - il se promène d'un écran à l'autre.
 
-Pas encore repris : les sons. En mode collisions, Mouflon fait culbuter les
-animaux qui se rentrent dedans au lieu de jouer leurs rencontres `petSide`.
+Les sons (`<sounds>`, en MP3) sont joués au début de leur animation, selon
+leur probabilité ; la répétition (`<loop>`) n'est pas encore reprise. En
+mode collisions, Mouflon fait culbuter les animaux qui se rentrent dedans
+au lieu de jouer leurs rencontres `petSide`.
 
 ### Redessiner un animal desktopPet
 
@@ -275,3 +347,16 @@ tile = [40, 40]               # pixels d'une case de la planche d'origine
 
 C'est le cas de Pelote (`pets/pelote`, réglé pour des cases de 80 pixels) et
 de Poete, la mascotte (réglé pour les cases de 40 pixels d'eSheep 64).
+
+Le `pet.toml` peut ajouter des sons aux animations du fichier, par leur
+nom, et des images intermédiaires (`inbetweens` dans `[appearance]`) :
+
+```toml
+[sounds]
+bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3"], volume = 0.7 }
+broute = "sons/broute.mp3"
+
+[desktoppet.sounds]
+eat = "broute"
+drag = { name = "bele", chance = 0.5 }
+```

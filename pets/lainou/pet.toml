@@ -23,6 +23,9 @@ frame = [256, 256]
 scale = 0.375                 # une image de 256 pixels fait 96 points
 anchor = [128, 226]           # milieu des sabots, sur le sol
 drawn = ["shadow", "dust", "squash"]
+# Une image intermédiaire après chaque image, pour un mouvement plus fluide
+# (calculées par tools/inbetween).
+inbetweens = "entre-deux.toml"
 
 [physics]
 width = 78.0                  # du museau au museau : il se retourne quand son nez touche le bord

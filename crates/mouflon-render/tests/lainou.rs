@@ -27,8 +27,9 @@ fn lainou_loads_and_paints_both_ways() {
     let Look::Sprites(frames) = &art.look else {
         panic!("Lainou est fait d'images")
     };
-    // 245 images par sens, 256 px réduits à 192 (96 points sur un écran Retina).
-    assert_eq!(frames.frames.len(), 490);
+    // 245 images par sens, 256 px réduits à 192 (96 points sur un écran
+    // Retina), puis autant d'images intermédiaires.
+    assert_eq!(frames.frames.len(), 980);
     assert_eq!((art.width, art.height), (96.0, 96.0));
     let bytes: usize = frames
         .frames
@@ -36,7 +37,7 @@ fn lainou_loads_and_paints_both_ways() {
         .map(|f| f.bitmap.rgba.data().len())
         .sum();
     eprintln!("{:.1} Mo d'images en mémoire", bytes as f64 / 1e6);
-    assert!(bytes < 40_000_000, "{bytes} octets");
+    assert!(bytes < 56_000_000, "{bytes} octets");
     assert!(frames.frames.iter().all(|f| f.bitmap.width <= 192));
 
     let world = world();
