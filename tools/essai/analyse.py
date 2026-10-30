@@ -233,7 +233,7 @@ def main():
     # Ressources, résumé après résumé : début, médiane, maximum et fin.
     fields = {"memoire_mo": "mémoire résidente (Mo)", "empreinte_mo": "empreinte mémoire (Mo)",
               "cpu": "processeur (% d'un cœur)", "reveils_s": "réveils par seconde",
-              "mo_gpu": "images sur le GPU (Mo)"}
+              "mo_gpu": "images sur le GPU (Mo)", "mo_images": "images en mémoire (Mo)"}
     series = defaultdict(list)
     for _, text in summaries:
         tokens = text.split()
