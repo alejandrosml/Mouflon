@@ -61,6 +61,8 @@ startle = [{ to = "surpris", weight = 3 }, { to = "bele", weight = 1 }]
 # s'endort ; au retour de l'utilisateur, il se réveille.
 sleepy = "baille"
 wake = "se_reveiller"
+# Un coup de vent se lève : il le regarde passer, ou s'en étonne.
+wind = [{ to = "regarde", weight = 2 }, { to = "surpris", weight = 1 }]
 
 # Ce qu'il a envie de faire quand il a fini quelque chose.
 [choices]

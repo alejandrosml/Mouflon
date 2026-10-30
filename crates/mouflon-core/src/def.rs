@@ -602,6 +602,8 @@ pub struct Reflexes {
     /// L'utilisateur revient pendant qu'il dort : il se réveille. Sans
     /// réaction prévue, il passe à la suite de son sommeil.
     pub wake: Vec<Transition>,
+    /// Un coup de vent se lève (voir [`crate::surprise::Gust`]).
+    pub wind: Vec<Transition>,
 }
 
 /// Règles du moteur pour ce qui n'est pas prévu par l'animal.

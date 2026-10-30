@@ -136,6 +136,12 @@ fn main() -> Result<(), Error> {
         let count = render_physics(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
+    if mode == "surprises" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_surprises(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
     if mode == "planche" {
         for (facing, name) in [(-1.0, "planche-gauche.png"), (1.0, "planche-droite.png")] {
             let path = out_dir.join(name);
@@ -422,6 +428,114 @@ fn render_physics(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> 
                 })
                 .collect();
             println!("{t:4.1} s : {}", states.join(", "));
+        }
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------- surprises
+
+/// Un coup de vent, puis la visite d'une soucoupe.
+fn render_surprises(
+    def: &Arc<mouflon_core::PetDef>,
+    art: &PetArt,
+    dir: &Path,
+) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let shelf = Rect::new(140.0, 330.0, 420.0, 170.0);
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(
+        &[WindowRect {
+            id: 1,
+            frame: shelf,
+        }],
+        LedgeOptions::default(),
+    );
+    let mut flock = Flock::new();
+    flock.set_realistic(true);
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(300.0));
+    let _b = flock.spawn(Arc::clone(def), 8, &world, Some(760.0));
+    give_reach(&mut flock, art);
+    let duration = 22.0;
+    let frames = (duration * RATE as f32) as u32;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        if at(1.5) {
+            for pet in flock.pets_mut() {
+                pet.force("repos");
+            }
+            // Un des deux en l'air, pour voir le vent l'emporter.
+            if let Some(pet) = flock.get_mut(a) {
+                pet.grab(pet.position() - Vec2::new(0.0, 40.0), &world);
+                pet.drag_to(pet.position() - Vec2::new(0.0, 200.0));
+            }
+        }
+        if at(2.2)
+            && let Some(pet) = flock.get_mut(a)
+        {
+            pet.release(&world);
+        }
+        if at(2.0) {
+            flock.blow(1.0, 5.0);
+        }
+        if at(8.5) {
+            for pet in flock.pets_mut() {
+                pet.force("repos");
+            }
+            flock.invite_saucer(&world, 11);
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[shelf]);
+        let frame_of_screen = Frame {
+            origin: Vec2::ZERO,
+            scale: SCALE,
+        };
+        for saucer in flock.saucers() {
+            mouflon_render::saucer::paint_saucer(
+                &saucer.view(),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % RATE == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0}) {:?}",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y,
+                        p.support()
+                    )
+                })
+                .collect();
+            println!(
+                "{t:4.1} s : {} ; soucoupes {}",
+                states.join(", "),
+                flock.saucers().len()
+            );
         }
     }
     Ok(frames)

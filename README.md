@@ -89,10 +89,10 @@ state (a change made in one is seen at once in the others):
 - **A right click on a pet** (or Control-click): say goodbye to that one, add
   another of its kind, change its own size (that pet only), mute, pause, open
   the settings. It waits under its menu; the others go on with their lives.
-- **The settings window**: size (of all the pets), sounds, realistic physics,
-  collisions between pets, walking only on the frontmost app, walking under the
-  Dock, opening Mouflon at login, and the pets folder, each option with a line
-  saying what it does.
+- **The settings window**: size (of all the pets), sounds, surprises, realistic
+  physics, collisions between pets, walking only on the frontmost app, walking
+  under the Dock, opening Mouflon at login, and the pets folder, each option
+  with a line saying what it does.
 
 Pets notice what you do, without reading anything: a pointer rushing past
 startles them; while you type, Lainou keeps quiet (it grazes, rests, watches
@@ -100,6 +100,13 @@ you work); after three minutes without anyone at the keyboard or the mouse,
 they doze off one after the other, and wake up when you come back. Mornings
 and evenings change their mood a little. Mouflon only knows *when* a key is
 pressed, never *which* one (macOS tells every app, with no permission).
+
+Now and then comes a surprise (option *Surprises*, on by default): a gust of
+wind blows by (leaves fly past, pets in the air drift, those on the ground lean
+into it), or a flying saucer, drawn by Mouflon, comes to borrow a pet: it draws
+it up in its beam, carries it a little further and sets it down, then flies
+off. You can take the pet back from it. `MOUFLON_SURPRISE=vent` or
+`MOUFLON_SURPRISE=soucoupe` brings one a few seconds after launch.
 
 With *Realistic physics* (on by default), each pet is a rigid body with a mass,
 an angle and a spin, in Mouflon's own 2D physics engine (`mouflon-core`,
@@ -397,10 +404,11 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
   ajouter un autre de son espèce, changer sa taille à lui (cet animal
   seulement), couper les sons, mettre en pause, ouvrir les réglages. Il
   attend sous son menu ; les autres continuent leur vie.
-- **La fenêtre des réglages** : taille (de tous les animaux), sons, physique
-  réaliste, collisions entre animaux, marche sur la seule app au premier plan,
-  marche sous le Dock, ouverture de Mouflon à l'ouverture de session et
-  dossier des animaux, chaque option avec une ligne qui dit ce qu'elle fait.
+- **La fenêtre des réglages** : taille (de tous les animaux), sons, surprises,
+  physique réaliste, collisions entre animaux, marche sur la seule app au
+  premier plan, marche sous le Dock, ouverture de Mouflon à l'ouverture de
+  session et dossier des animaux, chaque option avec une ligne qui dit ce
+  qu'elle fait.
 
 Les animaux remarquent ce que tu fais, sans rien lire : un pointeur qui file
 tout près les fait sursauter ; quand tu tapes, Lainou se fait discret (il
@@ -409,6 +417,14 @@ personne au clavier ni à la souris, ils s'endorment l'un après l'autre, et se
 réveillent à ton retour. Le matin et le soir changent un peu leur humeur.
 Mouflon sait seulement *quand* une touche est frappée, jamais *laquelle* (macOS
 le dit à toutes les apps, sans autorisation).
+
+De temps en temps vient une surprise (option « Surprises », cochée d'origine) :
+un coup de vent passe (des feuilles volent, les animaux en l'air dérivent, ceux
+au sol se penchent contre lui), ou une soucoupe volante, dessinée par Mouflon,
+vient emprunter un animal : elle l'aspire dans son faisceau, l'emporte un peu
+plus loin et le dépose, puis repart. On peut le lui reprendre.
+`MOUFLON_SURPRISE=vent` ou `MOUFLON_SURPRISE=soucoupe` en fait venir une
+quelques secondes après le lancement.
 
 Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.

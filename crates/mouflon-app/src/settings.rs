@@ -35,6 +35,9 @@ pub struct Settings {
     pub walk_under_dock: bool,
     /// Les animaux font entendre leurs sons (bêlements, clochette…).
     pub sounds: bool,
+    /// De temps en temps, un coup de vent ou une soucoupe volante (voir
+    /// `mouflon_core::surprise`).
+    pub surprises: bool,
 }
 
 impl Default for Settings {
@@ -48,6 +51,7 @@ impl Default for Settings {
             size: 1.0,
             walk_under_dock: false,
             sounds: true,
+            surprises: true,
         }
     }
 }
@@ -215,6 +219,7 @@ mod tests {
             size: 1.0,
             walk_under_dock: false,
             sounds: true,
+            surprises: false,
         }
         .save(&old.settings);
 

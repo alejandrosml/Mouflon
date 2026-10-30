@@ -151,6 +151,8 @@ pub enum ParticleKind {
     Dust,
     /// Bulle de sommeil.
     Bubble,
+    /// Feuille emportée par un coup de vent.
+    Leaf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -294,6 +296,8 @@ struct Anim {
     bubble_timer: f32,
     /// Prochaine bouffée de poussière quand il court.
     dust_timer: f32,
+    /// Prochaine feuille portée par le vent.
+    leaf_timer: f32,
     /// Culbute : angle courant, angle qu'il reste à parcourir (signé) et vitesse (rad/s).
     roll: f32,
     roll_left: f32,
@@ -341,6 +345,7 @@ impl Anim {
             glance_timer: 0.0,
             bubble_timer: 1.0,
             dust_timer: 0.0,
+            leaf_timer: 0.0,
             roll: 0.0,
             roll_left: 0.0,
             roll_rate: 0.0,
@@ -400,6 +405,8 @@ pub struct Pet {
     nap_in: Option<f32>,
     /// Dans combien de temps il se réveille (l'utilisateur est revenu).
     wake_in: Option<f32>,
+    /// Le vent du moment : accélération qu'il donne en l'air (pt/s², signée).
+    wind: f32,
     /// Distance du point d'appui au bout de son dessin, devant et derrière
     /// (points) : les collisions partent quand les dessins se touchent.
     /// Sans elle, la moitié de la largeur de l'animal, des deux côtés.
@@ -700,6 +707,7 @@ impl Pet {
             startle_cooldown: 0.0,
             nap_in: None,
             wake_in: None,
+            wind: 0.0,
             reach: None,
             meet_cooldown: 0.0,
             leaving: None,
@@ -888,6 +896,21 @@ impl Pet {
         if let Some(hold) = &mut self.hold {
             hold.target = cursor;
         }
+    }
+
+    /// Au sol, il se penche contre le vent (radians, sens horaire).
+    fn wind_lean(&self) -> f32 {
+        if matches!(self.support, Support::Ground { .. }) {
+            -(self.wind / crate::surprise::GUST_PEAK) * 0.07
+        } else {
+            0.0
+        }
+    }
+
+    /// Là où la main (ou le faisceau d'une soucoupe) le tient.
+    #[must_use]
+    pub fn hold_target(&self) -> Option<Vec2> {
+        self.hold.map(|h| h.target)
     }
 
     /// Le curseur relâche l'animal, qui garde son élan.
@@ -1440,6 +1463,8 @@ impl Pet {
         let p = self.def.physics;
         self.vel.y = (self.vel.y + p.gravity * dt).min(p.terminal_velocity);
         self.vel.x *= (-p.air_drag * dt).exp();
+        // Le vent le fait dériver, à proportion de sa taille.
+        self.vel.x += self.wind * dt * (p.height / 60.0).clamp(0.5, 2.0);
         let from = self.pos;
         let mut to = self.pos + self.vel * dt;
 
@@ -1917,7 +1942,8 @@ impl Pet {
             -accel.x * self.facing
         } else {
             0.0
-        };
+        } + self.wind * self.facing * 0.5;
+        let wind = self.wind;
         let Self {
             anim: a,
             rng,
@@ -2120,6 +2146,29 @@ impl Pet {
             a.dust_timer = 0.05;
         }
 
+        // Un coup de vent emporte des feuilles devant lui.
+        let gust = wind.abs() / crate::surprise::GUST_PEAK;
+        if gust > 0.25 {
+            a.leaf_timer -= dt * gust;
+            if a.leaf_timer <= 0.0 && particles.len() < MAX_PARTICLES {
+                a.leaf_timer = rng.range(0.08, 0.22);
+                let dir = wind.signum();
+                // Elles traversent les abords de l'animal (sa fenêtre est plus
+                // large) et s'effacent avant d'en sortir.
+                let half = (p.width * 0.95).max(p.height * 1.2).max(55.0);
+                let speed = rng.range(170.0, 320.0) * gust.max(0.5);
+                particles.push(Particle {
+                    kind: ParticleKind::Leaf,
+                    pos: *pos + Vec2::new(-dir * half, -rng.range(-4.0, p.height * 1.3)),
+                    vel: Vec2::new(dir * speed, 0.0),
+                    age: 0.0,
+                    life: 2.0 * half / speed,
+                    size: rng.range(4.0, 6.5) * (p.height / 60.0).clamp(0.6, 1.5),
+                    phase: rng.range(0.0, TAU),
+                });
+            }
+        }
+
         // Bulles de sommeil.
         if a.sleep > 0.85 {
             a.bubble_timer -= dt;
@@ -2172,6 +2221,10 @@ impl Pet {
                 }
                 ParticleKind::Bubble => {
                     p.vel.x = (p.age * 2.3 + p.phase).sin() * 9.0;
+                }
+                ParticleKind::Leaf => {
+                    // Elle voltige : elle monte et descend en tournoyant.
+                    p.vel.y = (p.age * 7.0 + p.phase).sin() * 45.0 + 12.0;
                 }
             }
             p.pos += p.vel * dt;
@@ -2319,7 +2372,7 @@ impl Pet {
                 breath: a.breath_phase.sin(),
                 look: a.look,
                 swing: a.swing.value,
-                roll: a.roll + self.angle,
+                roll: a.roll + self.angle + self.wind_lean(),
                 graze: a.graze,
                 nibble: (a.nibble_phase).sin(),
                 rise: a.rise,
@@ -2356,6 +2409,10 @@ pub struct Flock {
     backs: Vec<Back>,
     /// L'utilisateur est parti (voir [`Input::away`]).
     away: bool,
+    /// Le coup de vent du moment.
+    gust: Option<crate::surprise::Gust>,
+    /// Soucoupes en visite.
+    saucers: Vec<crate::surprise::Saucer>,
     /// Le pointeur au dernier [`Flock::advance`].
     last_cursor: Option<Vec2>,
 }
@@ -2689,6 +2746,7 @@ impl Flock {
         // rattrape pas : l'animal reprend où il était au lieu de bondir.
         self.accumulator += elapsed.clamp(0.0, 0.1);
         while self.accumulator >= TICK {
+            self.step_surprises(world, input);
             if self.realistic {
                 self.step_realistic(world, input);
             } else {
@@ -2707,6 +2765,96 @@ impl Flock {
             self.accumulator -= TICK;
         }
         self.accumulator / TICK
+    }
+
+    /// Un coup de vent se lève, vers la droite (`dir` positif) ou la gauche,
+    /// pour à peu près `seconds` secondes.
+    pub fn blow(&mut self, dir: f32, seconds: f32) {
+        self.gust = Some(crate::surprise::Gust::new(dir, seconds));
+    }
+
+    /// Le coup de vent du moment.
+    #[must_use]
+    pub fn gust(&self) -> Option<&crate::surprise::Gust> {
+        self.gust.as_ref()
+    }
+
+    /// Une soucoupe volante vient emprunter un animal posé (pas un
+    /// personnage secondaire, ni un animal qui part ou qu'on tient) ; elle a
+    /// son numéro, comme un animal. `None` s'il n'y en a aucun.
+    pub fn invite_saucer(&mut self, world: &World, seed: u64) -> Option<u32> {
+        let mut rng = crate::math::Rng::new(seed);
+        let busy: Vec<u32> = self
+            .saucers
+            .iter()
+            .map(crate::surprise::Saucer::target)
+            .collect();
+        let candidates: Vec<&Pet> = self
+            .pets
+            .iter()
+            .filter(|p| p.can_react() && !busy.contains(&p.id) && self.still != Some(p.id))
+            .collect();
+        let pick = (rng.next_u32() as usize) % candidates.len().max(1);
+        let pet = candidates.get(pick)?;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.saucers.push(crate::surprise::Saucer::new(
+            id,
+            pet.id,
+            pet.position(),
+            world.arena(),
+            rng.next_u32().into(),
+        ));
+        self.generation += 1;
+        Some(id)
+    }
+
+    /// Les soucoupes en visite.
+    #[must_use]
+    pub fn saucers(&self) -> &[crate::surprise::Saucer] {
+        &self.saucers
+    }
+
+    /// Un pas des surprises : le vent souffle sur chacun (et ils le
+    /// remarquent quand il se lève), les soucoupes font leur visite.
+    fn step_surprises(&mut self, world: &World, input: &Input) {
+        let blowing = self.gust.as_mut().is_some_and(|gust| gust.step(TICK));
+        let accel = match &mut self.gust {
+            Some(gust) if blowing => {
+                if !gust.noticed && gust.strength() > 0.45 {
+                    gust.noticed = true;
+                    for pet in &mut self.pets {
+                        if pet.can_react() && !pet.is_asleep() && pet.rng.chance(0.6) {
+                            let def = Arc::clone(&pet.def);
+                            if let Some(next) = pet.choose(&def.reflexes.wind, world, input) {
+                                pet.enter(next);
+                            }
+                        }
+                    }
+                }
+                gust.accel()
+            }
+            Some(_) => {
+                self.gust = None;
+                0.0
+            }
+            None => 0.0,
+        };
+        for pet in &mut self.pets {
+            pet.wind = accel;
+        }
+        if self.saucers.is_empty() {
+            return;
+        }
+        for saucer in &mut self.saucers {
+            let pet = self.pets.iter_mut().find(|p| p.id == saucer.target());
+            saucer.step(TICK, pet, world);
+        }
+        let before = self.saucers.len();
+        self.saucers.retain(|s| !s.is_gone());
+        if self.saucers.len() != before {
+            self.generation += 1;
+        }
     }
 
     /// Ce que fait l'utilisateur, vu par tout le troupeau : un pointeur qui
@@ -2901,6 +3049,10 @@ impl Flock {
     /// n'en a pas).
     #[must_use]
     pub fn activity(&self) -> Option<Activity> {
+        // Une surprise en cours (soucoupe, vent) bouge à toute vitesse.
+        if !self.saucers.is_empty() || self.gust.is_some() {
+            return Some(Activity::Moving);
+        }
         self.pets
             .iter()
             .filter(|p| self.still != Some(p.id))
@@ -2912,6 +3064,9 @@ impl Flock {
     /// [`Pet::smooth_rate`]) ; 0 si aucun ne bouge.
     #[must_use]
     pub fn smooth_rate(&self) -> f32 {
+        if !self.saucers.is_empty() || self.gust.is_some() {
+            return f32::INFINITY;
+        }
         self.pets
             .iter()
             .filter(|p| self.still != Some(p.id) && p.activity() == Activity::Moving)
@@ -3754,6 +3909,104 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn a_gust_of_wind_carries_the_flying_and_bends_the_standing() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 2, "repos");
+        // L'un tombe du haut de l'écran, l'autre reste posé.
+        let x0 = 700.0;
+        let flying = flock.spawn(Arc::clone(&lainou), 5, &world, Some(x0));
+        flock.blow(1.0, 4.0);
+        let mut leaves = 0;
+        let mut leaned = false;
+        for _ in 0..(1.5 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            leaves = leaves.max(
+                flock
+                    .pets()
+                    .iter()
+                    .flat_map(|p| p.particles.iter())
+                    .filter(|p| p.kind == ParticleKind::Leaf)
+                    .count(),
+            );
+            leaned |= flock.pets()[0].view(1.0).pose.roll < -0.02;
+        }
+        let drifted = flock.pets().iter().find(|p| p.id() == flying).unwrap();
+        assert!(drifted.position().x > x0 + 40.0, "{:?}", drifted.position());
+        assert!(leaves > 0, "des feuilles passent");
+        assert!(leaned, "il se penche contre le vent");
+        // Le vent retombe : plus rien.
+        for _ in 0..(4.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert!(flock.gust().is_none());
+        assert_eq!(flock.pets()[0].view(1.0).pose.roll, 0.0);
+    }
+
+    #[test]
+    fn a_saucer_borrows_a_pet_and_sets_it_down_elsewhere() {
+        for realistic in [false, true] {
+            let lainou = bundled("lainou");
+            let (mut flock, world) = resting_flock(&lainou, 1, "dort");
+            flock.set_realistic(realistic);
+            let pet = flock.pets()[0].id();
+            let start = flock.pets()[0].position();
+            let saucer = flock.invite_saucer(&world, 3).unwrap();
+            assert_ne!(saucer, pet);
+            let mut lifted = false;
+            let mut highest = f32::MAX;
+            let mut seen_beam = false;
+            for _ in 0..(16.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+                let p = flock.pets().iter().find(|p| p.id() == pet).unwrap();
+                lifted |= p.is_held();
+                highest = highest.min(p.position().y);
+                seen_beam |= flock.saucers().iter().any(|s| s.view().beam > 0.9);
+            }
+            assert!(lifted && seen_beam, "aspiré dans le faisceau");
+            assert!(highest < start.y - 150.0, "emporté en l'air : {highest}");
+            assert!(flock.saucers().is_empty(), "elle est repartie");
+            let after = flock.pets().iter().find(|p| p.id() == pet).unwrap();
+            assert!(
+                matches!(after.support(), Support::Ground { .. }),
+                "reposé : {:?}",
+                after.support()
+            );
+            assert!(
+                (after.position().x - start.x).abs() > 200.0,
+                "ailleurs : {:?} → {:?}",
+                start,
+                after.position()
+            );
+        }
+    }
+
+    #[test]
+    fn a_saucer_gives_up_a_pet_taken_back_by_the_hand() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 1, "repos");
+        let pet = flock.pets()[0].id();
+        flock.invite_saucer(&world, 9).unwrap();
+        // Dans le faisceau…
+        for _ in 0..(5.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert!(flock.pets()[0].is_held());
+        // … repris par la main.
+        let hand = flock.pets()[0].position() - Vec2::new(0.0, 30.0);
+        flock.get_mut(pet).unwrap().grab(hand, &world);
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.get_mut(pet).unwrap().drag_to(hand);
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert_eq!(
+            flock.pets()[0].hold_target(),
+            Some(hand),
+            "toujours en main"
+        );
+        assert!(flock.saucers().is_empty(), "la soucoupe a renoncé");
     }
 
     #[test]

@@ -716,6 +716,31 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                     Paint::Solid(Color::WHITE.with_alpha(0.85 * fade as f32)),
                 );
             }
+            ParticleKind::Leaf => {
+                // Une petite feuille d'automne qui tournoie.
+                let fade = smooth(0.0, 0.1, t) * (1.0 - smooth(0.75, 1.0, t));
+                let s = f64::from(p.size);
+                let turn = f64::from(p.phase) + t * 9.0;
+                let mut leaf = BezPath::new();
+                leaf.move_to((-s, 0.0));
+                leaf.quad_to((0.0, -s * 0.75), (s, 0.0));
+                leaf.quad_to((0.0, s * 0.75), (-s, 0.0));
+                leaf.close_path();
+                let tones = [
+                    rgba(222, 132, 52, 1.0),
+                    rgba(196, 162, 58, 1.0),
+                    rgba(176, 82, 52, 1.0),
+                    rgba(132, 160, 72, 1.0),
+                ];
+                let tone = tones[(p.phase * 7.0) as usize % tones.len()];
+                // Vue de profil une fois sur deux : elle s'aplatit en tournant.
+                let flat = 0.35 + 0.65 * (turn * 1.3).cos().abs();
+                let at = world
+                    * Affine::translate(center.to_vec2())
+                    * Affine::rotate(turn)
+                    * Affine::scale_non_uniform(1.0, flat);
+                out.fill(leaf, at, Paint::Solid(tone.with_alpha(0.9 * fade as f32)));
+            }
         }
     }
 }

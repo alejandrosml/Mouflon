@@ -103,6 +103,9 @@ pub struct Texts {
     /// Sous le curseur de taille : il règle celle de tous les animaux.
     pub size_help: String,
     pub pet_sounds: String,
+    /// « Surprises », et ce qu'elles sont.
+    pub surprises: String,
+    pub surprises_help: String,
     pub walks_section: String,
     pub collisions: String,
     pub collisions_help: String,
@@ -156,6 +159,8 @@ impl Texts {
             &self.pets_section,
             &self.size_help,
             &self.pet_sounds,
+            &self.surprises,
+            &self.surprises_help,
             &self.walks_section,
             &self.collisions,
             &self.collisions_help,

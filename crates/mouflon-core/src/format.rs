@@ -326,6 +326,7 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
         startle: resolve_list("startle", &r.startle)?,
         sleepy: resolve_list("sleepy", &r.sleepy)?,
         wake: resolve_list("wake", &r.wake)?,
+        wind: resolve_list("wind", &r.wind)?,
     };
 
     let mut def = PetDef::new(meta, appearance, physics, behaviors, reflexes)?;
@@ -798,10 +799,11 @@ fn parse_desktoppet_sidecar(
             "startle" => def.reflexes.startle = list,
             "sleepy" => def.reflexes.sleepy = list,
             "wake" => def.reflexes.wake = list,
+            "wind" => def.reflexes.wind = list,
             "poke" => def.reflexes.poke = list,
             other => {
                 return Err(format_error(format!(
-                    "[desktoppet.reactions] : réflexe inconnu « {other} » (startle, sleepy, wake, poke)"
+                    "[desktoppet.reactions] : réflexe inconnu « {other} » (startle, sleepy, wake, wind, poke)"
                 )));
             }
         }
@@ -1008,6 +1010,7 @@ struct ReflexesToml {
     startle: Option<TransitionsToml>,
     sleepy: Option<TransitionsToml>,
     wake: Option<TransitionsToml>,
+    wind: Option<TransitionsToml>,
 }
 
 #[derive(Deserialize)]

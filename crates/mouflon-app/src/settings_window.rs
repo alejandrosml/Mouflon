@@ -22,6 +22,7 @@ const ACCESSIBILITY: u32 = 7;
 const LOGIN_APPROVAL: u32 = 8;
 const FOLDER: u32 = 9;
 const PHYSICS: u32 = 10;
+const SURPRISES: u32 = 11;
 
 /// Ce que la fenêtre montre : les réglages de l'app, et ce qu'en dit le
 /// système (autorisation d'Accessibilité, ouverture de session).
@@ -30,6 +31,7 @@ pub struct Shown {
     /// Rang de la taille dans [`crate::settings::SIZES`].
     pub size: usize,
     pub sounds: bool,
+    pub surprises: bool,
     pub collisions: bool,
     pub realistic_physics: bool,
     pub frontmost_only: bool,
@@ -76,6 +78,7 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
                     help: Some(t.size_help.clone()),
                 },
                 check(SOUNDS, &t.pet_sounds, None, None),
+                check(SURPRISES, &t.surprises, Some(&t.surprises_help), None),
             ],
         },
         FormSection {
@@ -146,6 +149,7 @@ pub fn values(shown: &Shown) -> Vec<FormValue> {
     vec![
         FormValue::Step(SIZE, shown.size),
         FormValue::Check(SOUNDS, shown.sounds),
+        FormValue::Check(SURPRISES, shown.surprises),
         FormValue::Check(PHYSICS, shown.realistic_physics),
         FormValue::Check(COLLISIONS, shown.collisions),
         FormValue::Check(FRONTMOST, shown.frontmost_only),
@@ -163,6 +167,7 @@ pub fn action(event: UiEvent) -> Option<Action> {
     Some(match event {
         UiEvent::Step(SIZE, size) => Action::SetSize(size),
         UiEvent::Check(SOUNDS, on) => Action::SetSounds(on),
+        UiEvent::Check(SURPRISES, on) => Action::SetSurprises(on),
         UiEvent::Check(COLLISIONS, on) => Action::SetCollisions(on),
         UiEvent::Check(PHYSICS, on) => Action::SetRealisticPhysics(on),
         UiEvent::Check(FRONTMOST, on) => Action::SetFrontmostOnly(on),
@@ -189,6 +194,7 @@ mod tests {
         Shown {
             size: 1,
             sounds: true,
+            surprises: true,
             collisions: false,
             realistic_physics: true,
             frontmost_only: true,

@@ -694,6 +694,7 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             .unwrap_or_default(),
         // Réveillé : la suite de son sommeil (`sleep1a` → `sleep1b`).
         wake: Vec::new(),
+        wind: Vec::new(),
     };
     // L'animation `toss` de desktopPet fait déjà tourner l'animal sur lui-même.
     sheet.drawn.roll = named("toss").is_some();

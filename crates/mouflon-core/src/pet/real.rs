@@ -288,6 +288,10 @@ impl Pet {
         }
         self.vel.y = (self.vel.y + p.gravity * dt).min(p.terminal_velocity);
         self.vel.x *= (-p.air_drag * dt).exp();
+        // Le vent le pousse, et le fait un peu tourner (il prend le corps
+        // par en haut plus que par les pattes).
+        self.vel.x += self.wind * dt * (p.height / 60.0).clamp(0.5, 2.0);
+        self.spin += self.wind * dt * 0.0015;
         self.spin = (self.spin * (-SPIN_DRAG * dt).exp()).clamp(-MAX_SPIN, MAX_SPIN);
         let from = self.body();
         let mut body = Obb {

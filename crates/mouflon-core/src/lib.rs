@@ -19,6 +19,7 @@ pub mod format;
 pub mod math;
 pub mod pet;
 pub mod physics;
+pub mod surprise;
 pub mod world;
 
 pub use def::{
@@ -31,6 +32,7 @@ pub use pet::{
     AWAY_AFTER, Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView,
     PoseSignals, RUN_STRIDE, SLOW_RATE, STARTLE_SPEED, Shadow, Support, TICK, TYPING_WINDOW,
 };
+pub use surprise::{BEAM_MAX, Gust, SAUCER_HEIGHT, SAUCER_WIDTH, Saucer, SaucerView};
 pub use world::{
     DOCK_ID, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World, exact_dock,
 };

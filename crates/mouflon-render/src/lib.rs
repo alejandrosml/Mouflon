@@ -16,6 +16,7 @@ pub mod cache;
 pub mod display;
 pub mod paint;
 pub mod rig;
+pub mod saucer;
 pub mod sprites;
 pub mod svg;
 pub mod vello_scene;

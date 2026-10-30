@@ -108,6 +108,28 @@ struct PetWindow {
     list: DisplayList,
 }
 
+/// La fenêtre d'une soucoupe en visite (voir `mouflon_core::Saucer`) : elle
+/// laisse passer les clics.
+struct SaucerWindow {
+    saucer: u32,
+    window: Arc<Window>,
+    surface: PetSurface,
+    scale: f64,
+    position: Option<(f64, f64)>,
+    placed: (f64, f64),
+    list: DisplayList,
+}
+
+/// Une surprise (voir `mouflon_core::surprise`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Surprise {
+    Wind,
+    Saucer,
+}
+
+/// Délai entre deux surprises tirées au hasard (minutes).
+const SURPRISE_EVERY: (f32, f32) = (15.0, 40.0);
+
 #[derive(Debug, Default)]
 struct Pointer {
     window: Option<WindowId>,
@@ -125,6 +147,10 @@ pub struct App {
     world: World,
     flock: Flock,
     windows: HashMap<WindowId, PetWindow>,
+    saucer_windows: HashMap<WindowId, SaucerWindow>,
+    /// Surprises à venir : quand, et laquelle si elle est imposée (un essai,
+    /// `MOUFLON_SURPRISE`) ; sinon tirée au sort.
+    surprises: Vec<(Instant, Option<Surprise>)>,
     gpu: Option<Gpu>,
     list: DisplayList,
     style: Style,
@@ -333,6 +359,8 @@ impl App {
             world: World::default(),
             flock,
             windows: HashMap::new(),
+            saucer_windows: HashMap::new(),
+            surprises: Vec::new(),
             gpu: None,
             list: DisplayList::default(),
             style: Style::default(),
@@ -1463,6 +1491,7 @@ impl App {
             Action::SetPetSize(pet, index) => self.set_pet_size(pet, index),
             Action::SetCollisions(on) => self.set_collisions(on),
             Action::SetRealisticPhysics(on) => self.set_realistic_physics(on),
+            Action::SetSurprises(on) => self.set_surprises(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
             Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
             Action::SetOpenAtLogin(on) => self.login = platform::set_login_item(on),
@@ -1512,6 +1541,7 @@ impl App {
         Shown {
             size: self.settings.size_index(),
             sounds: self.settings.sounds,
+            surprises: self.settings.surprises,
             // Celles du troupeau : un essai peut les imposer.
             collisions: self.flock.collisions(),
             realistic_physics: self.flock.realistic(),
@@ -1558,6 +1588,164 @@ impl App {
         self.save_settings();
         if on {
             self.warm_up_sounds();
+        }
+    }
+
+    fn set_surprises(&mut self, on: bool) {
+        if self.settings.surprises == on {
+            return;
+        }
+        self.settings.surprises = on;
+        self.save_settings();
+        // Celles qui n'étaient pas imposées partent ou reviennent.
+        self.surprises.retain(|(_, kind)| kind.is_some());
+        if on {
+            self.schedule_surprise(Instant::now());
+        }
+    }
+
+    /// La prochaine surprise tirée au sort, dans un quart d'heure à
+    /// quarante minutes.
+    fn schedule_surprise(&mut self, now: Instant) {
+        if !self.settings.surprises || self.surprises.iter().any(|(_, k)| k.is_none()) {
+            return;
+        }
+        let minutes = SURPRISE_EVERY.0 + (SURPRISE_EVERY.1 - SURPRISE_EVERY.0) * self.random_unit();
+        self.surprises
+            .push((now + Duration::from_secs_f32(minutes * 60.0), None));
+        self.surprises.sort_by_key(|(at, _)| *at);
+    }
+
+    /// Un nombre au hasard dans [0, 1) (même suite que les graines des
+    /// animaux).
+    fn random_unit(&mut self) -> f32 {
+        self.seed = self
+            .seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        (self.seed >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    /// Une surprise à son heure : un coup de vent, ou une soucoupe (si un
+    /// animal est là pour elle). Pas devant personne : elle attend son retour.
+    fn surprise(&mut self, now: Instant, input: &Input) {
+        let Some(&(at, imposed)) = self.surprises.first() else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        self.surprises.remove(0);
+        if imposed.is_none() && (input.away() || self.flock.pets().is_empty()) {
+            // Personne pour la voir : un peu plus tard.
+            self.surprises.push((now + Duration::from_secs(60), None));
+            self.surprises.sort_by_key(|(at, _)| *at);
+            return;
+        }
+        let kind = imposed.unwrap_or(if self.random_unit() < 0.55 {
+            Surprise::Wind
+        } else {
+            Surprise::Saucer
+        });
+        let saucer = match kind {
+            Surprise::Saucer => {
+                let seed = (self.random_unit() * 1e6) as u64;
+                self.flock.invite_saucer(&self.world, seed)
+            }
+            Surprise::Wind => None,
+        };
+        let what = if saucer.is_some() {
+            "une soucoupe volante".to_owned()
+        } else {
+            // Pas d'animal pour la soucoupe : un coup de vent à la place.
+            let dir = if self.random_unit() < 0.5 { -1.0 } else { 1.0 };
+            let seconds = 6.0 + 3.0 * self.random_unit();
+            self.flock.blow(dir, seconds);
+            format!(
+                "un coup de vent vers la {} ({seconds:.1} s)",
+                if dir > 0.0 { "droite" } else { "gauche" }
+            )
+        };
+        log::info!("surprise : {what}");
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!("surprise : {what}"));
+        }
+        if imposed.is_none() {
+            self.schedule_surprise(now);
+        }
+    }
+
+    /// Une fenêtre par soucoupe en visite ; on ferme celles des parties.
+    fn sync_saucers(&mut self, event_loop: &ActiveEventLoop) {
+        let visiting: Vec<u32> = self
+            .flock
+            .saucers()
+            .iter()
+            .map(mouflon_core::Saucer::id)
+            .collect();
+        for w in self
+            .saucer_windows
+            .values()
+            .filter(|w| !visiting.contains(&w.saucer))
+        {
+            platform::keep_pet_window(&*w.window);
+        }
+        self.saucer_windows
+            .retain(|_, w| visiting.contains(&w.saucer));
+        for id in visiting {
+            if self.saucer_windows.values().any(|w| w.saucer == id) {
+                continue;
+            }
+            let canvas = mouflon_render::saucer::saucer_canvas();
+            let attrs = Window::default_attributes()
+                .with_title("Mouflon — soucoupe")
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_window_level(WindowLevel::AlwaysOnTop)
+                .with_inner_size(LogicalSize::new(
+                    f64::from(canvas.width),
+                    f64::from(canvas.height),
+                ))
+                .with_position(LogicalPosition::new(-10_000.0, -10_000.0))
+                .with_active(false);
+            #[cfg(target_os = "macos")]
+            let attrs = {
+                use winit::platform::macos::WindowAttributesExtMacOS;
+                attrs.with_has_shadow(false)
+            };
+            let window = match event_loop.create_window(attrs) {
+                Ok(w) => Arc::new(w),
+                Err(e) => {
+                    log::error!("impossible de créer la fenêtre de la soucoupe : {e}");
+                    continue;
+                }
+            };
+            platform::prepare_pet_window(&*window);
+            let _ = window.set_cursor_hittest(false);
+            let gpu = self.gpu.get_or_insert_with(Gpu::new);
+            let size = window.inner_size();
+            let surface = match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("rendu de la soucoupe indisponible : {e}");
+                    platform::keep_pet_window(&*window);
+                    continue;
+                }
+            };
+            let scale = window.scale_factor();
+            self.saucer_windows.insert(
+                window.id(),
+                SaucerWindow {
+                    saucer: id,
+                    window,
+                    surface,
+                    scale,
+                    position: None,
+                    placed: (-10_000.0, -10_000.0),
+                    list: DisplayList::default(),
+                },
+            );
         }
     }
 
@@ -1846,6 +2034,9 @@ impl App {
 
         let input = self.input();
         let cursor = input.cursor;
+        if !settling && !self.paused {
+            self.surprise(now, &input);
+        }
 
         // Glisser : on n'attrape l'animal qu'après un petit déplacement,
         // un simple clic reste un « coucou ». Il est pris là où l'on a cliqué,
@@ -1883,11 +2074,13 @@ impl App {
         }
         phases.sounds = lap(&mut mark);
         self.sync_windows(event_loop);
+        self.sync_saucers(event_loop);
         self.sync_menu();
         phases.windows = lap(&mut mark);
 
         let Self {
             windows,
+            saucer_windows,
             flock,
             gpu,
             style,
@@ -1976,8 +2169,39 @@ impl App {
             phases.paint += started.elapsed();
             redraw.push((pw, sprite, offset));
         }
+        // Les soucoupes en visite, à chaque image.
+        let mut saucers: Vec<&mut SaucerWindow> = Vec::new();
+        for sw in saucer_windows.values_mut() {
+            let Some(saucer) = flock.saucers().iter().find(|s| s.id() == sw.saucer) else {
+                continue;
+            };
+            if settling || *paused || gpu.is_none() {
+                continue;
+            }
+            let view = saucer.view();
+            let canvas = mouflon_render::saucer::saucer_canvas();
+            let ox = (f64::from(view.pos.x) - f64::from(canvas.anchor.x)).floor();
+            let oy = (f64::from(view.pos.y) - f64::from(canvas.anchor.y)).floor();
+            if sw.position != Some((ox, oy)) {
+                let started = Instant::now();
+                sw.window.set_outer_position(LogicalPosition::new(ox, oy));
+                sw.position = Some((ox, oy));
+                sw.placed = placed_at(&sw.window, sw.scale).unwrap_or((ox, oy));
+                phases.moves += started.elapsed();
+            }
+            let size = sw.window.inner_size();
+            sw.list.clear(size.width, size.height);
+            let frame = Frame {
+                origin: Vec2::new(sw.placed.0 as f32, sw.placed.1 as f32),
+                scale: sw.scale,
+            };
+            let started = Instant::now();
+            mouflon_render::saucer::paint_saucer(&view, &frame, style, &mut sw.list);
+            phases.paint += started.elapsed();
+            saucers.push(sw);
+        }
         if let Some(gpu) = gpu.as_mut()
-            && !redraw.is_empty()
+            && !(redraw.is_empty() && saucers.is_empty())
         {
             let mut jobs: Vec<Job<'_>> = redraw
                 .iter_mut()
@@ -1987,6 +2211,11 @@ impl App {
                     window: &pw.window,
                 })
                 .collect();
+            jobs.extend(saucers.iter_mut().map(|sw| Job {
+                surface: &mut sw.surface,
+                list: &sw.list,
+                window: &sw.window,
+            }));
             let done = gpu.render_all(&mut jobs);
             drop(jobs);
             phases.renders += done.iter().filter(|&&ok| ok).count() as u32;
@@ -2395,6 +2624,15 @@ impl ApplicationHandler<UserEvent> for App {
         self.start_clock();
         self.settle_until = Some(Instant::now() + SETTLE);
         self.last_tick = Instant::now();
+        // Une surprise tout de suite, pour la voir (`MOUFLON_SURPRISE=vent`
+        // ou `soucoupe`) ; sinon, la première au hasard.
+        let soon = Instant::now() + SETTLE + Duration::from_secs(4);
+        match std::env::var("MOUFLON_SURPRISE").ok().as_deref() {
+            Some("vent") => self.surprises.push((soon, Some(Surprise::Wind))),
+            Some("soucoupe") => self.surprises.push((soon, Some(Surprise::Saucer))),
+            _ => {}
+        }
+        self.schedule_surprise(Instant::now());
         let detail: Vec<String> = steps
             .iter()
             .map(|(step, time)| format!("{step} {}", time.as_millis()))
@@ -2424,6 +2662,12 @@ impl ApplicationHandler<UserEvent> for App {
                         .push((start + at + Duration::from_secs(5), TrialStep::Add(kind)));
                 }
             }
+            // Les surprises passent aussi : un coup de vent au premier tiers,
+            // une soucoupe aux deux tiers.
+            self.surprises
+                .push((start + duration / 3, Some(Surprise::Wind)));
+            self.surprises
+                .push((start + duration * 2 / 3, Some(Surprise::Saucer)));
             if let Some(stats) = &self.stats {
                 for (i, screen) in self.world.screens().iter().enumerate() {
                     stats.raw(format!(

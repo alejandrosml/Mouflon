@@ -37,6 +37,8 @@ pub enum Action {
     SetPetSize(u32, usize),
     SetCollisions(bool),
     SetRealisticPhysics(bool),
+    /// De temps en temps, un coup de vent ou une soucoupe volante.
+    SetSurprises(bool),
     SetFrontmostOnly(bool),
     /// Marcher sous le Dock (il faut l'autorisation d'Accessibilité).
     SetWalkUnderDock(bool),

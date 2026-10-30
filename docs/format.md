@@ -109,6 +109,7 @@ together = "hop"              # « Tous ensemble » : tous les animaux le jouent
 startle = "surprise"          # le pointeur file tout près de lui (plus de 1 400 pt/s)
 sleepy = "yawn"               # l'utilisateur est parti : il s'installe pour dormir
 wake = "wake_up"              # l'utilisateur revient pendant qu'il dort (sinon : la suite de son sommeil)
+wind = "look"                 # un coup de vent se lève (une surprise)
 ```
 
 Les animaux s'endorment l'un après l'autre (dans les 40 s) quand
@@ -389,8 +390,8 @@ drag = { name = "bele", chance = 0.5 }
 ```
 
 Il peut aussi donner aux animations du fichier les réactions de Mouflon
-que desktopPet ne connaît pas (`startle`, `sleepy`, `wake`, `poke`, voir les
-réflexes) :
+que desktopPet ne connaît pas (`startle`, `sleepy`, `wake`, `wind`, `poke`,
+voir les réflexes) :
 
 ```toml
 [desktoppet.reactions]
