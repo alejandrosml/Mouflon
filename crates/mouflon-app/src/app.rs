@@ -109,9 +109,6 @@ struct Pointer {
     dragging: Option<u32>,
     /// Dernière position connue par les événements (si le système ne fournit pas la position globale).
     cursor: Option<Vec2>,
-    /// Un Contrôle-clic a ouvert le menu d'un animal : le bouton relâché
-    /// ensuite n'est pas un « coucou ».
-    context: bool,
 }
 
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -1283,7 +1280,8 @@ impl App {
         Shown {
             size: self.settings.size_index(),
             sounds: self.settings.sounds,
-            collisions: self.settings.collisions,
+            // Celles du troupeau : un essai peut les imposer.
+            collisions: self.flock.collisions(),
             frontmost_only: self.settings.frontmost_only,
             walk_under_dock: self.settings.walk_under_dock,
             trusted: platform::accessibility_trusted(),
@@ -1331,7 +1329,7 @@ impl App {
     }
 
     fn set_collisions(&mut self, on: bool) {
-        if self.settings.collisions == on {
+        if self.settings.collisions == on && self.flock.collisions() == on {
             return;
         }
         self.settings.collisions = on;
@@ -2125,9 +2123,10 @@ impl ApplicationHandler<UserEvent> for App {
                 button: MouseButton::Left,
                 ..
             } => match state {
-                // Contrôle-clic : le menu de l'animal aussi, comme partout sur Mac.
+                // Contrôle-clic : le menu de l'animal aussi, comme partout sur
+                // Mac. Rien n'est appuyé ensuite : le bouton relâché (si le
+                // menu le laisse passer) n'est pas un « coucou ».
                 ElementState::Pressed if platform::control_key_down() => {
-                    self.pointer.context = true;
                     self.open_pet_menu(window_id);
                 }
                 ElementState::Pressed => {
@@ -2141,8 +2140,6 @@ impl ApplicationHandler<UserEvent> for App {
                         ));
                     }
                 }
-                // Le bouton relâché après un Contrôle-clic : déjà traité.
-                ElementState::Released if std::mem::take(&mut self.pointer.context) => {}
                 ElementState::Released => {
                     self.next_frame = None;
                     if let Some(stats) = &self.stats {

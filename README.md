@@ -79,18 +79,30 @@ cargo run --release
 
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
 `animaux/` folder: Poete drops onto your frontmost window if it is there, Pelote
-otherwise. The menu bar icon adds pets (the same one as many times as you like:
-each kind shows how many are on screen when there are several), gets them all to
-play together, says goodbye to all of them or to one of a kind, pauses, mutes
-them and turns collisions on; its *Settings* change their size, let them walk
-under the Dock and open the pets folder. It also shows *About Mouflon*.
+otherwise. Mouflon can be handled in three places, which always show the same
+state (a change made in one is seen at once in the others):
 
-Pets walk on the Dock. With *Walk Under the Dock*, they go down to the bottom of
+- **The menu bar icon**, for what changes often: add pets (the same one as many
+  times as you like: each kind shows how many are on screen when there are
+  several), say goodbye to all of them or to one of a kind, get them to play
+  together, pause, mute them; *Settings…* (⌘,), *About Mouflon*, *Quit*.
+- **A right click on a pet** (or Control-click): say goodbye to that one, add
+  another of its kind, change the size, mute, pause, open the settings.
+- **The settings window**: size, sounds, collisions between pets, walking only
+  on the frontmost app, walking under the Dock, opening Mouflon at login, and
+  the pets folder, each option with a line saying what it does.
+
+Pets walk on the Dock. With *Walk under the Dock*, they go down to the bottom of
 the screen, pass behind the Dock and can jump onto it. To know where the Dock
 really is, Mouflon needs the Accessibility permission (System Settings →
-Privacy & Security → Accessibility), which it uses for nothing else; the ⓘ item
-just below the option says so. The option is not required. Launched with
-`cargo run`, the permission goes to the terminal app.
+Privacy & Security → Accessibility), which it uses for nothing else; the
+settings window says so, and offers to open System Settings while the
+permission is missing. The option is not required. Launched with `cargo run`,
+the permission goes to the terminal app.
+
+*Open Mouflon at login* registers the app with macOS (System Settings →
+General → Login Items), which keeps that choice: the box shows what macOS says,
+even if it was changed over there.
 
 To try a pet without installing it, pass its file or folder: it is loaded with
 the others, and it is the one that appears.
@@ -170,7 +182,7 @@ exported as .p12, base64-encoded), `APPLE_CERTIFICATE_PASSWORD`,
 
 ### Add pets
 
-Menu → *Open the Pets Folder*
+Settings → *Open Folder*
 (`~/Library/Application Support/com.alejandrosanmartinlamas.Mouflon/pets`).
 The folder accepts:
 
@@ -197,7 +209,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 |---|---|---|
 | `mouflon-core` | physics, behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; rigs baked into images (tiny-skia); Vello or SVG output | forbidden |
-| `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows | isolated and commented |
+| `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
 | `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
@@ -324,20 +336,34 @@ cargo run --release
 
 Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du dossier
 `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est, sinon
-Pelote. L'icône de la barre des menus ajoute des animaux (le même autant de fois
-qu'on veut : chaque espèce dit combien des siens sont à l'écran quand ils sont
-plusieurs), les fait jouer tous ensemble, dit au revoir à tous ou à un seul
-d'une espèce, met en pause, coupe les sons et active les collisions ; ses
-« Réglages » changent leur taille, les font marcher sous le Dock et ouvrent le
-dossier des animaux. Elle affiche aussi « À propos de Mouflon ».
+Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même état
+(un changement fait à l'un se voit aussitôt aux autres) :
+
+- **L'icône de la barre des menus**, pour ce qu'on change souvent : ajouter des
+  animaux (le même autant de fois qu'on veut : chaque espèce dit combien des
+  siens sont à l'écran quand ils sont plusieurs), dire au revoir à tous ou à un
+  seul d'une espèce, les faire jouer ensemble, mettre en pause, couper les
+  sons ; « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ».
+- **Un clic droit sur un animal** (ou Contrôle-clic) : lui dire au revoir, en
+  ajouter un autre de son espèce, changer la taille, couper les sons, mettre
+  en pause, ouvrir les réglages.
+- **La fenêtre des réglages** : taille, sons, collisions entre animaux, marche
+  sur la seule app au premier plan, marche sous le Dock, ouverture de Mouflon à
+  l'ouverture de session et dossier des animaux, chaque option avec une ligne
+  qui dit ce qu'elle fait.
 
 Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
 Pour savoir où est vraiment le Dock, Mouflon a besoin de l'autorisation
 d'Accessibilité (Réglages Système → Confidentialité et sécurité →
-Accessibilité), qui ne lui sert à rien d'autre ; l'article ⓘ juste sous
-l'option le dit. L'option est facultative. Lancé avec `cargo run`, c'est le
-Terminal qui reçoit l'autorisation.
+Accessibilité), qui ne lui sert à rien d'autre ; la fenêtre des réglages le
+dit, et propose d'ouvrir Réglages Système tant que l'autorisation manque.
+L'option est facultative. Lancé avec `cargo run`, c'est le Terminal qui reçoit
+l'autorisation.
+
+« Ouvrir Mouflon à l'ouverture de session » inscrit l'app auprès de macOS
+(Réglages Système → Général → Ouverture), qui garde ce choix : la case montre
+ce qu'en dit macOS, même s'il a été changé de ce côté-là.
 
 Pour essayer un animal sans l'installer, passe son fichier ou son dossier en
 argument : il est chargé en plus des autres, et c'est lui qui apparaît.
@@ -421,7 +447,7 @@ exporté en .p12, encodé en base64), `APPLE_CERTIFICATE_PASSWORD`,
 
 ### Ajouter des animaux
 
-Menu → « Ouvrir le dossier des animaux »
+Réglages → « Ouvrir le dossier »
 (`~/Library/Application Support/com.alejandrosanmartinlamas.Mouflon/pets`).
 Le dossier accepte :
 
@@ -448,7 +474,7 @@ ses comportements : [docs/format.md](docs/format.md).
 |---|---|---|
 | `mouflon-core` | physique, comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; rigs cuits en images (tiny-skia) ; sortie Vello ou SVG | interdit |
-| `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes | isolé et commenté |
+| `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |

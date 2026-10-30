@@ -7,7 +7,7 @@
 //! bouton) qui n'apparaît qu'au besoin : la fenêtre s'allonge alors vers le
 //! bas, son haut ne bouge pas.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 
 use objc2::rc::Retained;
@@ -162,13 +162,12 @@ fn wrapping(text: &str, small: bool, mtm: MainThreadMarker) -> Retained<NSTextFi
     field
 }
 
-/// Hauteur d'un texte mis en page sur cette largeur.
+/// Hauteur d'un texte mis en page sur cette largeur : celle qu'il prendra
+/// vraiment (le même calcul qu'AppKit pour le dessiner, coupures du
+/// japonais et du chinois comprises).
 fn wrapped_height(field: &NSTextField, width: f64) -> f64 {
-    let bounds = rect(0.0, 0.0, width, 10_000.0);
-    field
-        .cell()
-        .map_or(16.0, |cell| cell.cellSizeForBounds(bounds).height)
-        .ceil()
+    field.setPreferredMaxLayoutWidth(width);
+    field.intrinsicContentSize().height.max(0.0).ceil()
 }
 
 fn push_button(
@@ -349,6 +348,8 @@ fn build(form: &Form, mtm: MainThreadMarker) -> Built {
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTitle(&NSString::from_str(&form.title));
     window.setContentView(Some(root.as_super()));
+    // Tab passe d'un contrôle à l'autre de haut en bas (accès complet au clavier).
+    window.setAutorecalculatesKeyViewLoop(true);
     window.setDelegate(Some(ProtocolObject::from_ref(&*actions)));
 
     // Assez large pour la plus longue case.
@@ -384,6 +385,31 @@ fn title_indent(check: &NSButton) -> f64 {
     } else {
         INDENT
     }
+}
+
+/// Abscisse du milieu de chaque repère d'un curseur posé en `x`, sur
+/// `width`. AppKit ne calcule ces repères qu'au premier dessin du curseur :
+/// avant, ils sont répartis sur toute sa largeur, comme il le fera à
+/// quelques points près (la mise en page est refaite après ce dessin).
+fn tick_centers(slider: &NSSlider, x: f64, width: f64) -> Vec<f64> {
+    let count = usize::try_from(slider.numberOfTickMarks()).unwrap_or(0);
+    let left = slider.frame().origin.x;
+    let drawn: Vec<f64> = (0..count)
+        .map(|i| {
+            let tick = slider.rectOfTickMarkAtIndex(i as isize);
+            left + tick.origin.x + tick.size.width / 2.0
+        })
+        .collect();
+    let spread = match (drawn.first(), drawn.last()) {
+        (Some(first), Some(last)) => last - first,
+        _ => 0.0,
+    };
+    if count < 2 || (spread > width * 0.75 && drawn.windows(2).all(|w| w[1] > w[0])) {
+        return drawn;
+    }
+    (0..count)
+        .map(|i| x + width * i as f64 / (count - 1) as f64)
+        .collect()
 }
 
 /// Place une ligne dont le haut est à `top` ; renvoie sa hauteur.
@@ -427,12 +453,9 @@ fn layout_row(row: &RowViews, x: f64, top: f64, width: f64) -> f64 {
             place(slider, x, y, width, s.height);
             y += s.height + 2.0;
             // Le nom de chaque cran sous son repère, sans dépasser du curseur.
-            let frame = slider.frame();
             let mut height: f64 = 0.0;
-            for (i, mark) in marks.iter().enumerate() {
+            for (mark, center) in marks.iter().zip(tick_centers(slider, x, width)) {
                 let m = mark.intrinsicContentSize();
-                let tick = slider.rectOfTickMarkAtIndex(i as isize);
-                let center = frame.origin.x + tick.origin.x + tick.size.width / 2.0;
                 let left = (center - m.width / 2.0).min(x + width - m.width).max(x);
                 place(mark, left, y, m.width, m.height);
                 height = height.max(m.height);
@@ -546,10 +569,13 @@ fn apply(built: &mut Built, values: &[FormValue]) -> bool {
 /// Ils passent par le menu principal de l'app, qu'une app de la barre des
 /// menus ne montre jamais (il n'existe que pour eux).
 fn install_key_commands(mtm: MainThreadMarker, target: &AnyObject) {
-    let app = NSApplication::sharedApplication(mtm);
-    if app.mainMenu().is_some() {
+    thread_local! {
+        static INSTALLED: Cell<bool> = const { Cell::new(false) };
+    }
+    if INSTALLED.with(|done| done.replace(true)) {
         return;
     }
+    let app = NSApplication::sharedApplication(mtm);
     let commands = NSMenu::new(mtm);
     // SAFETY: `performClose:` est une méthode de NSWindow ; sans cible,
     // AppKit l'envoie à la fenêtre au premier plan.
@@ -604,6 +630,10 @@ pub fn show_form(form: &Form, values: &[FormValue]) -> bool {
         apply(built, values);
         layout(built);
         if fresh {
+            // Un premier dessin, hors de l'écran, pour que le curseur
+            // calcule ses repères ; les noms des crans s'y alignent ensuite.
+            built.window.displayIfNeeded();
+            layout(built);
             built.window.center();
         }
         activate(&NSApplication::sharedApplication(mtm));
@@ -654,6 +684,7 @@ pub fn snapshot_form(path: &Path, dark: bool) -> bool {
         built
             .window
             .setAppearance(NSAppearance::appearanceNamed(name).as_deref());
+        layout(built);
         // SAFETY: lecture de la vue qui contient la nôtre (celle de la
         // fenêtre entière), sur le fil principal ; la référence comptée la
         // garde en vie le temps de l'image.
