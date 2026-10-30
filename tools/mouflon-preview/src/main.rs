@@ -60,7 +60,9 @@ fn main() -> Result<(), Error> {
     std::fs::create_dir_all(&out_dir)?;
 
     let def = Arc::new(load_pet(&pet_path)?);
-    let art = PetArt::load(&def)?;
+    let mut art = PetArt::load(&def)?;
+    // L'aperçu (SVG) garde les tracés vectoriels plutôt que les images cuites.
+    art.baked = None;
     println!(
         "{} : {} comportements, {:.0}×{:.0} pt",
         def.meta.name,

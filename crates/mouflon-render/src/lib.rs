@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod animate;
+pub mod bake;
 pub mod display;
 pub mod paint;
 pub mod rig;

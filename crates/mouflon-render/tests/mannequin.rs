@@ -12,8 +12,10 @@ use mouflon_render::{DisplayList, Frame, PetArt, Style, paint_pet};
 fn mannequin_loads_simulates_and_paints() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/mannequin/pet.toml");
     let def = Arc::new(load_pet(&path).expect("pet.toml du mannequin"));
-    let art = PetArt::load(&def).expect("dessin du mannequin");
+    let mut art = PetArt::load(&def).expect("dessin du mannequin");
     assert!(art.width > 0.0 && art.height > 0.0);
+    let baked = art.baked.clone().expect("le mannequin se cuit en images");
+    assert!(baked.len() >= 10, "{} morceaux", baked.len());
 
     let world = World::new(vec![Screen {
         frame: Rect::new(0.0, 0.0, 1280.0, 800.0),
@@ -32,19 +34,27 @@ fn mannequin_loads_simulates_and_paints() {
     let canvas = art.canvas();
     let view = pet.view(0.5);
     let origin = view.ground - canvas.anchor;
-    let mut list = DisplayList::new((canvas.width * 2.0) as u32, (canvas.height * 2.0) as u32);
-    paint_pet(
-        &art,
-        &view,
-        &Frame { origin, scale: 2.0 },
-        &Style::default(),
-        &mut list,
-    );
-    let fills = list
-        .commands
-        .iter()
-        .filter(|c| matches!(c, Command::Fill { .. }))
-        .count();
+    let paint = |art: &PetArt| {
+        let mut list = DisplayList::new((canvas.width * 2.0) as u32, (canvas.height * 2.0) as u32);
+        paint_pet(
+            art,
+            &view,
+            &Frame { origin, scale: 2.0 },
+            &Style::default(),
+            &mut list,
+        );
+        let count = |f: fn(&Command) -> bool| list.commands.iter().filter(|c| f(c)).count();
+        let fills = count(|c| matches!(c, Command::Fill { .. }));
+        let images = count(|c| matches!(c, Command::Image { .. }));
+        (list, fills, images)
+    };
+    // Cuit : ses morceaux sont des images, sans un seul tracé.
+    let (_, fills, images) = paint(&art);
+    assert_eq!(fills, 0);
+    assert!(images >= 10, "seulement {images} images posées");
+    // Tel quel : ses tracés.
+    art.baked = None;
+    let (list, fills, _) = paint(&art);
     assert!(fills > 20, "seulement {fills} formes dessinées");
 
     let svg = mouflon_render::svg::to_svg(&list);

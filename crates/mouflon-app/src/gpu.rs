@@ -826,6 +826,120 @@ mod tests {
         assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
     }
 
+    /// Un dessin vectoriel cuit en images (le Mannequin), posé par le rendu
+    /// direct, ressemble à ses tracés dessinés par Vello : mêmes formes, même
+    /// éclairage, aux bords près (les images sont posées tournées et étirées).
+    #[test]
+    fn a_baked_rig_looks_like_its_vector_drawing() {
+        let mut context = RenderContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : comparaison sautée");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let mut quick = Quick::new(device);
+        let mut vello = VelloPath::new(device).expect("Vello");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/mannequin/pet.toml");
+        let def = Arc::new(load_pet(&root).expect("pet.toml"));
+        let baked = PetArt::load(&def).expect("dessin");
+        assert!(baked.baked.is_some(), "le mannequin se cuit");
+        let mut vector = baked.clone();
+        vector.baked = None;
+        let world = mouflon_core::World::new(vec![mouflon_core::Screen {
+            frame: mouflon_core::Rect::new(0.0, 0.0, 1440.0, 900.0),
+            usable: mouflon_core::Rect::new(0.0, 25.0, 1440.0, 800.0),
+            scale: 2.0,
+        }]);
+        let mut pet = mouflon_core::Pet::spawn(0, Arc::clone(&def), 5, &world, Some(600.0));
+        let mut worst = (0u8, 0.0f64, 0.0f64);
+        for case in 0..6 {
+            for _ in 0..90 {
+                pet.step(mouflon_core::TICK, &world, &mouflon_core::Input::default());
+            }
+            let mut view = pet.view(1.0);
+            match case {
+                0 => view.facing = 1.0,
+                1 => view.facing = -1.0,
+                2 => view.pose.squash = 0.2,
+                3 => view.pose.roll = 0.5,
+                // Il s'efface : ses morceaux ne se voient pas les uns à travers les autres.
+                4 => view.opacity = 0.45,
+                _ => {}
+            }
+            let canvas = vector.canvas();
+            let mut lists = [&baked, &vector].map(|art| {
+                let mut list = DisplayList::new(
+                    (f64::from(canvas.width) * 2.0) as u32,
+                    (f64::from(canvas.height) * 2.0) as u32,
+                );
+                let frame = Frame {
+                    origin: view.ground - canvas.anchor,
+                    scale: 2.0,
+                };
+                paint_pet(art, &view, &frame, &Style::default(), &mut list);
+                list
+            });
+            let [fast_list, slow_list] = &mut lists;
+            assert!(Quick::supports(fast_list), "cas {case} : rendu direct");
+            let fast = target(device, fast_list);
+            let fast_view = fast.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            quick.render(device, queue, &mut encoder, &fast_view, FORMAT, fast_list);
+            queue.submit([encoder.finish()]);
+            let slow = target(device, slow_list);
+            let slow_view = slow.create_view(&Default::default());
+            let (_storage, storage_view) = create_target(device, slow_list.width, slow_list.height);
+            vello
+                .paint(
+                    device,
+                    queue,
+                    slow_list,
+                    &storage_view,
+                    (slow_list.width, slow_list.height),
+                )
+                .expect("Vello");
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let blitter = vello.blitter(device, FORMAT);
+            clear_and_blit(device, &mut encoder, blitter, &storage_view, &slow_view);
+            queue.submit([encoder.finish()]);
+            let (a, b) = (read(device, queue, &fast), read(device, queue, &slow));
+            if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
+                for (suffix, pixels) in [("cuit", &a), ("vello", &b)] {
+                    let bitmap = mouflon_render::display::Bitmap {
+                        width: fast_list.width,
+                        height: fast_list.height,
+                        rgba: mouflon_render::vello::peniko::Blob::from(pixels.clone()),
+                    };
+                    let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
+                    std::fs::write(format!("{dir}/mannequin-{case}-{suffix}.png"), png)
+                        .expect("png");
+                }
+            }
+            let (max, mean, far) = compare_far(&a, &b, 24);
+            eprintln!(
+                "mannequin cas {case} ({}) : écart max {max}, moyen {mean:.3}, {:.3} % au-delà de 24",
+                pet.behavior_name(),
+                far * 100.0
+            );
+            worst = (worst.0.max(max), worst.1.max(mean), worst.2.max(far));
+        }
+        eprintln!("pire : {worst:?}");
+        assert!(worst.1 < 1.5, "écart moyen {}", worst.1);
+        assert!(worst.2 < 0.02, "trop de pixels différents : {}", worst.2);
+    }
+
+    /// Comme [`compare`], avec un seuil d'écart choisi.
+    fn compare_far(a: &[u8], b: &[u8], threshold: u8) -> (u8, f64, f64) {
+        let (max, mean, _) = compare(a, b);
+        let far = a
+            .iter()
+            .zip(b)
+            .filter(|(x, y)| x.abs_diff(**y) > threshold)
+            .count();
+        (max, mean, far as f64 / a.len() as f64)
+    }
+
     /// Plusieurs fenêtres en un seul envoi : chacune reçoit exactement l'image
     /// qu'elle aurait eue seule, même quand le tampon de paramètres doit
     /// grandir en route.

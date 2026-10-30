@@ -40,6 +40,8 @@ vello = "0.11"
 usvg = "0.49"
 resvg = "0.49"
 png = "0.18"
+# Cuisson des dessins vectoriels en images (même version que resvg).
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
 winit = "0.30.13"
 pollster = "1.0"

@@ -9,6 +9,7 @@ use vello::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use vello::peniko::{Color, Extend, Fill, Mix};
 
 use crate::animate::{PoseTransforms, pose};
+use crate::bake::BakedRig;
 use crate::display::{Command, DisplayList, Paint, Stop, rgba};
 use crate::rig::{Item, Part, Rig, RigError};
 use crate::sprites::{SpriteError, SpriteFrames};
@@ -41,6 +42,9 @@ pub struct PetArt {
     pub body: (f32, f32),
     /// Effets déjà dessinés dans les images.
     pub drawn: Drawn,
+    /// Dessin vectoriel cuit en images (voir [`crate::bake`]) : le rendu
+    /// direct le pose sans Vello. `None` : tracés dessinés tels quels.
+    pub baked: Option<Arc<BakedRig>>,
 }
 
 /// Fenêtre d'un animal : taille en points et position du point d'appui.
@@ -58,13 +62,16 @@ impl PetArt {
                 let rig = Rig::parse(svg)?;
                 let k = f64::from(*height) / rig.bounds.height().max(1.0);
                 let width = (rig.bounds.width() * k) as f32;
+                let lighting = 0.6;
+                let baked = BakedRig::bake(&rig, k, lighting).map(Arc::new);
                 Ok(Self {
                     width,
                     height: *height,
                     look: Look::Rig(Arc::new(rig)),
-                    lighting: 0.6,
+                    lighting,
                     body: (width * 0.46, *height * 1.02),
                     drawn: Drawn::default(),
+                    baked,
                 })
             }
             Appearance::Sprites(sheet) => {
@@ -77,6 +84,7 @@ impl PetArt {
                     lighting: 0.0,
                     body: (p.width * 0.46, p.height * 1.02),
                     drawn: sheet.drawn,
+                    baked: None,
                 })
             }
         }
@@ -220,15 +228,35 @@ fn paint_rig(rig: &Rig, art: &PetArt, view: &PetView<'_>, world: Affine, out: &m
     let canvas = out.bounds().to_path(0.1);
     let mut stack: Vec<Affine> = vec![base];
     let mut parts: Vec<Part> = Vec::new();
-    for item in &rig.items {
+    let baked = art.baked.as_deref();
+    for (index, item) in rig.items.iter().enumerate() {
         let top = *stack.last().unwrap_or(&base);
+        // Cuit : chaque suite de tracés d'une partie est une image posée d'un coup.
+        if let Some(baked) = baked
+            && matches!(item, Item::Fill { .. } | Item::Stroke { .. })
+        {
+            if let Some(piece) = baked.piece(index) {
+                // Retourné (déterminant négatif), le corps a son reflet de l'autre côté.
+                let bitmap = match &piece.mirrored {
+                    Some(mirrored) if top.determinant() < 0.0 => mirrored,
+                    _ => &piece.bitmap,
+                };
+                out.push(Command::Image {
+                    bitmap: bitmap.clone(),
+                    transform: top * piece.placement,
+                    alpha: 1.0,
+                    smooth: true,
+                });
+            }
+            continue;
+        }
         match item {
             Item::BeginPart(part) => {
                 stack.push(top * poses.part(*part));
                 parts.push(*part);
             }
             Item::EndPart => {
-                if parts.pop() == Some(Part::Body) && art.lighting > 0.0 {
+                if parts.pop() == Some(Part::Body) && art.lighting > 0.0 && baked.is_none() {
                     paint_lighting(rig, art, top, out);
                 }
                 stack.pop();

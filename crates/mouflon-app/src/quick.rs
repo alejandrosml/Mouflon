@@ -16,9 +16,12 @@
 //!   (linéaire, ou radial à deux cercles comme en SVG).
 //!
 //! Un calque d'opacité qui ne contient qu'un élément revient à multiplier
-//! l'opacité de cet élément : c'est le cas d'un animal qui s'efface. Toute
-//! autre liste d'affichage (dessins vectoriels, calques de fusion) reste à
-//! Vello : voir [`Quick::supports`].
+//! l'opacité de cet élément : c'est le cas d'un animal en images qui
+//! s'efface. Un calque de plusieurs éléments (un dessin vectoriel cuit en
+//! morceaux, qui s'efface) se dessine à part dans une texture, posée ensuite
+//! d'un coup avec son opacité : les morceaux ne se voient pas les uns à
+//! travers les autres. Toute autre liste d'affichage (tracés vectoriels,
+//! calques de fusion) reste à Vello : voir [`Quick::supports`].
 
 use std::collections::HashMap;
 use std::num::NonZeroU64;
@@ -207,6 +210,18 @@ enum Kind {
 struct Call {
     kind: Kind,
     image: Option<u64>,
+    /// Dans le calque (dessiné à part, puis posé d'un coup).
+    in_layer: bool,
+    /// Pose le calque dessiné à part (image : la texture du calque).
+    composite: bool,
+}
+
+/// Texture où se dessine un calque de plusieurs éléments, à la taille de la fenêtre.
+#[derive(Debug)]
+struct Offscreen {
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    _texture: wgpu::Texture,
 }
 
 /// Les trois programmes, pour un format de fenêtre.
@@ -243,6 +258,8 @@ pub struct Quick {
     pipelines: HashMap<wgpu::TextureFormat, Pipelines>,
     textures: HashMap<u64, Texture>,
     texture_bytes: usize,
+    /// Textures des calques, par taille et format de fenêtre.
+    offscreens: HashMap<(u32, u32, wgpu::TextureFormat), Offscreen>,
     /// Numéro de l'image en cours (pour oublier les images les plus anciennes).
     tick: u64,
     /// Paramètres et éléments de l'image en cours, toutes fenêtres
@@ -336,6 +353,7 @@ impl Quick {
             params_group,
             capacity: FIRST_CAPACITY,
             pipelines: HashMap::new(),
+            offscreens: HashMap::new(),
             textures: HashMap::new(),
             texture_bytes: 0,
             tick: 0,
@@ -396,7 +414,7 @@ impl Quick {
     pub fn supports(list: &DisplayList) -> bool {
         let canvas = list.bounds();
         let mut depth = 0usize;
-        let mut inside = 0usize;
+        let mut layers = 0usize;
         let mut draws = 0usize;
         for command in &list.commands {
             match command {
@@ -413,11 +431,13 @@ impl Quick {
                     ..
                 } => {
                     let covered = transform.transform_rect_bbox(clip.bounding_box());
-                    if *mix != Mix::Normal || !contains(covered, canvas) || depth > 0 {
+                    // Un seul calque, sans calque dedans ni fusion, sur toute la fenêtre.
+                    if *mix != Mix::Normal || !contains(covered, canvas) || depth > 0 || layers > 0
+                    {
                         return false;
                     }
                     depth += 1;
-                    inside = 0;
+                    layers += 1;
                     continue;
                 }
                 Command::PopLayer => {
@@ -427,14 +447,9 @@ impl Quick {
                 Command::Fill { .. } | Command::Stroke { .. } => return false,
             }
             draws += 1;
-            if depth > 0 {
-                inside += 1;
-                if inside > 1 {
-                    return false;
-                }
-            }
         }
-        draws <= MAX_DRAWS
+        // La pose du calque compte pour un élément de plus.
+        draws + layers <= MAX_DRAWS
     }
 
     /// Éléments que la liste fera dessiner (au plus [`MAX_DRAWS`]).
@@ -449,6 +464,12 @@ impl Quick {
                 )
             })
             .count()
+            .saturating_add(
+                list.commands
+                    .iter()
+                    .filter(|c| matches!(c, Command::PushLayer { .. }))
+                    .count(),
+            )
             .min(MAX_DRAWS)
     }
 
@@ -487,7 +508,10 @@ impl Quick {
         self.prepare(device, format);
         let first = self.calls.len();
         let size = (f64::from(list.width.max(1)), f64::from(list.height.max(1)));
+        // Un calque de plusieurs éléments se dessine à part, puis se pose d'un coup.
+        let apart = layer_size(list) > 1;
         let mut alpha = 1.0f32;
+        let mut layer_alpha: Option<f32> = None;
         for command in &list.commands {
             // Jamais plus que la liste n'en a droit, ni que le tampon n'en reçoit.
             if self.calls.len() - first >= MAX_DRAWS || self.calls.len() >= self.capacity {
@@ -567,16 +591,83 @@ impl Quick {
                     p.paint(paint);
                     self.push(Kind::Disc, None, &p);
                 }
+                Command::PushLayer { alpha: layer, .. } if apart => {
+                    layer_alpha = Some(layer.clamp(0.0, 1.0));
+                    continue;
+                }
                 Command::PushLayer { alpha: layer, .. } => alpha = layer.clamp(0.0, 1.0),
-                Command::PopLayer => alpha = 1.0,
+                Command::PopLayer => {
+                    alpha = 1.0;
+                    // Le calque dessiné à part, posé sur toute la fenêtre avec son opacité.
+                    if let Some(layer) = layer_alpha.take() {
+                        let mut p = Params::quad(
+                            size,
+                            Affine::IDENTITY,
+                            Rect::new(0.0, 0.0, size.0, size.1),
+                        );
+                        p.set(ALPHA, layer);
+                        p.set(FLAG, 0.0);
+                        self.push(Kind::Image, None, &p);
+                        if let Some(call) = self.calls.last_mut() {
+                            call.composite = true;
+                        }
+                    }
+                    continue;
+                }
                 Command::Fill { .. } | Command::Stroke { .. } => {}
             }
+            // Un élément du calque à part.
+            if layer_alpha.is_some()
+                && let Some(call) = self.calls.last_mut()
+            {
+                call.in_layer = true;
+            }
         }
+        // Le calque à part : d'abord sa texture, à la taille de la fenêtre.
+        let layered = self.calls[first..].iter().any(|c| c.in_layer);
+        if layered {
+            self.offscreen(device, format, list.width.max(1), list.height.max(1));
+        }
+        let offscreen = layered
+            .then(|| {
+                self.offscreens
+                    .get(&(list.width.max(1), list.height.max(1), format))
+            })
+            .flatten();
+        if let Some(offscreen) = offscreen {
+            self.pass(encoder, &offscreen.view, format, first, true, None);
+        }
+        self.pass(
+            encoder,
+            target,
+            format,
+            first,
+            false,
+            offscreen.map(|o| &o.bind_group),
+        );
+    }
+
+    /// Une passe : les éléments `first..` du calque à part (`in_layer`), ou
+    /// les autres, dans `target` d'abord effacée. `layer` : la texture du
+    /// calque, pour sa pose.
+    fn pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        first: usize,
+        in_layer: bool,
+        layer: Option<&wgpu::BindGroup>,
+    ) {
         let Some(pipelines) = self.pipelines.get(&format) else {
             return;
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("mouflon-rapide"),
+            label: Some(if in_layer {
+                "mouflon-rapide-calque"
+            } else {
+                "mouflon-rapide"
+            }),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 depth_slice: None,
@@ -593,6 +684,9 @@ impl Quick {
         });
         let mut current: Option<Kind> = None;
         for (i, call) in self.calls.iter().enumerate().skip(first) {
+            if call.in_layer != in_layer {
+                continue;
+            }
             if current != Some(call.kind) {
                 pass.set_pipeline(match call.kind {
                     Kind::Image => &pipelines.image,
@@ -602,14 +696,65 @@ impl Quick {
                 current = Some(call.kind);
             }
             pass.set_bind_group(0, &self.params_group, &[(i * SLOT) as u32]);
-            if let Some(texture) = call.image.and_then(|key| self.textures.get(&key)) {
+            if call.composite {
+                let Some(layer) = layer else { continue };
+                pass.set_bind_group(1, layer, &[]);
+            } else if let Some(texture) = call.image.and_then(|key| self.textures.get(&key)) {
                 pass.set_bind_group(1, &texture.bind_group, &[]);
             } else if call.kind == Kind::Image {
                 continue;
             }
             pass.draw(0..4, 0..1);
         }
-        drop(pass);
+    }
+
+    /// La texture d'un calque à part pour une fenêtre de cette taille.
+    fn offscreen(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) {
+        let key = (width, height, format);
+        if self.offscreens.contains_key(&key) {
+            return;
+        }
+        // Quelques tailles de fenêtres au plus : on repart de zéro au-delà.
+        if self.offscreens.len() >= 8 {
+            self.offscreens.clear();
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mouflon-calque"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mouflon-calque"),
+            layout: &self.image_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
+        self.offscreens.insert(
+            key,
+            Offscreen {
+                view,
+                bind_group,
+                _texture: texture,
+            },
+        );
     }
 
     /// Envoie les paramètres de toutes les passes de l'image (avant
@@ -641,7 +786,12 @@ impl Quick {
             self.bytes.extend_from_slice(&value.to_le_bytes());
         }
         self.bytes.resize(self.calls.len() * SLOT + SLOT, 0);
-        self.calls.push(Call { kind, image });
+        self.calls.push(Call {
+            kind,
+            image,
+            in_layer: false,
+            composite: false,
+        });
     }
 
     /// Téléverse une image (alpha non prémultiplié) si elle n'est pas déjà
@@ -800,6 +950,25 @@ fn params_buffer(
         ],
     });
     (params, group)
+}
+
+/// Nombre d'éléments dans le calque d'opacité de la liste (0 sans calque).
+fn layer_size(list: &DisplayList) -> usize {
+    let mut inside = false;
+    let mut count = 0;
+    for command in &list.commands {
+        match command {
+            Command::PushLayer { .. } => inside = true,
+            Command::PopLayer => inside = false,
+            Command::Image { .. } | Command::BlurredRect { .. } | Command::Disc { .. }
+                if inside =>
+            {
+                count += 1;
+            }
+            _ => {}
+        }
+    }
+    count
 }
 
 /// `inner` est-il entièrement dans `outer` (au demi-pixel près) ?
