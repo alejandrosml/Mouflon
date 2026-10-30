@@ -8,9 +8,10 @@
 //!
 //! Le fichier porte une clé faite de tout ce qui donne les images : la
 //! version de ce format, celle du codeur BC7, l'échelle, et pour chaque
-//! planche son découpage et son identité (chemin, taille et date du
-//! fichier ; ou ses octets, pour une planche intégrée au fichier de
-//! l'animal). Une planche modifiée change la clé : le fichier est refait.
+//! planche son découpage et son contenu (résumé en quelques millisecondes,
+//! bien moins que son décodage). Une planche modifiée change la clé : le
+//! fichier est refait. Une app déplacée ou mise à jour, aux mêmes planches,
+//! garde ses images.
 //!
 //! Les images relues partagent le fichier sans copie. Ouvert par
 //! projection en mémoire ([`Store::open`]), il ne compte même pas dans
@@ -20,16 +21,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use mouflon_core::{PngData, SpriteSheet};
+use mouflon_core::SpriteSheet;
 use vello::peniko::Blob;
 
 use crate::bc7;
 use crate::display::{Bitmap, Pixels};
 use crate::sprites::{SpriteFrame, SpriteFrames};
 
-/// Version du format et de la réduction des images : à changer quand l'un
-/// ou l'autre change, pour que les anciens fichiers soient refaits.
-const VERSION: u32 = 1;
+/// Version du format, de sa clé et de la réduction des images : à changer
+/// quand l'un d'eux change, pour que les anciens fichiers soient refaits.
+const VERSION: u32 = 2;
 const MAGIC: [u8; 8] = *b"MFLNIMG\0";
 /// Côté d'une image au-delà duquel un fichier est jugé abîmé.
 const MAX_SIDE: u32 = 16_384;
@@ -106,26 +107,10 @@ pub fn key(sheet: &SpriteSheet) -> Option<u64> {
     for page in pages {
         h.u32(page.tiles_x);
         h.u32(page.tiles_y);
-        match &page.png {
-            PngData::Bytes(bytes) => {
-                h.bytes(b"octets");
-                h.u64(bytes.len() as u64);
-                h.bytes(bytes);
-            }
-            PngData::File { path, .. } => {
-                let meta = std::fs::metadata(path).ok()?;
-                let modified = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                    .unwrap_or_default();
-                h.bytes(b"fichier");
-                h.bytes(path.as_os_str().as_encoded_bytes());
-                h.u64(meta.len());
-                h.u64(modified.as_secs());
-                h.u32(modified.subsec_nanos());
-            }
-        }
+        // Le contenu, où que soit le fichier.
+        let bytes = page.png.bytes().ok()?;
+        h.u64(bytes.len() as u64);
+        h.words(&bytes);
     }
     Some(h.0)
 }
@@ -340,12 +325,24 @@ impl Fnv {
     fn u64(&mut self, value: u64) {
         self.bytes(&value.to_le_bytes());
     }
+
+    /// Des octets en nombre, huit à la fois : plusieurs gigaoctets par
+    /// seconde, pour résumer le contenu des planches.
+    fn words(&mut self, data: &[u8]) {
+        let (words, rest) = data.as_chunks::<8>();
+        for word in words {
+            self.0 = (self.0 ^ u64::from_le_bytes(*word)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            self.0 ^= self.0 >> 29;
+        }
+        self.bytes(rest);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sprites::encode_png_rgba;
+    use mouflon_core::PngData;
 
     /// Une planche de 2 × 2 cases de 40 pixels, à moitié de sa taille.
     fn sheet() -> SpriteSheet {
@@ -399,6 +396,36 @@ mod tests {
         let bytes = std::fs::read(&file).unwrap();
         std::fs::write(&file, &bytes[..bytes.len() - 1]).unwrap();
         assert!(load(&store, &file, k, &sheet).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// La clé suit le contenu des planches, pas leur place : une app déplacée
+    /// garde ses images, une planche retouchée les fait refaire.
+    #[test]
+    fn the_key_follows_what_the_sheets_hold_not_where_they_are() {
+        let dir = std::env::temp_dir().join(format!("mouflon-cle-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("ici")).unwrap();
+        std::fs::create_dir_all(dir.join("ailleurs")).unwrap();
+        let PngData::Bytes(png) = &sheet().pages[0].png else {
+            unreachable!("planche en mémoire")
+        };
+        let on_disk = |at: &str, png: &[u8]| {
+            let path = dir.join(at).join("planche.png");
+            std::fs::write(&path, png).unwrap();
+            let mut sheet = sheet();
+            sheet.pages[0].png = PngData::File {
+                path: Arc::from(path.as_path()),
+                size: (80, 80),
+            };
+            key(&sheet).expect("clé")
+        };
+        let here = on_disk("ici", png);
+        assert_eq!(on_disk("ailleurs", png), here, "déplacée");
+        assert_eq!(key(&sheet()), Some(here), "intégrée au fichier de l'animal");
+        let mut touched = png.to_vec();
+        let middle = touched.len() / 2;
+        touched[middle] ^= 1;
+        assert_ne!(on_disk("ailleurs", &touched), here, "retouchée");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

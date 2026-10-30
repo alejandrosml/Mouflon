@@ -25,8 +25,9 @@ throw them across the desktop.
   row of tiles at a time, while the menu and the GPU get ready. Its images
   are then compressed to BC7 in the background (four times less memory,
   read as is by the GPU) and kept on disk, mapped back in from there: the
-  next launches find them ready in under a millisecond, and those pages
-  do not count in the app's memory footprint. Images
+  next launches find them ready in about ten milliseconds, even after the
+  app is moved or updated, and those pages do not count in the app's memory
+  footprint. Images
   follow the display's own clock
   (its full rate for brisk moves, half a ProMotion display's rate for a
   stroll, 30 fps at rest, 20 fps asleep), a sprite is
@@ -267,9 +268,9 @@ se laissent attraper et lancer à travers le bureau.
   le menu et le GPU se préparent. Ses images sont ensuite compressées en
   BC7 en arrière-plan (quatre fois moins de mémoire, lues telles quelles
   par le GPU) et gardées sur le disque, d'où elles sont projetées en
-  mémoire : les lancements suivants les retrouvent prêtes en moins d'une
-  milliseconde, et ces pages ne comptent pas dans l'empreinte mémoire de
-  l'app. Les images suivent l'horloge de
+  mémoire : les lancements suivants les retrouvent prêtes en une dizaine de
+  millisecondes, même après un déplacement ou une mise à jour de l'app, et
+  ces pages ne comptent pas dans l'empreinte mémoire de l'app. Les images suivent l'horloge de
   l'écran lui-même (sa pleine cadence pour un mouvement vif, la moitié de
   celle d'un écran ProMotion pour une promenade, 30 i/s au repos, 20 i/s
   endormi), une image n'est redessinée que quand elle change, et la liste des

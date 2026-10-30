@@ -721,7 +721,7 @@ impl App {
             .spawn(|| {
                 platform::lower_thread_priority();
                 let released = platform::release_free_memory();
-                if released > 0 {
+                if released >= 1 << 20 {
                     log::info!(
                         "{:.1} Mo de mémoire libérée rendus au système",
                         released as f64 / 1e6
