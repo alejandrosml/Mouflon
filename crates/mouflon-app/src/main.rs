@@ -31,9 +31,13 @@ fn main() {
         .as_ref()
         .map(|p| settings::Settings::load(&p.settings))
         .unwrap_or_default();
+    // Les images prêtes se projettent en mémoire depuis le disque.
+    let images = paths.as_ref().map(|p| {
+        mouflon_render::cache::Store::new(&p.images).opened_with(mouflon_platform::map_file)
+    });
     let mut library = library::Library::load(
         paths.as_ref().map(|p| p.pets.as_path()),
-        paths.as_ref().map(|p| p.images.as_path()),
+        images,
         settings.size_factor(),
     );
     // `mouflon chemin/vers/animal…` : charge ces animaux en plus et lance le

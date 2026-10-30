@@ -86,6 +86,29 @@ pub fn current_pid() -> i32 {
     std::process::id() as i32
 }
 
+/// Rend au système la mémoire libérée que l'allocateur garde encore pour
+/// la réutiliser (sur Mac, des pages restées « sales » qui comptent dans
+/// l'empreinte de l'app pendant des minutes). Renvoie les octets rendus.
+/// À appeler hors du fil de l'affichage : le parcours prend quelques
+/// millisecondes.
+pub fn release_free_memory() -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            /// `<malloc/malloc.h>` (macOS 10.7) : `zone` nul = toutes les
+            /// zones, `goal` nul = tout ce qui peut l'être.
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: fonction de la bibliothèque C du système, sûre depuis
+        // n'importe quel fil ; un pointeur nul désigne toutes les zones.
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0
+    }
+}
+
 /// Fait passer le fil courant après tout le reste : un travail de fond (la
 /// compression des images) qui ne doit jamais retenir l'affichage. Sur Mac,
 /// la classe de service « utilitaire » : le système le place de préférence
@@ -133,8 +156,10 @@ pub enum StatusItem {}
 
 #[cfg(target_os = "macos")]
 mod macos;
+mod mapped;
 mod usage;
 
+pub use mapped::{SharedBytes, map_file};
 pub use usage::{ProcessUsage, process_usage};
 
 #[cfg(target_os = "macos")]

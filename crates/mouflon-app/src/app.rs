@@ -714,6 +714,20 @@ impl App {
                 art.image_bytes() as f64 / 1e6
             ));
         }
+        // Les images d'origine sont libérées : leurs pages retournent au
+        // système tout de suite, plutôt que dans quelques minutes.
+        let _ = std::thread::Builder::new()
+            .name("mouflon-menage".into())
+            .spawn(|| {
+                platform::lower_thread_priority();
+                let released = platform::release_free_memory();
+                if released > 0 {
+                    log::info!(
+                        "{:.1} Mo de mémoire libérée rendus au système",
+                        released as f64 / 1e6
+                    );
+                }
+            });
     }
 
     /// Les dessins d'un animal sont prêts : ceux qui l'attendaient arrivent.

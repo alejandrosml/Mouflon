@@ -14,6 +14,7 @@ use std::time::{Instant, SystemTime};
 
 use mouflon_core::{Appearance, LoadError, PetDef, load_pet, parse_pet_toml};
 use mouflon_render::PetArt;
+use mouflon_render::cache::Store;
 
 /// Mascottes de Mouflon, par ordre de préférence au premier lancement.
 const MASCOTS: [&str; 3] = ["poete", "pelote", "lainou"];
@@ -28,8 +29,8 @@ pub struct Entry {
     /// d'images prend un moment, et elles n'occupent la mémoire que si
     /// l'animal sert.
     art: Arc<ArtSlot>,
-    /// Dossier des images déjà prêtes (voir [`mouflon_render::cache`]).
-    images: Option<Arc<Path>>,
+    /// Images déjà prêtes (voir [`mouflon_render::cache`]).
+    images: Option<Store>,
 }
 
 /// Le dessin d'une espèce : préparé à la première demande (les autres
@@ -52,7 +53,7 @@ pub struct Compressed {
 }
 
 impl Entry {
-    fn new(def: PetDef, size: f32, images: Option<Arc<Path>>) -> Self {
+    fn new(def: PetDef, size: f32, images: Option<Store>) -> Self {
         let base = Arc::new(def);
         Self {
             def: Arc::new(base.scaled(size)),
@@ -86,7 +87,7 @@ impl Entry {
         let mut art = self.art.art.lock().unwrap_or_else(PoisonError::into_inner);
         art.get_or_insert_with(|| {
             let started = Instant::now();
-            match PetArt::load_cached(&self.def, self.images.as_deref()) {
+            match PetArt::load_cached(&self.def, self.images.as_ref()) {
                 Ok(art) => {
                     log::info!(
                         "dessin de {} prêt en {} ms{}",
@@ -114,23 +115,34 @@ impl Entry {
 
     /// Compresse les images du dessin, une seule fois, sur `threads` fils
     /// qui appellent d'abord `setup` ; elles sont gardées sur le disque pour
-    /// les prochains lancements, et le dessin compressé remplace l'autre.
-    /// `None` s'il n'y avait rien à compresser (ou si c'est déjà fait).
+    /// les prochains lancements, et le dessin compressé remplace l'autre
+    /// (relu du disque : ses pages ne comptent alors plus dans l'empreinte
+    /// de l'app). `None` s'il n'y avait rien à compresser (ou si c'est déjà
+    /// fait).
     pub fn compress(&self, threads: usize, setup: &(dyn Fn() + Sync)) -> Option<Compressed> {
         if self.art.compressing.swap(true, Ordering::AcqRel) {
             return None;
         }
         let art = self.art()?;
         let started = Instant::now();
-        let packed = Arc::new(art.compressed(threads, setup)?);
-        if let Some(dir) = &self.images
-            && let Err(e) = packed.keep(&self.def, dir)
-        {
-            log::warn!(
-                "images de {} non gardées dans {} : {e}",
-                self.def.meta.name,
-                dir.display()
-            );
+        let mut packed = Arc::new(art.compressed(threads, setup)?);
+        if let Some(store) = &self.images {
+            match packed.keep(&self.def, store) {
+                Ok(()) => {
+                    // Les mêmes images, relues du fichier tout juste écrit.
+                    if let Ok(kept) = PetArt::load_cached(&self.def, Some(store))
+                        && kept.from_cache()
+                        && kept.image_bytes() == packed.image_bytes()
+                    {
+                        packed = Arc::new(kept);
+                    }
+                }
+                Err(e) => log::warn!(
+                    "images de {} non gardées dans {} : {e}",
+                    self.def.meta.name,
+                    store.dir.display()
+                ),
+            }
         }
         *self.art.art.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(Some(Arc::clone(&packed)));
@@ -162,8 +174,8 @@ pub struct Library {
     pub pets: Vec<Entry>,
     /// Dossier des animaux de l'utilisateur.
     dir: Option<PathBuf>,
-    /// Dossier des images déjà prêtes.
-    images: Option<Arc<Path>>,
+    /// Images déjà prêtes.
+    images: Option<Store>,
     /// Animaux livrés dans l'app, dans l'ordre : le premier est l'animal par défaut.
     bundled: Vec<String>,
     /// Animaux passés en argument, rechargés avec le reste.
@@ -283,10 +295,10 @@ fn builtin_mannequin() -> Result<PetDef, LoadError> {
 
 impl Library {
     #[must_use]
-    pub fn load(user_dir: Option<&Path>, images: Option<&Path>, size: f32) -> Self {
+    pub fn load(user_dir: Option<&Path>, images: Option<Store>, size: f32) -> Self {
         let mut library = Self {
             dir: user_dir.map(Path::to_path_buf),
-            images: images.map(Arc::from),
+            images,
             size,
             ..Self::default()
         };
@@ -519,5 +531,36 @@ mod tests {
         library.set_size(1.0);
         assert!((height(&library) - normal).abs() < 0.01);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Une fois les images compressées, plus rien ne retient les images
+    /// d'origine ; les suivantes viennent du disque, déjà compressées.
+    #[test]
+    fn compressed_images_replace_the_originals_and_are_kept_on_disk() {
+        let dir = std::env::temp_dir().join(format!("mouflon-images-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/pelote/pet.toml");
+        let def = load_pet(&file).expect("Pelote");
+        let images = Store::new(&dir).opened_with(mouflon_platform::map_file);
+        let entry = Entry::new(def.clone(), 1.0, Some(images.clone()));
+        let original = Arc::downgrade(&entry.art().expect("dessin"));
+        assert!(entry.compressible());
+        let done = entry.compress(2, &|| {}).expect("compressées");
+        assert!(done.after * 3 < done.before, "{done:?}");
+        assert!(original.upgrade().is_none(), "images d'origine libérées");
+        assert!(
+            entry.art().is_some_and(|a| a.from_cache()),
+            "relues du disque"
+        );
+        assert!(!entry.compressible());
+        assert!(entry.compress(2, &|| {}).is_none(), "une seule fois");
+
+        // Lancement suivant : les images viennent du disque.
+        let again = Entry::new(def, 1.0, Some(images));
+        let art = again.art().expect("dessin");
+        assert!(art.from_cache());
+        assert_eq!(art.image_bytes(), done.after);
+        assert!(!again.compressible());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

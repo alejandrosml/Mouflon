@@ -11,6 +11,10 @@
 //! planche son découpage et son identité (chemin, taille et date du
 //! fichier ; ou ses octets, pour une planche intégrée au fichier de
 //! l'animal). Une planche modifiée change la clé : le fichier est refait.
+//!
+//! Les images relues partagent le fichier sans copie. Ouvert par
+//! projection en mémoire ([`Store::open`]), il ne compte même pas dans
+//! l'empreinte de l'app : le système relit ses pages du disque au besoin.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,6 +33,38 @@ const VERSION: u32 = 1;
 const MAGIC: [u8; 8] = *b"MFLNIMG\0";
 /// Côté d'une image au-delà duquel un fichier est jugé abîmé.
 const MAX_SIDE: u32 = 16_384;
+
+/// Octets d'un fichier du cache, partagés par toutes ses images.
+pub type Bytes = Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// Le dossier des images prêtes, et la façon d'en ouvrir les fichiers.
+#[derive(Clone, Debug)]
+pub struct Store {
+    pub dir: Arc<Path>,
+    /// Ouvre un fichier du cache : lu en mémoire par défaut, projeté en
+    /// mémoire si l'app sait le faire.
+    pub open: fn(&Path) -> std::io::Result<Bytes>,
+}
+
+impl Store {
+    #[must_use]
+    pub fn new(dir: &Path) -> Self {
+        Self {
+            dir: Arc::from(dir),
+            open: read_file,
+        }
+    }
+
+    /// Le même dossier, ses fichiers ouverts par `open`.
+    #[must_use]
+    pub fn opened_with(self, open: fn(&Path) -> std::io::Result<Bytes>) -> Self {
+        Self { open, ..self }
+    }
+}
+
+fn read_file(path: &Path) -> std::io::Result<Bytes> {
+    Ok(Arc::new(std::fs::read(path)?))
+}
 
 /// Fichier du cache pour les images d'un animal à cette échelle (nom de
 /// fichier sûr, quel que soit l'identifiant de l'animal).
@@ -97,8 +133,8 @@ pub fn key(sheet: &SpriteSheet) -> Option<u64> {
 /// Les images gardées pour cette planche, si le fichier existe et qu'il
 /// correspond à la clé ; il est alors daté du jour (voir [`prune`]).
 #[must_use]
-pub fn load(path: &Path, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
-    let bytes = std::fs::read(path).ok()?;
+pub fn load(store: &Store, path: &Path, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
+    let bytes = (store.open)(path).ok()?;
     let frames = parse(bytes, key, sheet)?;
     if let Ok(file) = std::fs::File::options().write(true).open(path) {
         let _ = file.set_modified(SystemTime::now());
@@ -171,11 +207,9 @@ pub fn prune(dir: &Path, age: Duration) -> usize {
 
 /// Lit un fichier du cache ; `None` au moindre doute (autre version, autre
 /// clé, longueurs incohérentes) : les images seront refaites.
-fn parse(bytes: Vec<u8>, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
-    let mut r = Reader {
-        bytes: &bytes,
-        at: 0,
-    };
+fn parse(shared: Bytes, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
+    let bytes: &[u8] = (*shared).as_ref();
+    let mut r = Reader { bytes, at: 0 };
     if r.take(8)? != MAGIC || r.u32()? != VERSION || r.u64()? != key {
         return None;
     }
@@ -218,7 +252,6 @@ fn parse(bytes: Vec<u8>, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> 
         return None;
     }
     // Toutes les images partagent le fichier lu, sans copie.
-    let shared = Arc::new(bytes);
     let mut at = start;
     let frames = table
         .into_iter()
@@ -249,13 +282,13 @@ fn parse(bytes: Vec<u8>, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> 
 
 /// Une partie du fichier lu.
 struct Slice {
-    bytes: Arc<Vec<u8>>,
+    bytes: Bytes,
     range: std::ops::Range<usize>,
 }
 
 impl AsRef<[u8]> for Slice {
     fn as_ref(&self) -> &[u8] {
-        &self.bytes[self.range.clone()]
+        &(*self.bytes).as_ref()[self.range.clone()]
     }
 }
 
@@ -345,7 +378,8 @@ mod tests {
         assert!(file.file_name().unwrap().to_str().unwrap().is_ascii());
         let k = key(&sheet).expect("clé");
         save(&file, k, &packed).expect("écrit");
-        let back = load(&file, k, &sheet).expect("relu");
+        let store = Store::new(&dir);
+        let back = load(&store, &file, k, &sheet).expect("relu");
         assert_eq!(back.frames.len(), packed.frames.len());
         for (a, b) in back.frames.iter().zip(&packed.frames) {
             assert_eq!((a.x, a.y, a.texel), (b.x, b.y, b.texel));
@@ -357,14 +391,14 @@ mod tests {
             assert_eq!(a.bitmap.to_rgba(), b.bitmap.to_rgba());
         }
         // Une autre clé (planche changée, autre taille) : le fichier est ignoré.
-        assert!(load(&file, k ^ 1, &sheet).is_none());
+        assert!(load(&store, &file, k ^ 1, &sheet).is_none());
         let mut other = sheet.clone();
         other.scale = 0.5;
         assert_ne!(key(&other), Some(k));
         // Un fichier tronqué aussi.
         let bytes = std::fs::read(&file).unwrap();
         std::fs::write(&file, &bytes[..bytes.len() - 1]).unwrap();
-        assert!(load(&file, k, &sheet).is_none());
+        assert!(load(&store, &file, k, &sheet).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

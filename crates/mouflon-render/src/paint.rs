@@ -1,6 +1,5 @@
 //! Dessin d'un animal dans sa fenêtre : ombre, personnage, lumière, particules.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use mouflon_core::{
@@ -73,8 +72,8 @@ impl PetArt {
     }
 
     /// Comme [`Self::load`], en reprenant d'abord les images déjà prêtes
-    /// gardées dans le dossier `cache` (voir [`crate::cache`]).
-    pub fn load_cached(def: &PetDef, cache: Option<&Path>) -> Result<Self, ArtError> {
+    /// gardées dans `cache` (voir [`crate::cache`]).
+    pub fn load_cached(def: &PetDef, cache: Option<&cache::Store>) -> Result<Self, ArtError> {
         match &def.appearance {
             Appearance::Rig { svg, height } => {
                 let rig = Rig::parse(svg)?;
@@ -97,8 +96,9 @@ impl PetArt {
             }
             Appearance::Sprites(sheet) => {
                 let sheet_key = cache.and_then(|_| cache::key(sheet));
-                let kept = cache.zip(sheet_key).and_then(|(dir, key)| {
-                    cache::load(&cache::path(dir, &def.meta.id, sheet), key, sheet)
+                let kept = cache.zip(sheet_key).and_then(|(store, key)| {
+                    let path = cache::path(&store.dir, &def.meta.id, sheet);
+                    cache::load(store, &path, key, sheet)
                 });
                 let from_cache = kept.is_some();
                 let frames = match kept {
@@ -160,14 +160,14 @@ impl PetArt {
         })
     }
 
-    /// Garde les images dans le dossier `cache` pour les prochains lancements.
-    pub fn keep(&self, def: &PetDef, cache: &Path) -> std::io::Result<()> {
+    /// Garde les images dans `cache` pour les prochains lancements.
+    pub fn keep(&self, def: &PetDef, cache: &cache::Store) -> std::io::Result<()> {
         let (Look::Sprites(frames), Appearance::Sprites(sheet), Some(key)) =
             (&self.look, &def.appearance, self.sheet_key)
         else {
             return Ok(());
         };
-        cache::save(&cache::path(cache, &def.meta.id, sheet), key, frames)
+        cache::save(&cache::path(&cache.dir, &def.meta.id, sheet), key, frames)
     }
 
     /// Place du dessin devant et derrière son point d'appui (points), pour
