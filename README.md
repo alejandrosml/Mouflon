@@ -56,7 +56,7 @@ throw them across the desktop.
 | **Poete** | The mascot of Mouflon, a painted sheep. It lives in its own repository and waits for the permission of its original creator before being shared. |
 | **Pelote** | A soft wool sheep with a collar and a bell (`pets/pelote`): the desktopPet behaviors, drawn in high definition. |
 | **Lainou** | A small wool sheep with a bell (`pets/lainou`): 26 animations drawn frame by frame, in both directions. |
-| Mannequin | The built-in test character, a vector rig animated by Mouflon (`pets/mannequin`). |
+| Mannequin | The built-in example: a sheep drawn as a vector rig (slate-blue head, after the Bleu du Maine breed) and animated by Mouflon (`pets/mannequin`). |
 
 ### Requirements
 
@@ -295,7 +295,7 @@ se laissent attraper et lancer à travers le bureau.
 | **Poete** | La mascotte de Mouflon, un mouton peint. Il vit dans son propre dépôt et attend l'accord de son créateur d'origine avant d'être partagé. |
 | **Pelote** | Un mouton tout en laine douce, avec son collier et sa clochette (`pets/pelote`) : les comportements de desktopPet, dessinés en haute définition. |
 | **Lainou** | Un petit mouton de laine à clochette (`pets/lainou`) : 26 animations dessinées image par image, dans les deux sens. |
-| Mannequin | Le personnage de test intégré, un pantin vectoriel animé par Mouflon (`pets/mannequin`). |
+| Mannequin | L'exemple intégré : un mouton dessiné en vecteurs (tête bleu ardoise, d'après la race Bleu du Maine) et animé par Mouflon (`pets/mannequin`). |
 
 ### Prérequis
 

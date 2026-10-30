@@ -1,17 +1,17 @@
-# Mannequin : personnage de test de Mouflon.
+# Mannequin : le mouton d'exemple de Mouflon, dessiné en vecteurs.
 # Ce fichier sert aussi d'exemple complet du format natif.
 
 [pet]
 id = "mannequin"
 name = "Mannequin"
 author = "Alejandro San Martin Lamas"
-description = "Personnage neutre qui montre le moteur : remplace-le par ton propre dessin."
+description = "Un mouton dessiné en vecteurs, tête bleu ardoise (d'après la race Bleu du Maine) : il montre le moteur et sert de modèle à ton propre dessin."
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [appearance]
 rig = "mannequin.svg"
-height = 64.0          # hauteur affichée, en points
+height = 54.0          # hauteur affichée, en points
 
 [physics]
 width = 64.0           # largeur utilisée pour les bords et les murs
