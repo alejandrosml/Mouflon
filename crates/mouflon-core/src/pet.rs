@@ -1947,6 +1947,8 @@ pub struct Flock {
     next_id: u32,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     collisions: bool,
+    /// Change quand un animal arrive, s'en va ou part (voir [`Flock::generation`]).
+    generation: u64,
 }
 
 /// Élans donnés à deux animaux qui se rentrent dedans, ou rien.
@@ -2087,15 +2089,30 @@ impl Flock {
         let id = self.next_id;
         self.next_id += 1;
         self.pets.push(Pet::spawn(id, def, seed, world, x));
+        self.generation += 1;
         id
     }
 
     pub fn remove(&mut self, id: u32) {
+        let before = self.pets.len();
         self.pets.retain(|p| p.id() != id);
+        if self.pets.len() != before {
+            self.generation += 1;
+        }
     }
 
     pub fn clear(&mut self) {
         self.pets.clear();
+        self.generation += 1;
+    }
+
+    /// Change à chaque animal qui arrive, qui commence à dire au revoir ou
+    /// qui quitte le troupeau : tant qu'elle ne change pas, la liste des
+    /// animaux (et de ceux qui partent) est la même. De quoi ne refaire les
+    /// fenêtres et le menu que quand il le faut.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     #[must_use]
@@ -2183,6 +2200,7 @@ impl Flock {
         for pet in &mut self.pets {
             pet.leave(world, input);
         }
+        self.generation += 1;
     }
 
     /// Un animal de cette espèce (identifiant de sa définition) dit au
@@ -2194,6 +2212,7 @@ impl Flock {
             !p.is_child() && !p.is_leaving() && !p.is_finished() && p.def.meta.id == species
         })?;
         pet.leave(world, input);
+        self.generation += 1;
         Some(pet.id())
     }
 
@@ -2215,6 +2234,8 @@ impl Flock {
                 born.push((Arc::clone(&pet.def), pet.rng.next_u32(), request));
             }
         }
+        let before = self.pets.len();
+        let arrived = !born.is_empty();
         for (def, seed, request) in born {
             let id = self.next_id;
             self.next_id += 1;
@@ -2222,6 +2243,9 @@ impl Flock {
                 .push(Pet::child(id, def, u64::from(seed), world, request));
         }
         self.pets.retain(|p| !p.finished);
+        if arrived || self.pets.len() != before {
+            self.generation += 1;
+        }
     }
 
     /// Activité la plus élevée du troupeau.

@@ -14,11 +14,14 @@ screen, stroll along your windows and ride with them when you move them, climb
 the edges of the screen, graze, bleat, doze off — and let you catch them and
 throw them across the desktop.
 
-- **Light**: a native menu bar app, drawn by the GPU. Images follow the
-  display's own clock (its full rate in motion, 30 fps at rest, 20 fps
-  asleep), a sprite is redrawn only when its image changes, and the window
-  list is read on a separate thread (often only while a window carrying a pet
-  moves), so it never holds up an image.
+- **Light**: a native menu bar app, drawn by the GPU. A pet made of images
+  is a few quads drawn straight into its window (a soft shadow, the image,
+  round particles), each image uploaded once; the full vector renderer
+  (Vello) only starts for vector pets. Images follow the display's own clock
+  (its full rate in motion, 30 fps at rest, 20 fps asleep), a sprite is
+  redrawn only when its image changes, and the window list is read on a
+  separate thread (often only while a window carrying a pet moves), so it
+  never holds up an image.
 - **Beautiful**: continuous 120 Hz physics, timed to the moment each image
   reaches the display (ProMotion included), sub-pixel motion, in-between
   images for smoother animations, sharp pixel-exact images at rest, soft
@@ -182,7 +185,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 | `mouflon-core` | physics, behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; Vello or SVG output | forbidden |
 | `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows | isolated and commented |
-| `mouflon-app` | transparent windows (winit), GPU (wgpu), input, native menu, translations | forbidden |
+| `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
@@ -239,12 +242,15 @@ l'écran, se promènent sur tes fenêtres et voyagent avec elles quand tu les
 déplaces, escaladent les bords de l'écran, broutent, bêlent, s'endorment — et
 se laissent attraper et lancer à travers le bureau.
 
-- **Léger** : une app native de la barre des menus, dessinée par le GPU. Les
-  images suivent l'horloge de l'écran lui-même (sa pleine cadence en
-  mouvement, 30 i/s au repos, 20 i/s endormi), une image n'est redessinée que
-  quand elle change, et la liste des fenêtres est relevée sur un fil à part
-  (souvent seulement lorsqu'une fenêtre portant un animal bouge), sans jamais
-  retenir une image.
+- **Léger** : une app native de la barre des menus, dessinée par le GPU. Un
+  animal en images, ce sont quelques quadrilatères dessinés droit dans sa
+  fenêtre (une ombre douce, l'image, des particules rondes), chaque image
+  envoyée une fois au GPU ; le moteur vectoriel complet (Vello) ne se met en
+  route que pour les animaux vectoriels. Les images suivent l'horloge de
+  l'écran lui-même (sa pleine cadence en mouvement, 30 i/s au repos, 20 i/s
+  endormi), une image n'est redessinée que quand elle change, et la liste des
+  fenêtres est relevée sur un fil à part (souvent seulement lorsqu'une
+  fenêtre portant un animal bouge), sans jamais retenir une image.
 - **Beau** : une physique continue à 120 Hz, calée sur l'instant où chaque
   image arrive à l'écran (ProMotion compris), des mouvements au sous-pixel
   près, des images intermédiaires pour des animations plus fluides, des
@@ -417,7 +423,7 @@ ses comportements : [docs/format.md](docs/format.md).
 | `mouflon-core` | physique, comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; sortie Vello ou SVG | interdit |
 | `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes | isolé et commenté |
-| `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu), entrées, menu natif, traductions | interdit |
+| `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |

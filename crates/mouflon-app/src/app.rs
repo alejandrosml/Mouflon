@@ -192,9 +192,14 @@ pub struct App {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     menu: Option<crate::menu::TrayMenu>,
     /// Ce que le menu montre du troupeau (le préféré, le nombre d'animaux de
-    /// chaque espèce) : il n'est mis à jour que quand cela change.
+    /// chaque espèce) : il n'est mis à jour que quand cela change, ce que dit
+    /// la génération du troupeau.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     menu_flock: Option<(usize, Vec<usize>)>,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    menu_generation: Option<u64>,
+    /// Génération du troupeau pour laquelle les fenêtres sont à jour.
+    windows_generation: Option<u64>,
 }
 
 fn to_rect(r: platform::OsRect) -> Rect {
@@ -321,6 +326,9 @@ impl App {
             menu: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu_flock: None,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            menu_generation: None,
+            windows_generation: None,
         }
     }
 
@@ -631,6 +639,12 @@ impl App {
     /// Une fenêtre par animal : on en crée pour les nouveaux venus (dont les
     /// personnages secondaires des scènes desktopPet) et on ferme celles des partis.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
+        // Rien n'a changé dans le troupeau : les fenêtres sont à jour.
+        let generation = self.flock.generation();
+        if self.windows_generation == Some(generation) {
+            return;
+        }
+        self.windows_generation = Some(generation);
         let alive: Vec<u32> = self.flock.pets().iter().map(|p| p.id()).collect();
         for w in self.windows.values().filter(|w| !alive.contains(&w.pet)) {
             if let Some(stats) = &self.stats {
@@ -805,6 +819,7 @@ impl App {
                 Err(e) => log::error!("impossible de recréer le menu : {e}"),
             }
             self.menu_flock = None;
+            self.menu_generation = None;
             self.sync_menu();
         }
     }
@@ -818,6 +833,13 @@ impl App {
             let Some(menu) = &self.menu else {
                 return;
             };
+            // Le préféré ne change qu'avec un animal ajouté : la génération
+            // du troupeau suffit à savoir s'il y a du nouveau.
+            let generation = self.flock.generation();
+            if self.menu_generation == Some(generation) {
+                return;
+            }
+            self.menu_generation = Some(generation);
             let favorite = self
                 .library
                 .default_index(self.settings.default_pet.as_deref());
