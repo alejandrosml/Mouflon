@@ -14,13 +14,16 @@ screen, stroll along your windows and ride with them when you move them, climb
 the edges of the screen, graze, bleat, doze off — and let you catch them and
 throw them across the desktop.
 
-- **Light**: a native menu bar app, drawn by the GPU. A pet made of images
-  is a few quads drawn straight into its window (a soft shadow, the image,
-  round particles), each image uploaded once, and all the windows of a frame
-  go to the GPU in a single submission; the full vector renderer (Vello)
-  only starts for vector pets. At launch, each kind of pet decodes its
-  sheets on its own threads, one row of tiles at a time, while the menu and
-  the GPU get ready. Images follow the display's own clock
+- **Light**: a native menu bar app, drawn by the GPU (Metal on a Mac). A
+  pet made of images is a few quads drawn straight into its window (a soft
+  shadow, the image, round particles), each image uploaded once, and all
+  the windows of a frame go to the GPU in a single submission. A vector pet
+  is baked into images when it loads, one per moving piece (head, legs,
+  tail…), so it is drawn the same way; the full vector renderer (Vello)
+  only starts for drawings that cannot be baked, and stops when they leave.
+  At launch, each kind of pet decodes its sheets on its own threads, one
+  row of tiles at a time, while the menu and the GPU get ready. Images
+  follow the display's own clock
   (its full rate in motion, 30 fps at rest, 20 fps asleep), a sprite is
   redrawn only when its image changes, and the window list is read on a
   separate thread (often only while a window carrying a pet moves), so it
@@ -187,7 +190,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 | Crate | Role | `unsafe` |
 |---|---|---|
 | `mouflon-core` | physics, behaviors, pet formats, world (screens, visible window ledges) | forbidden |
-| `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; Vello or SVG output | forbidden |
+| `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; rigs baked into images (tiny-skia); Vello or SVG output | forbidden |
 | `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows | isolated and commented |
 | `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
@@ -246,12 +249,15 @@ l'écran, se promènent sur tes fenêtres et voyagent avec elles quand tu les
 déplaces, escaladent les bords de l'écran, broutent, bêlent, s'endorment — et
 se laissent attraper et lancer à travers le bureau.
 
-- **Léger** : une app native de la barre des menus, dessinée par le GPU. Un
-  animal en images, ce sont quelques quadrilatères dessinés droit dans sa
-  fenêtre (une ombre douce, l'image, des particules rondes), chaque image
-  envoyée une fois au GPU, et toutes les fenêtres d'une image partent au GPU
-  en un seul envoi ; le moteur vectoriel complet (Vello) ne se met en route
-  que pour les animaux vectoriels. Au lancement, chaque espèce décode ses
+- **Léger** : une app native de la barre des menus, dessinée par le GPU
+  (Metal sur Mac). Un animal en images, ce sont quelques quadrilatères
+  dessinés droit dans sa fenêtre (une ombre douce, l'image, des particules
+  rondes), chaque image envoyée une fois au GPU, et toutes les fenêtres
+  d'une image partent au GPU en un seul envoi. Un animal vectoriel est cuit
+  en images à son chargement, une par morceau qui bouge (tête, pattes,
+  queue…), et se dessine de la même façon ; le moteur vectoriel complet
+  (Vello) ne se met en route que pour un dessin qui ne se cuit pas, et
+  s'arrête quand il s'en va. Au lancement, chaque espèce décode ses
   planches sur ses propres fils, une rangée de cases à la fois, pendant que
   le menu et le GPU se préparent. Les images suivent l'horloge de
   l'écran lui-même (sa pleine cadence en mouvement, 30 i/s au repos, 20 i/s
@@ -429,7 +435,7 @@ ses comportements : [docs/format.md](docs/format.md).
 | Crate | Rôle | `unsafe` |
 |---|---|---|
 | `mouflon-core` | physique, comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
-| `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; sortie Vello ou SVG | interdit |
+| `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; rigs cuits en images (tiny-skia) ; sortie Vello ou SVG | interdit |
 | `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes | isolé et commenté |
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
