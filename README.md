@@ -16,8 +16,11 @@ throw them across the desktop.
 
 - **Light**: a native menu bar app, drawn by the GPU. A pet made of images
   is a few quads drawn straight into its window (a soft shadow, the image,
-  round particles), each image uploaded once; the full vector renderer
-  (Vello) only starts for vector pets. Images follow the display's own clock
+  round particles), each image uploaded once, and all the windows of a frame
+  go to the GPU in a single submission; the full vector renderer (Vello)
+  only starts for vector pets. At launch, each kind of pet decodes its
+  sheets on its own threads, one row of tiles at a time, while the menu and
+  the GPU get ready. Images follow the display's own clock
   (its full rate in motion, 30 fps at rest, 20 fps asleep), a sprite is
   redrawn only when its image changes, and the window list is read on a
   separate thread (often only while a window carrying a pet moves), so it
@@ -91,12 +94,13 @@ To check that the animation is smooth, `MOUFLON_ESSAI=300` runs Mouflon for
 five minutes and writes a full journal (`mouflon-essai.log` in the current
 folder, or the file named by `MOUFLON_JOURNAL`): every image (gap, time spent
 in each part, state of each pet), every event (collisions, landings, sounds,
-windows, menu), a summary every ten seconds and a report at the end.
-`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses the pets of the trial and
-`MOUFLON_ESSAI_COLLISIONS=1` turns collisions on. The CI runs such a trial on
-every Mac build. `tools/essai/analyse.py` reads the journal and lists what
-went wrong: hitches and their cause, the slowest images, animations short of
-images for a fast movement, position jumps, each collision step by step.
+windows, menu), a summary every ten seconds (memory, CPU, wakeups) and a
+report at the end. `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses the
+pets of the trial and `MOUFLON_ESSAI_COLLISIONS=1` turns collisions on. The CI
+runs such a trial on every Mac build. `tools/essai/analyse.py` reads the
+journal and lists what went wrong: hitches and their cause, the slowest
+images, animations short of images for a fast movement, position jumps, each
+collision step by step, the memory and CPU used.
 
 ```sh
 MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
@@ -245,8 +249,11 @@ se laissent attraper et lancer à travers le bureau.
 - **Léger** : une app native de la barre des menus, dessinée par le GPU. Un
   animal en images, ce sont quelques quadrilatères dessinés droit dans sa
   fenêtre (une ombre douce, l'image, des particules rondes), chaque image
-  envoyée une fois au GPU ; le moteur vectoriel complet (Vello) ne se met en
-  route que pour les animaux vectoriels. Les images suivent l'horloge de
+  envoyée une fois au GPU, et toutes les fenêtres d'une image partent au GPU
+  en un seul envoi ; le moteur vectoriel complet (Vello) ne se met en route
+  que pour les animaux vectoriels. Au lancement, chaque espèce décode ses
+  planches sur ses propres fils, une rangée de cases à la fois, pendant que
+  le menu et le GPU se préparent. Les images suivent l'horloge de
   l'écran lui-même (sa pleine cadence en mouvement, 30 i/s au repos, 20 i/s
   endormi), une image n'est redessinée que quand elle change, et la liste des
   fenêtres est relevée sur un fil à part (souvent seulement lorsqu'une
@@ -326,13 +333,14 @@ pour cinq minutes et écrit un journal complet (`mouflon-essai.log` dans le
 dossier courant, ou le fichier que nomme `MOUFLON_JOURNAL`) : chaque image
 (écart, temps passé dans chaque partie, état de chaque animal), chaque
 événement (collisions, atterrissages, sons, fenêtres, menu), un résumé toutes
-les dix secondes et un bilan à la fin. `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote`
-choisit les animaux de l'essai et `MOUFLON_ESSAI_COLLISIONS=1` met le mode
-collisions. L'intégration continue fait un tel essai à chaque construction
-pour Mac. `tools/essai/analyse.py` lit le journal et dit ce qui cloche : les
-à-coups et leur cause, les images les plus longues à préparer, les animations
-qui manquent d'images pour un mouvement rapide, les sauts de position, chaque
-collision pas à pas.
+les dix secondes (mémoire, processeur, réveils) et un bilan à la fin.
+`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` choisit les animaux de l'essai et
+`MOUFLON_ESSAI_COLLISIONS=1` met le mode collisions. L'intégration continue
+fait un tel essai à chaque construction pour Mac. `tools/essai/analyse.py` lit
+le journal et dit ce qui cloche : les à-coups et leur cause, les images les
+plus longues à préparer, les animations qui manquent d'images pour un
+mouvement rapide, les sauts de position, chaque collision pas à pas, la
+mémoire et le processeur utilisés.
 
 ```sh
 MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
