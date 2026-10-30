@@ -82,6 +82,22 @@ jobs:
             dist/Mouflon.app/Contents/MacOS/mouflon 2>&1 | tee essai.log
           grep -q "essai terminé" essai.log
 
+      # Profil du processeur : vingt secondes d'un court essai (mêmes animaux),
+      # relevées par `sample` sur un programme qui garde ses symboles, pour voir
+      # où passe le temps de calcul, fil par fil (`profil.txt`). Après l'essai,
+      # qu'il ne dérange pas ; un échec ici ne fait pas échouer la construction.
+      - name: Profil du processeur
+        continue-on-error: true
+        run: |
+          cargo build --profile profilage --locked --target aarch64-apple-darwin -p mouflon-app
+          ( sleep 25
+            pid=$(pgrep -x mouflon) && sudo sample "$pid" 20 1 -mayDie -file profil.txt ) &
+          MOUFLON_ESSAI=60 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
+            MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=profil-journal.log \
+            perl -e 'alarm 180; exec @ARGV' \
+            target/aarch64-apple-darwin/profilage/mouflon > profil-sortie.log 2>&1
+          wait
+
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -90,6 +106,8 @@ jobs:
             essai.log
             essai-journal.log
             memoire.txt
+            profil.txt
+            profil-journal.log
 
       - name: Publier la version
         if: startsWith(github.ref, 'refs/tags/')

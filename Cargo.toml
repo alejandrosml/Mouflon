@@ -75,6 +75,13 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+[profile.profilage]
+# La version publiée, mais avec ses symboles : pour relever où passe le temps
+# de calcul (`sample` de macOS, dans la CI).
+inherits = "release"
+strip = false
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 # Les dépendances (Vello, wgpu…) restent rapides même en debug.
 opt-level = 2
