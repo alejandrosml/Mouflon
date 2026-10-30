@@ -55,6 +55,12 @@ meet = [
 ]
 leave = "au_revoir"           # un dernier bêlement avant de s'effacer
 together = "content"          # « Tous ensemble » : tout le troupeau saute de joie
+# Le pointeur file tout près de lui : il sursaute (ou bêle de surprise).
+startle = [{ to = "surpris", weight = 3 }, { to = "bele", weight = 1 }]
+# Personne au clavier ni à la souris depuis trois minutes : il bâille et
+# s'endort ; au retour de l'utilisateur, il se réveille.
+sleepy = "baille"
+wake = "se_reveiller"
 
 # Ce qu'il a envie de faire quand il a fini quelque chose.
 [choices]
@@ -74,6 +80,15 @@ envie = [
     # Il regarde volontiers le curseur qui passe, et s'endort plus vite la nuit.
     { to = "regarde", weight = 4, when = "cursor_near:220" },
     { to = "baille", weight = 4, when = "night" },
+    # Tu tapes au clavier : il se fait discret (il broute, se repose, te
+    # regarde travailler).
+    { to = "repos", weight = 5, when = "typing" },
+    { to = "brouter_debut", weight = 4, when = "typing" },
+    { to = "regarde", weight = 2, when = "typing" },
+    # Le matin, il s'ébroue et se réjouit ; le soir, il bâille.
+    { to = "s_ebroue", weight = 2, when = "morning" },
+    { to = "content", weight = 1, when = "morning" },
+    { to = "baille", weight = 2, when = "evening" },
 ]
 
 # Sons : bêlements d'agneau, la clochette, le broutage et un petit bruit
@@ -263,18 +278,26 @@ next = "couche"
 [[behavior]]
 name = "couche"
 fps = 8
+sleep = true
 next = "s_endormir"
 
 [[behavior]]
 name = "s_endormir"
 fps = 6
+sleep = true
 next = "dort"
 
+# Il dort plus longtemps la nuit, et tant que tu n'es pas là.
 [[behavior]]
 name = "dort"
 fps = 6
 loops = [3, 6]
-next = [{ to = "se_reveiller", weight = 1 }, { to = "dort", weight = 3, when = "night" }]
+sleep = true
+next = [
+    { to = "se_reveiller", weight = 1, when = "present" },
+    { to = "dort", weight = 3, when = ["night", "present"] },
+    { to = "dort", weight = 1, when = "away" },
+]
 
 [[behavior]]
 name = "se_reveiller"

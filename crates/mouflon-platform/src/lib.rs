@@ -212,11 +212,13 @@ pub enum FormRow {
         help: Option<String>,
         extra: Option<FormExtra>,
     },
-    /// Curseur à crans : un libellé au-dessus, le nom de chaque cran dessous.
+    /// Curseur à crans : un libellé au-dessus, le nom de chaque cran
+    /// dessous, puis une explication s'il y en a une.
     Steps {
         id: u32,
         label: String,
         steps: Vec<String>,
+        help: Option<String>,
     },
     /// Un texte, et un bouton à sa droite.
     Text {
@@ -302,8 +304,17 @@ pub use macos::{
     frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
     open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
     request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
-    snapshot_form, update_form, warm_up_sounds, window_max_fps, windows,
+    snapshot_form, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
+
+/// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserActivity {
+    /// Secondes depuis la dernière touche frappée (laquelle, on ne le sait pas).
+    pub since_key: f64,
+    /// Secondes depuis son dernier geste : clavier, souris, trackpad.
+    pub idle: f64,
+}
 
 #[cfg(not(target_os = "macos"))]
 mod fallback {
@@ -330,6 +341,11 @@ mod fallback {
 
     #[must_use]
     pub fn cursor_position() -> Option<(f64, f64)> {
+        None
+    }
+
+    #[must_use]
+    pub fn user_activity() -> Option<super::UserActivity> {
         None
     }
 
@@ -487,7 +503,7 @@ pub use fallback::{
     frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
     open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
     request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
-    snapshot_form, update_form, warm_up_sounds, window_max_fps, windows,
+    snapshot_form, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

@@ -345,6 +345,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK).round() as usize {
             pet.step(TICK, world, &input);
@@ -580,6 +581,7 @@ mod tests {
                 &Input {
                     cursor: None,
                     local_hour: 15.0,
+                    ..Input::default()
                 },
             );
             max_pets = max_pets.max(flock.pets().len());

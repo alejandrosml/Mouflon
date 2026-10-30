@@ -15,6 +15,7 @@ quit = "退出 Mouflon"
 
 # 宠物菜单（右键点按）
 goodbye_named = "和{name}道别"
+size_named = "{name}的大小"
 size = "大小"
 size_small = "小"
 size_normal = "标准"
@@ -24,6 +25,7 @@ size_huge = "特大"
 # 设置窗口
 settings_title = "Mouflon 设置"
 pets_section = "宠物"
+size_help = "所有宠物的大小。右键点按某只宠物，只改变它自己的大小。"
 pet_sounds = "宠物的声音"
 walks_section = "行走的地方"
 collisions = "宠物之间的碰撞"

@@ -303,6 +303,7 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
             clip,
             children: Vec::new(),
             sounds: cues,
+            sleeping: b.sleep,
         });
     }
 
@@ -322,6 +323,9 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
         window_side: resolve_list("window_side", &r.window_side)?,
         leave: resolve_list("leave", &r.leave)?,
         together: resolve_list("together", &r.together)?,
+        startle: resolve_list("startle", &r.startle)?,
+        sleepy: resolve_list("sleepy", &r.sleepy)?,
+        wake: resolve_list("wake", &r.wake)?,
     };
 
     let mut def = PetDef::new(meta, appearance, physics, behaviors, reflexes)?;
@@ -779,6 +783,29 @@ fn parse_desktoppet_sidecar(
         }));
     }
     def.set_sounds(sounds)?;
+    for (reflex, animation) in &desktoppet.reactions {
+        let to = def.behavior_index(animation).ok_or_else(|| {
+            format_error(format!(
+                "[desktoppet.reactions] : l'animation « {animation} » n'existe pas"
+            ))
+        })?;
+        let list = vec![Transition {
+            to,
+            weight: 1.0,
+            when: Vec::new(),
+        }];
+        match reflex.as_str() {
+            "startle" => def.reflexes.startle = list,
+            "sleepy" => def.reflexes.sleepy = list,
+            "wake" => def.reflexes.wake = list,
+            "poke" => def.reflexes.poke = list,
+            other => {
+                return Err(format_error(format!(
+                    "[desktoppet.reactions] : réflexe inconnu « {other} » (startle, sleepy, wake, poke)"
+                )));
+            }
+        }
+    }
     Ok(def)
 }
 
@@ -808,6 +835,11 @@ fn parse_condition(s: &str) -> Result<Condition, LoadError> {
         "day" => Condition::Day,
         "cursor_near" => Condition::CursorNear(radius()?),
         "cursor_far" => Condition::CursorFar(radius()?),
+        "typing" => Condition::Typing,
+        "away" => Condition::Away,
+        "present" => Condition::Present,
+        "morning" => Condition::Morning,
+        "evening" => Condition::Evening,
         other => return Err(format_error(format!("condition inconnue « {other} »"))),
     })
 }
@@ -857,6 +889,10 @@ struct DesktopPetToml {
     /// son(s) de la section [sounds].
     #[serde(default)]
     sounds: BTreeMap<String, SoundCuesToml>,
+    /// Réactions de Mouflon que le fichier ne prévoit pas : réflexe
+    /// (`startle`, `sleepy`, `wake`, `poke`) → nom de l'animation jouée.
+    #[serde(default)]
+    reactions: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -969,6 +1005,9 @@ struct ReflexesToml {
     window_side: Option<TransitionsToml>,
     leave: Option<TransitionsToml>,
     together: Option<TransitionsToml>,
+    startle: Option<TransitionsToml>,
+    sleepy: Option<TransitionsToml>,
+    wake: Option<TransitionsToml>,
 }
 
 #[derive(Deserialize)]
@@ -991,6 +1030,9 @@ struct BehaviorToml {
     /// Sans transition de bord : continuer tout droit et tomber du rebord.
     #[serde(default)]
     walk_off_edges: bool,
+    /// Il dort (ou s'endort) : l'utilisateur qui revient le réveille.
+    #[serde(default)]
+    sleep: bool,
     /// Bande jouée (par défaut, celle qui porte le nom du comportement).
     strip: Option<String>,
     /// Images jouées : numéros dans la bande (ou dans la planche unique).

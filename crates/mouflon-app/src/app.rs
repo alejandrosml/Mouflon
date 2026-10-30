@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Timelike;
 use mouflon_core::{
-    Activity, Flock, Input, LedgeOptions, PetEvent, PetView, Rect, Screen, Support, Vec2,
+    Activity, Flock, Input, LedgeOptions, Pet, PetEvent, PetView, Rect, Screen, Support, Vec2,
     WindowRect, World, exact_dock,
 };
 use mouflon_platform as platform;
@@ -63,6 +63,9 @@ pub enum UserEvent {
     ArtReady(String),
     /// Les images de cet animal sont compressées (voir `App::compress_later`).
     ArtCompressed(String),
+    /// Le dessin à sa nouvelle taille de cet animal (son numéro, le rang de
+    /// la taille) est prêt (voir `App::set_pet_size`).
+    PetSizeReady(u32, usize),
     /// Un article du menu d'un animal, un contrôle de la fenêtre des réglages.
     Ui(platform::UiEvent),
 }
@@ -168,8 +171,15 @@ pub struct App {
     pending: HashMap<String, usize>,
     /// Dessins en préparation sur un fil à part (identifiants).
     decoding: HashSet<String>,
+    /// Animaux qui attendent leur dessin à une autre taille, et cette entrée.
+    resizing: Vec<(u32, Entry)>,
     /// Essai (`MOUFLON_ESSAI`) : fin prévue, étapes à venir et mesures de fluidité.
     trial_end: Option<Instant>,
+    /// Ce que fait l'utilisateur, au dernier relevé (voir `App::user_activity`).
+    activity: Cell<Option<(Instant, platform::UserActivity)>>,
+    /// Personne devant la machine (essai de la CI) : on ne regarde pas ce
+    /// que fait l'utilisateur.
+    no_user: bool,
     trial_steps: Vec<(Instant, TrialStep)>,
     stats: Option<crate::stats::FrameStats>,
     frontmost: Option<i32>,
@@ -342,7 +352,10 @@ impl App {
             next_frame: None,
             pending: HashMap::new(),
             decoding: HashSet::new(),
+            resizing: Vec::new(),
             trial_end: None,
+            activity: Cell::new(None),
+            no_user: std::env::var_os("MOUFLON_ESSAI_CI").is_some(),
             trial_steps: Vec::new(),
             stats: None,
             frontmost: None,
@@ -374,10 +387,35 @@ impl App {
     }
 
     fn input(&self) -> Input {
+        let activity = self.user_activity();
         Input {
             cursor: self.cursor(),
             local_hour: local_hour(),
+            since_key: activity.map(|a| a.since_key as f32),
+            idle: activity.map(|a| a.idle as f32),
         }
+    }
+
+    /// Ce que fait l'utilisateur (voir `platform::user_activity`), demandé
+    /// au système deux fois par seconde au plus. Pas dans la CI : personne
+    /// n'y touche à la machine, les animaux y dormiraient tout l'essai.
+    fn user_activity(&self) -> Option<platform::UserActivity> {
+        if self.no_user {
+            return None;
+        }
+        let now = Instant::now();
+        if let Some((at, known)) = self.activity.get() {
+            let age = now.duration_since(at).as_secs_f64();
+            if age < 0.5 {
+                return Some(platform::UserActivity {
+                    since_key: known.since_key + age,
+                    idle: known.idle + age,
+                });
+            }
+        }
+        let fresh = platform::user_activity();
+        self.activity.set(fresh.map(|a| (now, a)));
+        fresh
     }
 
     fn refresh_screens(&mut self, event_loop: &ActiveEventLoop) {
@@ -728,38 +766,41 @@ impl App {
     /// Les images d'une espèce sont compressées : ses fenêtres prennent le
     /// dessin compressé, et le GPU oublie les images d'avant.
     fn art_compressed(&mut self, id: &str) {
-        let Some(entry) = self.library.pets.iter().find(|e| e.def.meta.id == id) else {
-            return;
-        };
-        // La bibliothèque a pu être rechargée entre-temps : jamais de décodage
-        // ici, sur le fil de l'affichage.
-        if !entry.art_ready() {
+        // Toutes les tailles de l'espèce dont le dessin est prêt (la
+        // bibliothèque a pu être rechargée entre-temps : jamais de décodage
+        // ici, sur le fil de l'affichage).
+        let ready: Vec<(Arc<mouflon_core::PetDef>, Arc<PetArt>)> = self
+            .library
+            .sizes_of(id)
+            .filter(|entry| entry.art_ready())
+            .filter_map(|entry| Some((Arc::clone(&entry.def), entry.art()?)))
+            .collect();
+        if ready.is_empty() {
             return;
         }
-        let Some(art) = entry.art() else {
-            return;
-        };
         let pets = self.flock.pets();
         let mut swapped = 0;
-        for pw in self.windows.values_mut() {
-            let same = pets
-                .iter()
-                .any(|p| p.id() == pw.pet && Arc::ptr_eq(p.def(), &entry.def));
-            if same && !Arc::ptr_eq(&pw.art, &art) {
-                pw.art = Arc::clone(&art);
-                // Redessinée à la prochaine image, avec les images compressées.
-                pw.sprite = None;
-                swapped += 1;
+        for (def, art) in &ready {
+            for pw in self.windows.values_mut() {
+                let same = pets
+                    .iter()
+                    .any(|p| p.id() == pw.pet && Arc::ptr_eq(p.def(), def));
+                if same && !Arc::ptr_eq(&pw.art, art) {
+                    pw.art = Arc::clone(art);
+                    // Redessinée à la prochaine image, avec les images compressées.
+                    pw.sprite = None;
+                    swapped += 1;
+                }
             }
         }
         if let Some(gpu) = self.gpu.as_mut() {
             gpu.forget_unused_images();
         }
         if let Some(stats) = &self.stats {
+            let bytes: usize = ready.iter().map(|(_, art)| art.image_bytes()).sum();
             stats.note(format_args!(
-                "images de {} compressées ({:.1} Mo, {swapped} fenêtre(s))",
-                entry.def.meta.name,
-                art.image_bytes() as f64 / 1e6
+                "images de {id} compressées ({:.1} Mo, {swapped} fenêtre(s))",
+                bytes as f64 / 1e6
             ));
         }
         // Les images d'origine sont libérées : leurs pages retournent au
@@ -823,9 +864,7 @@ impl App {
                 // animal déjà affiché de la même espèce (personnages secondaires).
                 let art = self
                     .library
-                    .pets
-                    .iter()
-                    .find(|e| Arc::ptr_eq(&e.def, p.def()))
+                    .entry_of(p.def())
                     .and_then(crate::library::Entry::art)
                     .or_else(|| {
                         self.windows
@@ -1138,13 +1177,29 @@ impl App {
         self.pointer = Pointer::default();
     }
 
-    /// Change la taille de tous les animaux, sans les interrompre.
+    /// Taille d'un animal : la sienne s'il en a une à lui, celle de tous sinon.
+    fn size_of(&self, pet: &Pet) -> f32 {
+        self.library
+            .entry_of(pet.def())
+            .map_or(self.library.size(), |entry| entry.size)
+    }
+
+    /// Change la taille de tous les animaux (ceux qui en avaient une à eux
+    /// compris), sans les interrompre.
     fn set_size(&mut self, index: usize) {
         let size = crate::settings::SIZES[index.min(crate::settings::SIZES.len() - 1)];
-        let old = self.settings.size_factor();
-        if (size - old).abs() < f32::EPSILON {
+        let before: HashMap<u32, f32> = self
+            .flock
+            .pets()
+            .iter()
+            .map(|pet| (pet.id(), self.size_of(pet)))
+            .collect();
+        let unchanged = (size - self.settings.size_factor()).abs() < f32::EPSILON
+            && before.values().all(|s| (s - size).abs() < 1e-3);
+        if unchanged {
             return;
         }
+        self.resizing.clear();
         self.settings.size = size;
         if let Some(paths) = &self.paths {
             self.settings.save(&paths.settings);
@@ -1168,6 +1223,7 @@ impl App {
         });
         let mut gone = Vec::new();
         for pet in self.flock.pets_mut() {
+            let old = before.get(&pet.id()).copied().unwrap_or(size);
             let resized = self
                 .library
                 .current(pet.def())
@@ -1181,41 +1237,151 @@ impl App {
             self.flock.remove(id);
         }
         // Chaque fenêtre prend tout de suite la nouvelle taille, sans se fermer.
-        for pw in self.windows.values_mut() {
-            let Some(pet) = self.flock.pets().iter().find(|p| p.id() == pw.pet) else {
-                continue;
-            };
-            let Some(art) = self
-                .library
-                .pets
-                .iter()
-                .find(|e| Arc::ptr_eq(&e.def, pet.def()))
-                .and_then(crate::library::Entry::art)
-            else {
-                continue;
-            };
-            pw.canvas = art.canvas();
-            if let Some((front, back)) = art.reach()
-                && let Some(pet) = self.flock.get_mut(pw.pet)
-            {
-                pet.set_reach(front, back);
-            }
-            pw.art = art;
-            let requested =
-                LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));
-            if let Some(size) = pw.window.request_inner_size(requested)
-                && let Some(gpu) = self.gpu.as_ref()
-            {
-                gpu.resize(&mut pw.surface, size.width, size.height);
-            }
-            pw.position = None;
-            pw.last_render = None;
-            pw.sprite = None;
+        let refits: Vec<(u32, Arc<PetArt>)> = self
+            .flock
+            .pets()
+            .iter()
+            .filter_map(|pet| {
+                let art = self
+                    .library
+                    .entry_of(pet.def())
+                    .and_then(crate::library::Entry::art)?;
+                Some((pet.id(), art))
+            })
+            .collect();
+        for (pet, art) in refits {
+            self.refit_window(pet, art);
+        }
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.forget_unused_images();
         }
         log::info!(
             "taille des animaux : × {size} ({} à l'écran)",
             self.flock.pets().len()
         );
+    }
+
+    /// La fenêtre d'un animal prend son nouveau dessin (une autre taille),
+    /// sans se fermer.
+    fn refit_window(&mut self, pet: u32, art: Arc<PetArt>) {
+        let Some(pw) = self.windows.values_mut().find(|w| w.pet == pet) else {
+            return;
+        };
+        pw.canvas = art.canvas();
+        if let Some((front, back)) = art.reach()
+            && let Some(pet) = self.flock.get_mut(pet)
+        {
+            pet.set_reach(front, back);
+        }
+        pw.art = art;
+        let requested = LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));
+        if let Some(size) = pw.window.request_inner_size(requested)
+            && let Some(gpu) = self.gpu.as_ref()
+        {
+            gpu.resize(&mut pw.surface, size.width, size.height);
+        }
+        pw.position = None;
+        pw.last_render = None;
+        pw.sprite = None;
+    }
+
+    /// Change la taille d'un seul animal (son menu). Son dessin à cette
+    /// taille se prépare sur un fil à part s'il ne l'est pas déjà : les
+    /// animaux continuent de bouger, et il grandit (ou rapetisse) dès que
+    /// c'est prêt (`UserEvent::PetSizeReady`).
+    fn set_pet_size(&mut self, id: u32, index: usize) {
+        let index = index.min(crate::settings::SIZES.len() - 1);
+        let size = crate::settings::SIZES[index];
+        let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
+            return;
+        };
+        if (self.size_of(pet) - size).abs() < 1e-3 {
+            return;
+        }
+        let species = pet.def().meta.id.clone();
+        let Some(entry) = self
+            .library
+            .pets
+            .iter()
+            .position(|e| e.def.meta.id == species)
+            .and_then(|i| self.library.at_size(i, size))
+        else {
+            return;
+        };
+        self.resizing.retain(|(pet, _)| *pet != id);
+        if entry.art_ready() {
+            self.apply_pet_size(id, &entry);
+            return;
+        }
+        self.resizing.push((id, entry.clone()));
+        let job = (entry, Arc::clone(&self.proxy));
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-dessins".into())
+            .spawn(move || {
+                let (entry, proxy) = job;
+                let _ = entry.art();
+                if let Ok(proxy) = proxy.lock() {
+                    let _ = proxy.send_event(UserEvent::PetSizeReady(id, index));
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("dessin préparé sur le fil principal : {e}");
+            self.pet_size_ready(id, index);
+        }
+    }
+
+    /// Le dessin attendu par un animal pour sa nouvelle taille est prêt.
+    fn pet_size_ready(&mut self, id: u32, index: usize) {
+        let size = crate::settings::SIZES[index.min(crate::settings::SIZES.len() - 1)];
+        // Toujours voulu (une autre taille a pu être choisie entre-temps) ?
+        let Some(at) = self
+            .resizing
+            .iter()
+            .position(|(pet, entry)| *pet == id && (entry.size - size).abs() < 1e-3)
+        else {
+            return;
+        };
+        let (_, entry) = self.resizing.remove(at);
+        self.apply_pet_size(id, &entry);
+    }
+
+    fn apply_pet_size(&mut self, id: u32, entry: &Entry) {
+        let Some(art) = entry.art() else {
+            return;
+        };
+        let Some(old) = self
+            .flock
+            .pets()
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|pet| self.size_of(pet))
+        else {
+            return;
+        };
+        let rescaled = self
+            .flock
+            .get_mut(id)
+            .is_some_and(|pet| pet.rescale(Arc::clone(&entry.def), entry.size / old));
+        if !rescaled {
+            return;
+        }
+        self.refit_window(id, art);
+        self.compress_later(entry);
+        // Les tailles dont plus personne ne se sert sont oubliées, et leurs
+        // images avec.
+        let used: Vec<Arc<mouflon_core::PetDef>> = self
+            .flock
+            .pets()
+            .iter()
+            .map(|p| Arc::clone(p.def()))
+            .chain(self.resizing.iter().map(|(_, e)| Arc::clone(&e.def)))
+            .collect();
+        self.library
+            .forget_unused_sizes(|def| used.iter().any(|u| Arc::ptr_eq(u, def)));
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.forget_unused_images();
+        }
+        log::info!("n° {id} : taille × {}", entry.size);
     }
 
     fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
@@ -1249,6 +1415,7 @@ impl App {
                 self.set_size(index);
                 self.sync_windows(event_loop);
             }
+            Action::SetPetSize(pet, index) => self.set_pet_size(pet, index),
             Action::SetCollisions(on) => self.set_collisions(on),
             Action::SetRealisticPhysics(on) => self.set_realistic_physics(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
@@ -1447,7 +1614,7 @@ impl App {
         let state = PetMenuState {
             paused: self.paused,
             sounds: self.settings.sounds,
-            size: self.settings.size_index(),
+            size: crate::settings::size_index_of(self.size_of(pet)),
         };
         let items = crate::menu::pet_menu(&name, state, crate::i18n::texts());
         self.menu_pet = Some((id, species));
@@ -1961,6 +2128,9 @@ fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
         PetEvent::Thrown { speed } => format!("lancé à {speed:.0} pt/s"),
         PetEvent::Bumped { speed } => format!("heurté, repart à {speed:.0} pt/s"),
         PetEvent::Met { other } => format!("rencontre n° {other}"),
+        PetEvent::Startled => "sursaute (pointeur rapide)".to_owned(),
+        PetEvent::Napping => "s'endort (utilisateur parti)".to_owned(),
+        PetEvent::Woken => "se réveille (utilisateur revenu)".to_owned(),
         PetEvent::Sound { sound, clip } => format!(
             "son {} ({})",
             pet.def()
@@ -2237,6 +2407,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Frame => "battement",
             UserEvent::ArtReady(_) => "dessin prêt",
             UserEvent::ArtCompressed(_) => "images compressées",
+            UserEvent::PetSizeReady(..) => "dessin à une autre taille prêt",
             UserEvent::Ui(_) => "menu d'un animal ou réglages",
         };
         if let Some(stats) = &mut self.stats {
@@ -2268,6 +2439,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
             UserEvent::ArtCompressed(id) => self.art_compressed(&id),
+            UserEvent::PetSizeReady(pet, index) => self.pet_size_ready(pet, index),
             UserEvent::Ui(platform::UiEvent::MenuClosed) => {
                 // L'animal du menu repart d'où il était.
                 self.flock.hold_still(None);

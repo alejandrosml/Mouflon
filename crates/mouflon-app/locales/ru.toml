@@ -15,6 +15,7 @@ quit = "Завершить Mouflon"
 
 # Меню питомца (правый клик)
 goodbye_named = "Попрощаться: {name}"
+size_named = "Размер: {name}"
 size = "Размер"
 size_small = "Маленький"
 size_normal = "Обычный"
@@ -24,6 +25,7 @@ size_huge = "Очень большой"
 # Окно настроек
 settings_title = "Настройки Mouflon"
 pets_section = "Питомцы"
+size_help = "Для всех питомцев. Щелчок правой кнопкой по питомцу меняет размер только у него."
 pet_sounds = "Звуки питомцев"
 walks_section = "Где они гуляют"
 collisions = "Столкновения питомцев"

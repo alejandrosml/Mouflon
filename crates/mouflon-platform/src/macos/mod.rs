@@ -36,9 +36,10 @@ use objc2_core_foundation::{
     CGSize,
 };
 use objc2_core_graphics::{
-    CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
-    kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer,
-    kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
+    CGEventSource, CGEventSourceStateID, CGEventType, CGRectMakeWithDictionaryRepresentation,
+    CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID, kCGWindowAlpha,
+    kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerName,
+    kCGWindowOwnerPID,
 };
 use objc2_foundation::{
     NSKeyValueObservingOptions, NSLocale, NSObject, NSObjectNSKeyValueObserverRegistration,
@@ -212,6 +213,22 @@ pub fn cursor_position() -> Option<(f64, f64)> {
     let primary = primary_height(mtm)?;
     let p = NSEvent::mouseLocation();
     Some((p.x, primary - p.y))
+}
+
+/// Depuis quand l'utilisateur n'a rien frappé au clavier, et rien fait du
+/// tout : ce que le système en dit à tous les programmes (le moment, jamais
+/// la touche ; sans autorisation particulière).
+#[must_use]
+pub fn user_activity() -> Option<crate::UserActivity> {
+    let state = CGEventSourceStateID::CombinedSessionState;
+    // `kCGAnyInputEventType` : (CGEventType)~0.
+    let any = CGEventType(u32::MAX);
+    let since_key = CGEventSource::seconds_since_last_event_type(state, CGEventType::KeyDown);
+    let idle = CGEventSource::seconds_since_last_event_type(state, any);
+    (since_key.is_finite() && idle.is_finite()).then_some(crate::UserActivity {
+        since_key: since_key.max(0.0),
+        idle: idle.max(0.0),
+    })
 }
 
 /// Images par seconde que l'écran d'une fenêtre sait afficher, au plus

@@ -75,7 +75,16 @@ Les poids sont relatifs : `weight = 4` contre `weight = 1` donne quatre
 chances sur cinq. Une transition dont la condition est fausse est ignorée.
 
 Conditions (`when`, une seule ou une liste) : `on_window`, `on_floor`,
-`night` (22 h – 6 h), `day`, `cursor_near:220`, `cursor_far:220` (rayon en points).
+`night` (22 h – 6 h), `day`, `morning` (6 h – 11 h), `evening` (18 h – 22 h),
+`cursor_near:220`, `cursor_far:220` (rayon en points), `typing` (l'utilisateur
+tape au clavier : une touche il y a moins de 3 s), `away` (personne au clavier,
+à la souris ni au trackpad depuis 3 minutes), `present` (le contraire).
+Mouflon sait *quand* une touche est frappée, jamais *laquelle* : le système le
+dit à tous les programmes, sans autorisation.
+
+Un comportement où l'animal dort (ou s'endort) le dit avec `sleep = true`
+(implicite pour `motion = "sleep"`) : l'utilisateur qui revient le réveille, et
+un pointeur qui file ne le fait pas sursauter.
 
 ## Réflexes
 
@@ -97,7 +106,14 @@ meet = "greet"                # rencontre un autre animal en chemin (hors mode c
 window_side = "turn"          # le côté d'une fenêtre lui barre le chemin
 leave = "wave"                # au revoir (« Tout retirer ») : il le joue, puis s'efface
 together = "hop"              # « Tous ensemble » : tous les animaux le jouent en même temps
+startle = "surprise"          # le pointeur file tout près de lui (plus de 1 400 pt/s)
+sleepy = "yawn"               # l'utilisateur est parti : il s'installe pour dormir
+wake = "wake_up"              # l'utilisateur revient pendant qu'il dort (sinon : la suite de son sommeil)
 ```
+
+Les animaux s'endorment l'un après l'autre (dans les 40 s) quand
+l'utilisateur part, se rendorment s'ils se réveillent avant son retour, et
+se réveillent dans les deux secondes quand il revient.
 
 Sans `meet`, deux animaux qui se croisent passent l'un devant l'autre ;
 sans `window_side`, l'animal passe devant la fenêtre ; sans `leave`, il
@@ -371,3 +387,16 @@ broute = "sons/broute.mp3"
 eat = "broute"
 drag = { name = "bele", chance = 0.5 }
 ```
+
+Il peut aussi donner aux animations du fichier les réactions de Mouflon
+que desktopPet ne connaît pas (`startle`, `sleepy`, `wake`, `poke`, voir les
+réflexes) :
+
+```toml
+[desktoppet.reactions]
+startle = "jump"              # le pointeur file tout près : il bondit
+sleepy = "sleep1a"            # l'utilisateur est parti : il s'endort
+```
+
+Sans `sleepy`, un animal desktopPet s'endort avec sa première animation de
+sommeil (`sleep1a`) ; réveillé, il passe à la suite (`sleep1b`).

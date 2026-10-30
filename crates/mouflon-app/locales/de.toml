@@ -15,6 +15,7 @@ quit = "Mouflon beenden"
 
 # Menü eines Tiers (Rechtsklick)
 goodbye_named = "{name} verabschieden"
+size_named = "Größe von {name}"
 size = "Größe"
 size_small = "Klein"
 size_normal = "Normal"
@@ -24,6 +25,7 @@ size_huge = "Sehr groß"
 # Fenster „Einstellungen“
 settings_title = "Mouflon-Einstellungen"
 pets_section = "Tiere"
+size_help = "Für alle Tiere. Ein Rechtsklick auf ein Tier ändert nur dessen Größe."
 pet_sounds = "Töne der Tiere"
 walks_section = "Wo sie laufen"
 collisions = "Kollisionen zwischen Tieren"

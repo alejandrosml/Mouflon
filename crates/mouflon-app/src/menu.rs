@@ -31,8 +31,10 @@ pub enum Action {
     SetPaused(bool),
     /// Les animaux font entendre leurs sons, ou se taisent.
     SetSounds(bool),
-    /// Taille des animaux : rang dans [`crate::settings::SIZES`].
+    /// Taille de tous les animaux : rang dans [`crate::settings::SIZES`].
     SetSize(usize),
+    /// Taille de cet animal-là (son numéro) seulement.
+    SetPetSize(u32, usize),
     SetCollisions(bool),
     SetRealisticPhysics(bool),
     SetFrontmostOnly(bool),
@@ -112,7 +114,7 @@ impl PetChoice {
         Some(match self {
             Self::Goodbye => Action::Goodbye(pet),
             Self::AddSame => Action::Add(species?),
-            Self::Size(i) => Action::SetSize(i),
+            Self::Size(i) => Action::SetPetSize(pet, i),
             Self::Sounds(on) => Action::SetSounds(on),
             Self::Pause(on) => Action::SetPaused(on),
             Self::Settings => Action::OpenSettings,
@@ -120,17 +122,18 @@ impl PetChoice {
     }
 }
 
-/// Ce que le menu d'un animal montre de l'état de l'app.
+/// Ce que le menu d'un animal montre de lui et de l'état de l'app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PetMenuState {
     pub paused: bool,
     pub sounds: bool,
-    /// Rang de la taille dans [`crate::settings::SIZES`].
+    /// Rang de sa taille à lui dans [`crate::settings::SIZES`].
     pub size: usize,
 }
 
-/// Le menu d'un animal (clic droit) : son nom, ce qu'on peut faire de lui,
-/// puis les réglages qu'on change le plus, comme dans la barre des menus.
+/// Le menu d'un animal (clic droit) : son nom, ce qu'on peut faire de lui
+/// (dont sa taille, à lui seul), puis les réglages qu'on change le plus,
+/// comme dans la barre des menus.
 #[must_use]
 pub fn pet_menu(name: &str, state: PetMenuState, t: &Texts) -> Vec<PopupItem> {
     let item = |choice: PetChoice, label: &str, checked: bool| PopupItem::Item {
@@ -157,11 +160,11 @@ pub fn pet_menu(name: &str, state: PetMenuState, t: &Texts) -> Vec<PopupItem> {
             &t.add_named.replace("{name}", name),
             false,
         ),
-        PopupItem::Separator,
         PopupItem::Submenu {
-            label: t.size.clone(),
+            label: t.size_named.replace("{name}", name),
             items: sizes,
         },
+        PopupItem::Separator,
         item(PetChoice::Sounds(!state.sounds), &t.sounds, state.sounds),
         item(PetChoice::Pause(!state.paused), pause, false),
         PopupItem::Separator,
@@ -475,7 +478,11 @@ mod tests {
         assert_eq!(PetChoice::AddSame.action(7, Some(2)), Some(Action::Add(2)));
         // L'espèce n'est plus dans la bibliothèque : rien à ajouter.
         assert_eq!(PetChoice::AddSame.action(7, None), None);
-        assert_eq!(PetChoice::Size(3).action(7, None), Some(Action::SetSize(3)));
+        // Sa taille à lui seul.
+        assert_eq!(
+            PetChoice::Size(3).action(7, None),
+            Some(Action::SetPetSize(7, 3))
+        );
         assert_eq!(
             PetChoice::Settings.action(7, None),
             Some(Action::OpenSettings)

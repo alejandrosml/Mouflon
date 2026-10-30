@@ -31,6 +31,20 @@ pub const SLOW_RATE: f32 = 60.0;
 pub const RUN_STRIDE: f32 = 1.2;
 const MAX_PARTICLES: usize = 64;
 
+/// Une touche frappée il y a moins de ceci (secondes) : l'utilisateur tape.
+pub const TYPING_WINDOW: f32 = 3.0;
+/// Rien touché depuis ceci (secondes) : l'utilisateur est parti.
+pub const AWAY_AFTER: f32 = 180.0;
+/// Un pointeur plus rapide que ceci (points par seconde) qui frôle un animal
+/// le fait sursauter.
+pub const STARTLE_SPEED: f32 = 1400.0;
+/// Pause entre deux sursauts d'un même animal (secondes).
+const STARTLE_COOLDOWN: f32 = 8.0;
+/// Parti, l'utilisateur laisse les animaux s'endormir l'un après l'autre,
+/// dans ce délai (secondes) ; réveillé avant la fin, l'un se rendort au
+/// bout d'un moment.
+const NAP_SPREAD: f32 = 40.0;
+
 /// Ce que l'animal perçoit de l'extérieur à chaque pas.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Input {
@@ -38,6 +52,26 @@ pub struct Input {
     pub cursor: Option<Vec2>,
     /// Heure locale décimale (0–24).
     pub local_hour: f32,
+    /// Secondes depuis la dernière touche frappée (laquelle, Mouflon ne le
+    /// sait pas) ; `None` : inconnu.
+    pub since_key: Option<f32>,
+    /// Secondes depuis le dernier geste de l'utilisateur (clavier, souris,
+    /// trackpad) ; `None` : inconnu.
+    pub idle: Option<f32>,
+}
+
+impl Input {
+    /// L'utilisateur tape-t-il au clavier ?
+    #[must_use]
+    pub fn typing(&self) -> bool {
+        self.since_key.is_some_and(|s| s < TYPING_WINDOW)
+    }
+
+    /// L'utilisateur est-il parti ?
+    #[must_use]
+    pub fn away(&self) -> bool {
+        self.idle.is_some_and(|s| s >= AWAY_AFTER)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +103,12 @@ pub enum PetEvent {
         sound: usize,
         clip: usize,
     },
+    /// Le pointeur l'a frôlé à toute vitesse : il sursaute.
+    Startled,
+    /// L'utilisateur est parti : il s'endort.
+    Napping,
+    /// L'utilisateur est revenu : il se réveille.
+    Woken,
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
@@ -354,6 +394,12 @@ pub struct Pet {
     slide: f32,
     /// Temps avant de pouvoir être heurté de nouveau.
     bump_cooldown: f32,
+    /// Pause avant de pouvoir sursauter de nouveau (secondes).
+    startle_cooldown: f32,
+    /// Dans combien de temps il s'endort (l'utilisateur est parti).
+    nap_in: Option<f32>,
+    /// Dans combien de temps il se réveille (l'utilisateur est revenu).
+    wake_in: Option<f32>,
     /// Distance du point d'appui au bout de son dessin, devant et derrière
     /// (points) : les collisions partent quand les dessins se touchent.
     /// Sans elle, la moitié de la largeur de l'animal, des deux côtés.
@@ -651,6 +697,9 @@ impl Pet {
             knocked: false,
             slide: 0.0,
             bump_cooldown: 0.0,
+            startle_cooldown: 0.0,
+            nap_in: None,
+            wake_in: None,
             reach: None,
             meet_cooldown: 0.0,
             leaving: None,
@@ -1146,6 +1195,107 @@ impl Pet {
         }
     }
 
+    // -------------------------------------------------------------- humeurs
+
+    /// Dort-il (ou s'endort-il) ?
+    #[must_use]
+    pub fn is_asleep(&self) -> bool {
+        let behavior = &self.def.behaviors[self.behavior];
+        behavior.sleeping || behavior.motion == Motion::Sleep
+    }
+
+    /// Peut-il réagir à ce que fait l'utilisateur (sursauter, s'endormir) ?
+    /// Posé, à lui, et pas en train de partir.
+    fn can_react(&self) -> bool {
+        matches!(self.support, Support::Ground { .. })
+            && !self.is_child()
+            && self.leaving.is_none()
+            && !self.finished
+    }
+
+    /// Le pointeur vient de le frôler à toute vitesse, entre `from` et `to`.
+    fn startle(&mut self, from: Vec2, to: Vec2, world: &World, input: &Input) {
+        if self.startle_cooldown > 0.0 || !self.can_react() || self.is_asleep() {
+            return;
+        }
+        let p = self.def.physics;
+        let center = self.pos - Vec2::new(0.0, p.height * 0.5);
+        let reach = p.height * 1.1 + p.width * 0.3;
+        if distance_to_segment(center, from, to) > reach {
+            return;
+        }
+        self.startle_cooldown = STARTLE_COOLDOWN;
+        // Pas à chaque fois : certains ne lèvent même pas la tête.
+        if !self.rng.chance(0.7) {
+            return;
+        }
+        self.events.push(PetEvent::Startled);
+        self.squash_kick(0.6);
+        self.anim.ear.kick(-5.0);
+        let def = Arc::clone(&self.def);
+        if let Some(next) = self.choose(&def.reflexes.startle, world, input) {
+            self.enter(next);
+        }
+    }
+
+    /// L'utilisateur part (`away`) ou revient : il s'endort bientôt, ou se
+    /// réveille s'il dormait.
+    fn user_away(&mut self, away: bool) {
+        if away {
+            self.wake_in = None;
+            if !self.is_asleep() {
+                self.nap_in = Some(self.rng.range(1.0, NAP_SPREAD));
+            }
+        } else {
+            self.nap_in = None;
+            if self.is_asleep() {
+                self.wake_in = Some(self.rng.range(0.2, 1.8));
+            }
+        }
+    }
+
+    /// Les humeurs que lui donne l'utilisateur : il s'endort quand il est
+    /// parti (et se rendort s'il s'est réveillé entre-temps), se réveille
+    /// quand il revient.
+    fn step_moods(&mut self, dt: f32, world: &World, input: &Input) {
+        if let Some(left) = &mut self.nap_in {
+            *left -= dt;
+            if *left <= 0.0 {
+                self.nap_in = None;
+                if self.can_react() && !self.is_asleep() {
+                    let def = Arc::clone(&self.def);
+                    if let Some(next) = self.choose(&def.reflexes.sleepy, world, input) {
+                        self.events.push(PetEvent::Napping);
+                        self.enter(next);
+                    }
+                }
+            }
+        } else if input.away() && !self.is_asleep() && self.can_react() {
+            // Réveillé pendant que l'utilisateur est toujours parti : il se
+            // rendort un peu plus tard.
+            self.nap_in = Some(self.rng.range(NAP_SPREAD * 0.5, NAP_SPREAD * 1.5));
+        }
+        if let Some(left) = &mut self.wake_in {
+            *left -= dt;
+            if *left <= 0.0 {
+                self.wake_in = None;
+                if self.is_asleep() && self.leaving.is_none() {
+                    let def = Arc::clone(&self.def);
+                    let own = &def.behaviors[self.behavior].next;
+                    let list = if def.reflexes.wake.is_empty() {
+                        own
+                    } else {
+                        &def.reflexes.wake
+                    };
+                    if let Some(next) = self.choose(list, world, input) {
+                        self.events.push(PetEvent::Woken);
+                        self.enter(next);
+                    }
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------- simulation
 
     pub fn step(&mut self, dt: f32, world: &World, input: &Input) {
@@ -1168,6 +1318,8 @@ impl Pet {
         self.prev_pos = self.pos;
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
+        self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
+        self.step_moods(dt, world, input);
         if let Some(leaving) = &mut self.leaving {
             leaving.time += dt;
             if leaving.fade.is_none() && leaving.time >= LEAVE_MAX {
@@ -1737,6 +1889,11 @@ impl Pet {
             Condition::CursorNear(r) => cursor_dist.is_some_and(|d| d <= r),
             Condition::CursorFar(r) => cursor_dist.is_none_or(|d| d > r),
             Condition::Grounded => surface_kind.is_some(),
+            Condition::Typing => input.typing(),
+            Condition::Away => input.away(),
+            Condition::Present => !input.away(),
+            Condition::Morning => (6.0..11.0).contains(&input.local_hour),
+            Condition::Evening => (18.0..22.0).contains(&input.local_hour),
         }
     }
 
@@ -2197,6 +2354,22 @@ pub struct Flock {
     realistic: bool,
     tracker: Tracker,
     backs: Vec<Back>,
+    /// L'utilisateur est parti (voir [`Input::away`]).
+    away: bool,
+    /// Le pointeur au dernier [`Flock::advance`].
+    last_cursor: Option<Vec2>,
+}
+
+/// Distance d'un point au segment `[a, b]`.
+fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    let t = if len2 > 0.0 {
+        ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p - (a + ab * t)).length()
 }
 
 /// Élans donnés à deux animaux qui se rentrent dedans, ou rien.
@@ -2511,6 +2684,7 @@ impl Flock {
     /// Avance la simulation du temps écoulé et renvoie le facteur
     /// d'interpolation à passer à [`Pet::view`].
     pub fn advance(&mut self, elapsed: f32, world: &World, input: &Input) -> f32 {
+        self.react(elapsed, world, input);
         // Au-delà d'un dixième de seconde (Mac réveillé, débogueur…), on ne
         // rattrape pas : l'animal reprend où il était au lieu de bondir.
         self.accumulator += elapsed.clamp(0.0, 0.1);
@@ -2533,6 +2707,33 @@ impl Flock {
             self.accumulator -= TICK;
         }
         self.accumulator / TICK
+    }
+
+    /// Ce que fait l'utilisateur, vu par tout le troupeau : un pointeur qui
+    /// file près d'un animal le fait sursauter ; parti, il les laisse
+    /// s'endormir ; de retour, il les réveille.
+    fn react(&mut self, elapsed: f32, world: &World, input: &Input) {
+        let away = input.away();
+        if away != self.away {
+            self.away = away;
+            for pet in &mut self.pets {
+                pet.user_away(away);
+            }
+        }
+        let from = self.last_cursor;
+        self.last_cursor = input.cursor;
+        let (Some(from), Some(to)) = (from, input.cursor) else {
+            return;
+        };
+        let speed = (to - from).length() / elapsed.max(1.0 / 240.0);
+        if elapsed <= 0.0 || speed < STARTLE_SPEED {
+            return;
+        }
+        for pet in &mut self.pets {
+            if self.still != Some(pet.id) {
+                pet.startle(from, to, world, input);
+            }
+        }
     }
 
     /// Un pas en physique réaliste : le suivi des fenêtres (et les dos des
@@ -2778,6 +2979,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK) as usize {
             pet.step(TICK, world, &input);
@@ -3370,6 +3572,7 @@ mod tests {
             let input = Input {
                 cursor: Some(Vec2::new(700.0, 700.0)),
                 local_hour: if t > minutes * 30.0 { 23.0 } else { 15.0 },
+                ..Input::default()
             };
             flock.advance(TICK, &world, &input);
             for pet in flock.pets() {
@@ -3418,6 +3621,163 @@ mod tests {
             .map(|b| b.name.as_str())
             .filter(|n| !seconds_in.contains_key(*n))
             .collect()
+    }
+
+    fn bundled(name: &str) -> Arc<PetDef> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../pets/{name}/pet.toml"));
+        Arc::new(crate::format::load_pet(&path).unwrap())
+    }
+
+    /// Un troupeau de Lainou au repos sur le sol, côte à côte.
+    fn resting_flock(def: &Arc<PetDef>, count: u32, behavior: &str) -> (Flock, World) {
+        let world = world();
+        let mut flock = Flock::new();
+        for i in 0..count {
+            let id = flock.spawn(Arc::clone(def), u64::from(i) * 31 + 7, &world, None);
+            let floor = *world.floor_under(300.0).unwrap();
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos = Vec2::new(200.0 + 150.0 * i as f32, floor.y);
+            pet.prev_pos = pet.pos;
+            pet.set_ground(&floor);
+            assert!(pet.force(behavior));
+        }
+        (flock, world)
+    }
+
+    #[test]
+    fn a_rushing_cursor_startles_the_pets_it_brushes_past() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 8, "repos");
+        let y = flock.pets()[0].position().y - 25.0;
+        // Lent, ou loin : rien.
+        let slow = |x: f32| Input {
+            cursor: Some(Vec2::new(x, y)),
+            ..Input::default()
+        };
+        for step in 0..200 {
+            flock.advance(TICK, &world, &slow(100.0 + step as f32 * 2.0));
+        }
+        let far = |x: f32| Input {
+            cursor: Some(Vec2::new(x, y - 400.0)),
+            ..Input::default()
+        };
+        for step in 0..60 {
+            flock.advance(TICK, &world, &far(step as f32 * 40.0));
+        }
+        assert!(
+            flock.pets().iter().all(|p| p.behavior_name() != "surpris"),
+            "personne ne sursaute"
+        );
+        // Un geste vif qui les frôle tous (4 800 pt/s) : la plupart sursautent.
+        for step in 0..40 {
+            flock.advance(
+                TICK,
+                &world,
+                &Input {
+                    cursor: Some(Vec2::new(100.0 + step as f32 * 40.0, y)),
+                    ..Input::default()
+                },
+            );
+        }
+        let startled = flock
+            .pets()
+            .iter()
+            .filter(|p| matches!(p.behavior_name(), "surpris" | "bele"))
+            .count();
+        assert!(startled >= 3, "{startled} sur 8");
+        let events: Vec<PetEvent> = flock
+            .pets_mut()
+            .iter_mut()
+            .flat_map(Pet::take_events)
+            .collect();
+        assert!(events.contains(&PetEvent::Startled));
+    }
+
+    #[test]
+    fn pets_doze_off_when_the_user_is_away_and_wake_up_when_back() {
+        for name in ["lainou", "pelote"] {
+            let def = bundled(name);
+            let ground = if name == "lainou" { "repos" } else { "walk" };
+            let (mut flock, world) = resting_flock(&def, 3, ground);
+            // En plein après-midi : la nuit, ils s'endorment d'eux-mêmes.
+            let away = Input {
+                idle: Some(AWAY_AFTER + 1.0),
+                since_key: Some(AWAY_AFTER + 1.0),
+                local_hour: 15.0,
+                ..Input::default()
+            };
+            let mut asleep = false;
+            for _ in 0..((NAP_SPREAD + 20.0) / TICK) as usize {
+                flock.advance(TICK, &world, &away);
+                asleep = flock.pets().iter().all(Pet::is_asleep);
+                if asleep {
+                    break;
+                }
+            }
+            let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+            assert!(asleep, "{name} : tous endormis ({names:?})");
+            // Lainou dort tant que l'utilisateur n'est pas là (Pelote, lui,
+            // se réveille parfois et se rendort).
+            if name == "lainou" {
+                for _ in 0..(30.0 / TICK) as usize {
+                    flock.advance(TICK, &world, &away);
+                    assert!(flock.pets().iter().all(Pet::is_asleep), "{name}");
+                }
+            }
+            // Il revient : ils se réveillent en moins de deux secondes.
+            let back = Input {
+                idle: Some(0.1),
+                since_key: Some(5.0),
+                local_hour: 15.0,
+                ..Input::default()
+            };
+            for _ in 0..(2.0 / TICK) as usize {
+                flock.advance(TICK, &world, &back);
+            }
+            let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+            assert!(
+                flock.pets().iter().all(|p| !p.is_asleep()),
+                "{name} : réveillés ({names:?})"
+            );
+            let events: Vec<PetEvent> = flock
+                .pets_mut()
+                .iter_mut()
+                .flat_map(Pet::take_events)
+                .collect();
+            assert!(
+                events.contains(&PetEvent::Napping) && events.contains(&PetEvent::Woken),
+                "{name} : {:?}",
+                events
+                    .iter()
+                    .filter(|e| !matches!(e, PetEvent::Sound { .. }))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn typing_and_the_time_of_day_are_conditions() {
+        let world = world();
+        let pet = Pet::spawn(0, bundled("lainou"), 1, &world, Some(300.0));
+        let typing = Input {
+            since_key: Some(1.0),
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Typing, &world, &typing));
+        assert!(!pet.condition(Condition::Typing, &world, &Input::default()));
+        let morning = Input {
+            local_hour: 8.5,
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Morning, &world, &morning));
+        assert!(!pet.condition(Condition::Evening, &world, &morning));
+        let evening = Input {
+            local_hour: 19.0,
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Evening, &world, &evening));
+        assert!(!pet.condition(Condition::Away, &world, &evening));
     }
 
     #[test]
@@ -3576,6 +3936,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK).round() as usize {
             flock.advance(TICK, world, &input);

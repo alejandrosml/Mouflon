@@ -90,6 +90,8 @@ pub struct Texts {
     // Menu d'un animal (clic droit).
     /// « Dire au revoir à Lainou » : `{name}` est le nom de l'animal.
     pub goodbye_named: String,
+    /// « Taille de Lainou » : la taille de cet animal seulement.
+    pub size_named: String,
     pub size: String,
     pub size_small: String,
     pub size_normal: String,
@@ -98,6 +100,8 @@ pub struct Texts {
     // Fenêtre des réglages.
     pub settings_title: String,
     pub pets_section: String,
+    /// Sous le curseur de taille : il règle celle de tous les animaux.
+    pub size_help: String,
     pub pet_sounds: String,
     pub walks_section: String,
     pub collisions: String,
@@ -142,6 +146,7 @@ impl Texts {
             &self.about,
             &self.quit,
             &self.goodbye_named,
+            &self.size_named,
             &self.size,
             &self.size_small,
             &self.size_normal,
@@ -149,6 +154,7 @@ impl Texts {
             &self.size_huge,
             &self.settings_title,
             &self.pets_section,
+            &self.size_help,
             &self.pet_sounds,
             &self.walks_section,
             &self.collisions,
@@ -242,7 +248,7 @@ mod tests {
                 assert!(!text.trim().is_empty(), "{code} : texte vide");
             }
             assert!(texts.about.contains("Mouflon") && texts.quit.contains("Mouflon"));
-            for named in [&texts.add_named, &texts.goodbye_named] {
+            for named in [&texts.add_named, &texts.goodbye_named, &texts.size_named] {
                 assert!(
                     named.contains("{name}"),
                     "{code} : « {named} » sans {{name}}"

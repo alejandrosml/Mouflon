@@ -630,7 +630,25 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             }),
             children: own_children,
             sounds: Vec::new(),
+            // `sleep1a`, `sleep2a`… : il dort ; la suite (`sleep1b`) le réveille.
+            sleeping: names[i].contains("sleep"),
         });
+    }
+
+    // Une animation de sommeil qui ne vient qu'après une autre (`sleep1b`
+    // après `sleep1a`) est son réveil : l'animal n'y dort plus.
+    let waking: Vec<usize> = (0..behaviors.len())
+        .filter(|&i| behaviors[i].sleeping)
+        .filter(|&i| {
+            let mut from = behaviors
+                .iter()
+                .filter(|b| b.next.iter().any(|t| t.to == i))
+                .peekable();
+            from.peek().is_some() && from.all(|b| b.sleeping)
+        })
+        .collect();
+    for i in waking {
+        behaviors[i].sleeping = false;
     }
 
     // Animations réservées ; desktopPet se rabat sur l'animation 1.
@@ -668,6 +686,14 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         window_side: Vec::new(),
         leave: reserved("kill"),
         together: reserved("sync"),
+        startle: Vec::new(),
+        // L'utilisateur parti, il s'endort : la première animation de sommeil.
+        sleepy: named("sleep1a")
+            .or_else(|| raws.iter().position(|r| r.name.contains("sleep")))
+            .map(one)
+            .unwrap_or_default(),
+        // Réveillé : la suite de son sommeil (`sleep1a` → `sleep1b`).
+        wake: Vec::new(),
     };
     // L'animation `toss` de desktopPet fait déjà tourner l'animal sur lui-même.
     sheet.drawn.roll = named("toss").is_some();

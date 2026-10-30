@@ -15,6 +15,7 @@ quit = "Salir de Mouflon"
 
 # Menú de una mascota (clic derecho)
 goodbye_named = "Despedirse de {name}"
+size_named = "Tamaño de {name}"
 size = "Tamaño"
 size_small = "Pequeño"
 size_normal = "Normal"
@@ -24,6 +25,7 @@ size_huge = "Muy grande"
 # Ventana de ajustes
 settings_title = "Ajustes de Mouflon"
 pets_section = "Mascotas"
+size_help = "El de todas las mascotas. Con un clic derecho en una mascota, cambias solo el suyo."
 pet_sounds = "Sonidos de las mascotas"
 walks_section = "Por dónde caminan"
 collisions = "Colisiones entre mascotas"

@@ -28,8 +28,8 @@ pub use def::{
 pub use format::{LoadError, Resources, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};
 pub use pet::{
-    Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals,
-    RUN_STRIDE, SLOW_RATE, Shadow, Support, TICK,
+    AWAY_AFTER, Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView,
+    PoseSignals, RUN_STRIDE, SLOW_RATE, STARTLE_SPEED, Shadow, Support, TICK, TYPING_WINDOW,
 };
 pub use world::{
     DOCK_ID, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World, exact_dock,

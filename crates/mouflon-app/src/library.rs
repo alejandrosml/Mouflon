@@ -21,8 +21,10 @@ const MASCOTS: [&str; 3] = ["poete", "pelote", "lainou"];
 
 #[derive(Clone, Debug)]
 pub struct Entry {
-    /// L'animal à la taille choisie dans le menu.
+    /// L'animal à la taille de cette entrée.
     pub def: Arc<PetDef>,
+    /// Cette taille, par rapport à celle prévue par son fichier.
+    pub size: f32,
     /// L'animal à la taille prévue par son fichier.
     base: Arc<PetDef>,
     /// Dessin préparé à la première apparition : décoder des centaines
@@ -57,6 +59,7 @@ impl Entry {
         let base = Arc::new(def);
         Self {
             def: Arc::new(base.scaled(size)),
+            size,
             base,
             art: Arc::default(),
             images,
@@ -66,7 +69,25 @@ impl Entry {
     /// Met l'animal à une autre taille ; son dessin sera refait à la demande.
     fn resize(&mut self, size: f32) {
         self.def = Arc::new(self.base.scaled(size));
+        self.size = size;
         self.art = Arc::default();
+    }
+
+    /// La même espèce à une autre taille, avec son propre dessin (préparé à
+    /// la demande).
+    fn at_size(&self, size: f32) -> Self {
+        Self {
+            def: Arc::new(self.base.scaled(size)),
+            size,
+            base: Arc::clone(&self.base),
+            art: Arc::default(),
+            images: self.images.clone(),
+        }
+    }
+
+    /// Est-ce l'entrée de cette espèce à cette taille ?
+    fn is(&self, id: &str, size: f32) -> bool {
+        self.def.meta.id == id && (self.size - size).abs() < 1e-3
     }
 
     /// Le dessin de l'animal a-t-il déjà été préparé (ou trouvé illisible) ?
@@ -171,7 +192,11 @@ impl Entry {
 
 #[derive(Clone, Debug, Default)]
 pub struct Library {
+    /// Les espèces, à la taille de tous les animaux.
     pub pets: Vec<Entry>,
+    /// Les mêmes à d'autres tailles, choisies pour un animal depuis son
+    /// menu (oubliées quand plus personne ne s'en sert).
+    resized: Vec<Entry>,
     /// Dossier des animaux de l'utilisateur.
     dir: Option<PathBuf>,
     /// Images déjà prêtes.
@@ -312,19 +337,67 @@ impl Library {
         for entry in &mut self.pets {
             entry.resize(size);
         }
+        // Tous les animaux prennent cette taille : les autres ne servent plus.
+        self.resized.clear();
+    }
+
+    /// Taille de tous les animaux.
+    #[must_use]
+    pub fn size(&self) -> f32 {
+        self.size
     }
 
     /// L'animal de la bibliothèque dont `def` est une version (même
-    /// identifiant), à la taille courante.
+    /// identifiant), à la taille de tous les animaux.
     #[must_use]
     pub fn current(&self, def: &PetDef) -> Option<&Entry> {
         self.pets.iter().find(|e| e.def.meta.id == def.meta.id)
+    }
+
+    /// L'espèce `index` à cette taille : l'entrée de tous les animaux si
+    /// c'est la leur, sinon une autre, créée au besoin (son dessin se
+    /// prépare à la demande).
+    pub fn at_size(&mut self, index: usize, size: f32) -> Option<Entry> {
+        let entry = self.pets.get(index)?;
+        if entry.is(&entry.def.meta.id, size) {
+            return Some(entry.clone());
+        }
+        if let Some(found) = self.resized.iter().find(|e| e.is(&entry.def.meta.id, size)) {
+            return Some(found.clone());
+        }
+        let made = entry.at_size(size);
+        self.resized.push(made.clone());
+        Some(made)
+    }
+
+    /// L'entrée (à n'importe quelle taille) d'où vient cette définition.
+    #[must_use]
+    pub fn entry_of(&self, def: &Arc<PetDef>) -> Option<&Entry> {
+        self.pets
+            .iter()
+            .chain(&self.resized)
+            .find(|e| Arc::ptr_eq(&e.def, def))
+    }
+
+    /// Les entrées de cette espèce, à toutes les tailles.
+    pub fn sizes_of<'a>(&'a self, id: &'a str) -> impl Iterator<Item = &'a Entry> + 'a {
+        self.pets
+            .iter()
+            .chain(&self.resized)
+            .filter(move |e| e.def.meta.id == id)
+    }
+
+    /// Oublie les autres tailles dont plus aucun animal ne se sert (et
+    /// leurs dessins).
+    pub fn forget_unused_sizes(&mut self, used: impl Fn(&Arc<PetDef>) -> bool) {
+        self.resized.retain(|e| used(&e.def));
     }
 
     /// Recharge tout : l'animal intégré, le dossier de l'utilisateur et les
     /// animaux passés en argument.
     pub fn reload(&mut self) {
         self.pets.clear();
+        self.resized.clear();
         match builtin_mannequin() {
             Ok(def) => self.add(def, "mannequin intégré"),
             Err(e) => log::error!("animal intégré invalide : {e}"),
@@ -531,6 +604,35 @@ mod tests {
         library.set_size(1.0);
         assert!((height(&library) - normal).abs() < 0.01);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_pet_can_have_its_own_size() {
+        let mut library = Library::load(None, None, 1.0);
+        let normal = library.pets[0].clone();
+        // Le menu d'un animal : la même espèce, plus grande, à côté.
+        let big = library.at_size(0, 1.5).unwrap();
+        assert_eq!(big.size, 1.5);
+        assert!((big.def.physics.width - normal.def.physics.width * 1.5).abs() < 0.01);
+        let height = big.art().unwrap().height;
+        assert!((height - normal.art().unwrap().height * 1.5).abs() < 0.01);
+        assert_eq!(library.pets[0].size, 1.0, "les autres ne changent pas");
+        // Redemandée : la même (son dessin déjà prêt).
+        let again = library.at_size(0, 1.5).unwrap();
+        assert!(Arc::ptr_eq(&again.def, &big.def));
+        assert!(again.art_ready());
+        assert!(library.entry_of(&big.def).is_some());
+        assert_eq!(library.sizes_of(&normal.def.meta.id).count(), 2);
+        // À la taille de tous : l'entrée de tous.
+        let same = library.at_size(0, 1.0).unwrap();
+        assert!(Arc::ptr_eq(&same.def, &library.pets[0].def));
+        // Plus personne à cette taille : oubliée.
+        library.forget_unused_sizes(|_| false);
+        assert!(library.entry_of(&big.def).is_none());
+        // Une nouvelle taille pour tous efface les tailles à part.
+        let _ = library.at_size(0, 2.0);
+        library.set_size(0.75);
+        assert_eq!(library.sizes_of(&normal.def.meta.id).count(), 1);
     }
 
     /// Une fois les images compressées, plus rien ne retient les images

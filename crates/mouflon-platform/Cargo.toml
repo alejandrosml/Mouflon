@@ -57,7 +57,7 @@ objc2-app-kit = { workspace = true, features = [
     "NSAccessibility",
 ] }
 objc2-quartz-core = { workspace = true, features = ["std", "objc2-core-foundation", "CABase", "CADisplayLink", "CAFrameRateRange", "CALayer"] }
-objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry"] }
+objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry", "CGEventSource", "CGEventTypes"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes", "CFRunLoop"] }
 # Noms des fonctions Rust dans les piles relevées (diagnostics des essais).
 rustc-demangle = "0.1"

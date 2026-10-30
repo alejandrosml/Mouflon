@@ -73,6 +73,7 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
                         .into_iter()
                         .cloned()
                         .collect(),
+                    help: Some(t.size_help.clone()),
                 },
                 check(SOUNDS, &t.pet_sounds, None, None),
             ],

@@ -15,6 +15,7 @@ quit = "Stop Mouflon"
 
 # Menu van een dier (rechtsklik)
 goodbye_named = "Gedag zeggen tegen {name}"
+size_named = "Grootte van {name}"
 size = "Grootte"
 size_small = "Klein"
 size_normal = "Normaal"
@@ -24,6 +25,7 @@ size_huge = "Heel groot"
 # Venster ‘Instellingen’
 settings_title = "Mouflon-instellingen"
 pets_section = "Dieren"
+size_help = "Voor alle dieren. Klik met de rechtermuisknop op een dier om alleen zijn grootte te veranderen."
 pet_sounds = "Geluiden van de dieren"
 walks_section = "Waar ze lopen"
 collisions = "Botsingen tussen dieren"

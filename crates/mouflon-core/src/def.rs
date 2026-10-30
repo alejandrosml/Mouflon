@@ -389,6 +389,18 @@ pub enum Condition {
     CursorFar(f32),
     /// Au sol (sur une fenêtre ou en bas de l'écran).
     Grounded,
+    /// L'utilisateur tape au clavier : une touche il y a moins de
+    /// [`crate::TYPING_WINDOW`] secondes (Mouflon sait quand, jamais laquelle).
+    Typing,
+    /// Personne n'a touché au clavier, à la souris ni au trackpad depuis
+    /// [`crate::AWAY_AFTER`] secondes.
+    Away,
+    /// L'utilisateur est là (le contraire de [`Condition::Away`]).
+    Present,
+    /// De 6 h à 11 h, heure locale.
+    Morning,
+    /// De 18 h à 22 h, heure locale.
+    Evening,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -529,6 +541,9 @@ pub struct Behavior {
     pub children: Vec<ChildSpawn>,
     /// Sons qu'il fait entendre.
     pub sounds: Vec<SoundCue>,
+    /// Il dort (ou s'endort) : l'utilisateur qui revient le réveille
+    /// (réflexe `wake`), un pointeur qui file ne le fait pas sursauter.
+    pub sleeping: bool,
 }
 
 /// Personnage secondaire (élément `child` de desktopPet). Il joue ses propres
@@ -579,6 +594,14 @@ pub struct Reflexes {
     /// Tous ensemble : tous les animaux jouent ce comportement en même temps
     /// (`sync` de desktopPet).
     pub together: Vec<Transition>,
+    /// Le pointeur file tout près de lui : il sursaute.
+    pub startle: Vec<Transition>,
+    /// L'utilisateur est parti (voir [`Condition::Away`]) : il s'installe
+    /// pour dormir.
+    pub sleepy: Vec<Transition>,
+    /// L'utilisateur revient pendant qu'il dort : il se réveille. Sans
+    /// réaction prévue, il passe à la suite de son sommeil.
+    pub wake: Vec<Transition>,
 }
 
 /// Règles du moteur pour ce qui n'est pas prévu par l'animal.

@@ -17,6 +17,7 @@ quit = "Quit Mouflon"
 
 # A pet's menu (right click)
 goodbye_named = "Say Goodbye to {name}"
+size_named = "Size of {name}"
 size = "Size"
 size_small = "Small"
 size_normal = "Normal"
@@ -26,6 +27,7 @@ size_huge = "Very Large"
 # Settings window
 settings_title = "Mouflon Settings"
 pets_section = "Pets"
+size_help = "For all pets. Right-click a pet to change its size alone."
 pet_sounds = "Pet sounds"
 walks_section = "Where They Walk"
 collisions = "Collisions between pets"

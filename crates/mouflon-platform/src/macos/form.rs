@@ -99,6 +99,7 @@ enum RowViews {
         label: Retained<NSTextField>,
         slider: Retained<NSSlider>,
         marks: Vec<Retained<NSTextField>>,
+        help: Option<Retained<NSTextField>>,
     },
     Text {
         text: Retained<NSTextField>,
@@ -238,6 +239,7 @@ fn build_row(row: &FormRow, root: &NSView, target: &AnyObject, mtm: MainThreadMa
             id,
             label: text,
             steps,
+            help,
         } => {
             let title = label(text, mtm);
             root.addSubview(&title);
@@ -271,11 +273,17 @@ fn build_row(row: &FormRow, root: &NSView, target: &AnyObject, mtm: MainThreadMa
                     mark
                 })
                 .collect();
+            let help = help.as_ref().map(|text| {
+                let field = wrapping(text, true, mtm);
+                root.addSubview(&field);
+                field
+            });
             RowViews::Steps {
                 id: *id,
                 label: title,
                 slider,
                 marks,
+                help,
             }
         }
         FormRow::Text { text, button } => {
@@ -444,6 +452,7 @@ fn layout_row(row: &RowViews, x: f64, top: f64, width: f64) -> f64 {
             label,
             slider,
             marks,
+            help,
             ..
         } => {
             let l = label.intrinsicContentSize();
@@ -460,7 +469,14 @@ fn layout_row(row: &RowViews, x: f64, top: f64, width: f64) -> f64 {
                 place(mark, left, y, m.width, m.height);
                 height = height.max(m.height);
             }
-            y + height - top
+            y += height;
+            if let Some(help) = help {
+                let h = wrapped_height(help, width);
+                y += HELP_GAP;
+                place(help, x, y, width, h);
+                y += h;
+            }
+            y - top
         }
         RowViews::Text { text, button } => {
             let b = button

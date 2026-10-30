@@ -226,6 +226,7 @@ fn render_meeting(
         let input = Input {
             cursor,
             local_hour: 15.0,
+            ..Input::default()
         };
         let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
         let mut list = DisplayList::new(
@@ -380,6 +381,7 @@ fn render_physics(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> 
         let input = Input {
             cursor,
             local_hour: 15.0,
+            ..Input::default()
         };
         let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
         let mut list = DisplayList::new(
@@ -458,6 +460,7 @@ fn render_greeting(
     let input = Input {
         cursor: None,
         local_hour: 15.0,
+        ..Input::default()
     };
     // Une fois tout le monde posé (la chute d'un animal desktopPet est
     // lente), les deux premiers marchent l'un vers l'autre et le troisième
@@ -814,6 +817,7 @@ fn render_video(
         let input = Input {
             cursor,
             local_hour: 15.0,
+            ..Input::default()
         };
 
         let alpha = flock.advance(1.0 / FPS as f32, &world, &input);

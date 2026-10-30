@@ -52,15 +52,21 @@ impl Default for Settings {
     }
 }
 
+/// Rang dans [`SIZES`] de la taille la plus proche de `size`.
+#[must_use]
+pub fn size_index_of(size: f32) -> usize {
+    SIZES
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - size).abs().total_cmp(&(*b - size).abs()))
+        .map_or(1, |(i, _)| i)
+}
+
 impl Settings {
     /// Rang de la taille dans [`SIZES`] (la plus proche, pour une valeur écrite à la main).
     #[must_use]
     pub fn size_index(&self) -> usize {
-        SIZES
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| (*a - self.size).abs().total_cmp(&(*b - self.size).abs()))
-            .map_or(1, |(i, _)| i)
+        size_index_of(self.size)
     }
 
     /// Taille à appliquer : une valeur de [`SIZES`].

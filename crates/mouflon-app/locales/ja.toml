@@ -15,6 +15,7 @@ quit = "Mouflonを終了"
 
 # ペットのメニュー（右クリック）
 goodbye_named = "{name}にさよならする"
+size_named = "{name}のサイズ"
 size = "サイズ"
 size_small = "小"
 size_normal = "標準"
@@ -24,6 +25,7 @@ size_huge = "特大"
 # 設定ウインドウ
 settings_title = "Mouflonの設定"
 pets_section = "ペット"
+size_help = "すべてのペットのサイズです。ペットを右クリックすると、そのペットだけのサイズを変えられます。"
 pet_sounds = "ペットのサウンド"
 walks_section = "歩く場所"
 collisions = "ペット同士の衝突"

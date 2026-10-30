@@ -15,6 +15,7 @@ quit = "Mouflon 종료"
 
 # 펫 메뉴(오른쪽 클릭)
 goodbye_named = "{name}에게 작별 인사하기"
+size_named = "{name} 크기"
 size = "크기"
 size_small = "작게"
 size_normal = "보통"
@@ -24,6 +25,7 @@ size_huge = "아주 크게"
 # 설정 윈도우
 settings_title = "Mouflon 설정"
 pets_section = "펫"
+size_help = "모든 펫의 크기입니다. 펫을 오른쪽 클릭하면 그 펫의 크기만 바꿀 수 있습니다."
 pet_sounds = "펫 사운드"
 walks_section = "걸어 다니는 곳"
 collisions = "펫 간 충돌"

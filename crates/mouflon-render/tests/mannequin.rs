@@ -26,6 +26,7 @@ fn mannequin_loads_simulates_and_paints() {
     let input = Input {
         cursor: Some(Vec2::new(640.0, 600.0)),
         local_hour: 23.0,
+        ..Input::default()
     };
     for _ in 0..(20.0 / TICK) as usize {
         pet.step(TICK, &world, &input);
