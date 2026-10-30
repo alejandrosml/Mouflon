@@ -136,7 +136,7 @@ impl Pet {
             } else {
                 if support.is_some() {
                     // Il descend du rebord : il le traverse.
-                    self.detach();
+                    self.detach_by_script();
                     support = None;
                 }
                 if let Some(w) = self.ledge_crossed(world, dy)
@@ -147,7 +147,7 @@ impl Pet {
             }
         } else if dy < 0.0 {
             if support.is_some() {
-                self.detach();
+                self.detach_by_script();
                 support = None;
             }
             let head = self.pos.y - p.height;
@@ -216,6 +216,14 @@ impl Pet {
                 }
             }
         }
+    }
+
+    /// Son animation le fait quitter le sol (il grimpe, saute, descend du
+    /// rebord) : elle continue de le mener, il ne tombe pas sous la
+    /// pesanteur comme un animal que plus rien ne porte.
+    fn detach_by_script(&mut self) {
+        self.detach();
+        self.free_fall = false;
     }
 
     /// Arrêté contre un bord en allant dans le sens `dir` : il se retourne

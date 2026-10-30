@@ -21,6 +21,14 @@
 //! puis le premier est lancé sur le second. `planche` : toutes les images de
 //! chaque comportement, dessinées par Mouflon dans les deux sens, sur la
 //! ligne du sol (pour vérifier le point d'appui et le rognage).
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> physique
+//! ```
+//!
+//! `physique` : la physique réaliste. Une fenêtre emporte l'animal, file sous
+//! lui d'un coup sec, se dérobe, le lance en l'air ; puis la main le prend
+//! par l'arrière, le balance et le lance en tournant.
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -120,6 +128,12 @@ fn main() -> Result<(), Error> {
         let frames = out_dir.join("frames");
         std::fs::create_dir_all(&frames)?;
         let count = render_greeting(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "physique" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_physics(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
     if mode == "planche" {
@@ -250,6 +264,158 @@ fn render_meeting(
                         p.behavior_name(),
                         p.position().x,
                         p.position().y
+                    )
+                })
+                .collect();
+            println!("{t:4.1} s : {}", states.join(", "));
+        }
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------- physique
+
+/// La fenêtre de la scène `physique` à l'instant `t` : posée, emportée vers
+/// la droite, tirée d'un coup sec vers la gauche, tirée vers le bas plus vite
+/// que la pesanteur, puis montée vite et arrêtée net.
+fn physics_window(t: f32) -> Rect {
+    let mut r = Rect::new(120.0, 300.0, 380.0, 190.0);
+    r.x += 140.0 * ease((t - 1.8) / 1.2);
+    r.x -= 150.0 * ((t - 3.4) / 0.15).clamp(0.0, 1.0);
+    r.y += 170.0 * ((t - 4.4) / 0.1).clamp(0.0, 1.0);
+    r.y -= 230.0 * ((t - 6.0) / 0.4).clamp(0.0, 1.0);
+    r
+}
+
+fn render_physics(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let side = Rect::new(660.0, 170.0, 260.0, 330.0);
+    let windows = |t: f32| {
+        vec![
+            WindowRect { id: 2, frame: side },
+            WindowRect {
+                id: 1,
+                frame: physics_window(t),
+            },
+        ]
+    };
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&windows(0.0), LedgeOptions::default());
+    let mut flock = Flock::new();
+    flock.set_realistic(true);
+    flock.set_collisions(true);
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    let b = flock.spawn(Arc::clone(def), 5, &world, Some(580.0));
+    give_reach(&mut flock, art);
+    let duration = 14.0;
+    let frames = (duration * RATE as f32) as u32;
+    let mut grip: Option<Vec2> = None;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        world.set_windows(&windows(t), LedgeOptions::default());
+        // Arrêtés pour la démonstration des fenêtres.
+        if at(1.6) {
+            for id in [a, b] {
+                if let Some(pet) = flock.get_mut(id) {
+                    let stand = ["stand", "repos", "sit"]
+                        .into_iter()
+                        .find(|n| def.behavior_index(n).is_some());
+                    if let Some(stand) = stand {
+                        pet.force(stand);
+                    }
+                }
+            }
+        }
+        // La main le prend par l'arrière du dos, le balance, puis le lance.
+        let cursor = flock.pets().iter().find(|p| p.id() == a).and_then(|pet| {
+            let body = pet.body();
+            let back = body.center
+                + Vec2::new(
+                    -body.half.x * 0.6 * pet.view(1.0).facing.signum(),
+                    -body.half.y * 0.7,
+                );
+            match t {
+                t if (7.4..8.0).contains(&t) => {
+                    let from = Vec2::new(SCREEN_W - 80.0, 120.0);
+                    Some(from.lerp(back, ease((t - 7.4) / 0.6)))
+                }
+                t if (8.0..9.2).contains(&t) => {
+                    let start = *grip.get_or_insert(back);
+                    let u = t - 8.0;
+                    Some(start + Vec2::new(-90.0 * (u * 5.0).sin(), -60.0 * ease(u / 0.5)))
+                }
+                t if (9.2..9.45).contains(&t) => {
+                    let start = grip.unwrap_or(back) + Vec2::new(-90.0 * (6.0_f32).sin(), -60.0);
+                    let u = (t - 9.2) / 0.25;
+                    Some(start + Vec2::new(260.0 * u * u, -120.0 * u))
+                }
+                _ => None,
+            }
+        });
+        if let Some(pet) = flock.get_mut(a) {
+            if at(8.0)
+                && let Some(c) = cursor
+            {
+                pet.grab(c, &world);
+            }
+            if pet.is_held()
+                && let Some(c) = cursor
+            {
+                pet.drag_to(c);
+            }
+            if at(9.45) {
+                pet.release(&world);
+            }
+        }
+        if at(11.5)
+            && let Some(pet) = flock.get_mut(b)
+        {
+            for walk in ["walk", "marche"] {
+                if pet.force(walk) {
+                    break;
+                }
+            }
+        }
+        let input = Input {
+            cursor,
+            local_hour: 15.0,
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[physics_window(t), side]);
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &Frame {
+                    origin: Vec2::ZERO,
+                    scale: SCALE,
+                },
+                &Style::default(),
+                &mut list,
+            );
+        }
+        if let Some(c) = cursor {
+            let held = flock.pets().iter().any(Pet::is_held);
+            paint_cursor(&mut list, c, held);
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 2) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0}) {:?} roll {:.2}",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y,
+                        p.support(),
+                        p.view(1.0).pose.roll
                     )
                 })
                 .collect();
@@ -767,6 +933,11 @@ fn world_to_px() -> Affine {
 }
 
 fn paint_desktop(list: &mut DisplayList, script: &Script, t: f32) {
+    paint_desktop_with(list, &[script.back_window(t), script.w2]);
+}
+
+/// Le bureau, avec ces fenêtres (de l'arrière vers l'avant).
+fn paint_desktop_with(list: &mut DisplayList, windows: &[Rect]) {
     let w = Affine::scale(SCALE);
     let screen = Rect::new(0.0, 0.0, SCREEN_W, SCREEN_H);
     list.fill(
@@ -820,8 +991,9 @@ fn paint_desktop(list: &mut DisplayList, script: &Script, t: f32) {
         Paint::Solid(Color::WHITE.with_alpha(0.16)),
     );
 
-    paint_window(list, script.back_window(t));
-    paint_window(list, script.w2);
+    for window in windows {
+        paint_window(list, *window);
+    }
 
     // Dock.
     let dock = Rect::new(

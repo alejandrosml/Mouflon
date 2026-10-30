@@ -11,6 +11,7 @@ use std::f32::consts::TAU;
 use std::sync::Arc;
 
 use super::{Input, LANDING_REACH, Pet, Support, THROW_SMOOTHING};
+use crate::def::Rules;
 use crate::math::{Vec2, approach};
 use crate::physics::{
     self, Back, GRIP, GROUND_FRICTION, HOLD_DAMPING, HOLD_STIFFNESS, MAX_SPIN, Obb, Rigid,
@@ -130,8 +131,14 @@ impl Pet {
             Support::Ground { surface } if !scripted => {
                 self.step_ground_real(dt, tracker, input, surface);
             }
-            // Animation scriptée (desktopPet) : comme en physique classique,
-            // sur le monde lissé ; une fenêtre qui bouge l'emporte.
+            // Animation image par image (Lainou, Pelote, desktopPet) : ses
+            // pas l'avancent sur la surface, et la plateforme l'emporte par
+            // ses pattes, comme les autres.
+            Support::Ground { surface } => {
+                self.carry_on(dt, tracker, surface);
+                self.step_script(dt, world, input);
+            }
+            // En l'air, son animation le mène (une escalade, un saut).
             _ => self.step_script(dt, world, input),
         }
         if matches!(self.support, Support::Ground { .. }) && (self.angle != 0.0 || self.spin != 0.0)
@@ -187,25 +194,38 @@ impl Pet {
 
     fn step_ground_real(&mut self, dt: f32, tracker: &Tracker, input: &Input, id: SurfaceId) {
         let world = tracker.world();
-        let p = self.def.physics;
         self.slide = 0.0;
-        let Some(surface) = world.surface(id).copied() else {
+        let Some(surface) = self.carry_on(dt, tracker, id) else {
             self.lift_off(world, input);
             return;
         };
+        self.pos.y = surface.y;
+        self.walk_on(dt, world, input, &surface);
+    }
+
+    /// La plateforme qui le porte l'emporte : ses pattes la suivent tant
+    /// qu'elles adhèrent ; secouée d'un coup sec, elle file sous lui et il
+    /// glisse. Elle lui donne aussi sa vitesse verticale, qu'il garde si
+    /// elle se dérobe ([`Self::drops_away`]). Renvoie la surface, si elle
+    /// est toujours là.
+    fn carry_on(&mut self, dt: f32, tracker: &Tracker, id: SurfaceId) -> Option<Surface> {
+        let surface = tracker.world().surface(id).copied()?;
         let platform = tracker.velocity(id);
         self.carry.y = platform.y;
-        // Ses pattes suivent la plateforme tant qu'elles adhèrent : secouée
-        // d'un coup sec, elle file sous lui et il glisse.
-        self.carry.x = approach(self.carry.x, platform.x, GRIP * p.gravity * dt);
+        self.carry.x = approach(
+            self.carry.x,
+            platform.x,
+            GRIP * self.def.physics.gravity * dt,
+        );
         self.pos.x += self.carry.x * dt;
+        // Le déplacement de la surface est déjà compté : `ride` ne l'emporte
+        // pas une seconde fois.
         self.ground_ref = Some(super::GroundRef {
             surface: surface.id,
             x0: surface.x0,
             x1: surface.x1,
         });
-        self.pos.y = surface.y;
-        self.walk_on(dt, world, input, &surface);
+        Some(surface)
     }
 
     fn step_held_real(&mut self, dt: f32) {
@@ -350,7 +370,6 @@ impl Pet {
             let v = tracker.velocity(s.id);
             if low_from <= s.y - v.y * dt + 0.5
                 && low_to >= s.y - 0.01
-                && rigid.vel.y - v.y > -1.0
                 && landing.is_none_or(|(best, _)| s.y < best.y)
             {
                 landing = Some((*s, v));
@@ -366,21 +385,24 @@ impl Pet {
             self.place(&body, rigid);
             return;
         };
-        let impact = rigid.vel.y - platform.y;
         body.center.y = surface.y - ey;
-
-        // Un animal scripté (desktopPet) décide de ce qu'il fait d'une
-        // surface : s'y poser, ou passer devant.
-        if scripted && self.free_fall {
+        // Il monte encore : c'est un coin qui touche la surface parce qu'il
+        // tourne (une culbute qui part du ras du sol). Il s'appuie sur ce
+        // coin, sans s'y poser.
+        if rigid.vel.y - platform.y < -1.0 {
+            collide_static(
+                &mut rigid,
+                lowest - body.center,
+                Vec2::new(0.0, -1.0),
+                platform,
+                0.0,
+                GROUND_FRICTION,
+            );
             self.place(&body, rigid);
-            if self.land_script(&surface, impact, world, input) {
-                self.free_fall = false;
-                self.grace = false;
-                self.carry = platform;
-                self.vel = Vec2::ZERO;
-            }
             return;
         }
+        let impact = rigid.vel.y - platform.y;
+
         // Retrouvé tout de suite, sans choc : il reprend ce qu'il faisait.
         if self.grace && impact < GRACE_IMPACT {
             self.place(&body, rigid);
@@ -390,6 +412,19 @@ impl Pet {
             self.carry = platform;
             self.vel = Vec2::new(rigid.vel.x - platform.x, 0.0);
             self.pos.y = surface.y;
+            return;
+        }
+        // Un animal desktopPet dans une animation scriptée décide de ce
+        // qu'il fait d'une surface : s'y poser, ou passer devant. (Un animal
+        // Mouflon, lui, s'y pose toujours.)
+        if scripted && self.free_fall && def.rules == Rules::DesktopPet {
+            self.place(&body, rigid);
+            if self.land_script(&surface, impact, world, input) {
+                self.free_fall = false;
+                self.grace = false;
+                self.carry = platform;
+                self.vel = Vec2::ZERO;
+            }
             return;
         }
         self.grace = false;
@@ -423,6 +458,21 @@ impl Pet {
     /// Le dos de cet animal, sur lequel il ne peut pas se poser lui-même.
     fn own_back(&self) -> Option<SurfaceId> {
         Some(pet_surface(self.id))
+    }
+
+    /// En l'air, son corps reste au-dessus du sol (un choc avec un autre
+    /// peut l'y enfoncer).
+    pub(super) fn keep_above_floor(&mut self, world: &World) {
+        if self.support != Support::Air {
+            return;
+        }
+        let body = self.body();
+        if let Some(floor) = world.floor_under(body.center.x) {
+            let below = body.center.y + body.extent_y() - floor.y;
+            if below > 0.0 {
+                self.pos.y -= below;
+            }
+        }
     }
 
     /// Reprend la position, l'angle et les vitesses du corps.
@@ -509,12 +559,27 @@ mod tests {
         world.set_windows(&windows, LedgeOptions::default());
     }
 
+    /// Un animal livré avec Mouflon.
+    fn bundled(name: &str) -> Arc<crate::PetDef> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../pets/{name}/pet.toml"));
+        Arc::new(crate::format::load_pet(&path).unwrap())
+    }
+
     /// Un troupeau en physique réaliste, avec un animal posé sur la fenêtre.
     fn on_window(window: Rect, behavior: &str) -> (Flock, World, u32) {
+        on_window_with(def(), window, behavior)
+    }
+
+    fn on_window_with(
+        def: Arc<crate::PetDef>,
+        window: Rect,
+        behavior: &str,
+    ) -> (Flock, World, u32) {
         let world = world(Some(window));
         let mut flock = Flock::new();
         flock.set_realistic(true);
-        let id = flock.spawn(def(), 1, &world, Some(window.x + window.w * 0.5));
+        let id = flock.spawn(def, 1, &world, Some(window.x + window.w * 0.5));
         for _ in 0..(2.0 / TICK) as usize {
             flock.advance(TICK, &world, &Input::default());
         }
@@ -648,6 +713,85 @@ mod tests {
         assert!(
             offset < start - 40.0,
             "la fenêtre a filé sous lui : {start} → {offset}"
+        );
+    }
+
+    #[test]
+    fn an_image_by_image_pet_feels_its_window_too() {
+        // Lainou est animée image par image : la fenêtre l'emporte par ses
+        // pattes comme les autres (pas collée à elle comme en physique
+        // classique).
+        let mut window = Rect::new(300.0, 500.0, 600.0, 250.0);
+        let (mut flock, mut world, id) = on_window_with(bundled("lainou"), window, "dort");
+        let start = pet(&flock, id).position().x - window.x;
+        // Tirée d'un coup sec vers la gauche : elle file sous lui.
+        drag(
+            &mut flock,
+            &mut world,
+            &mut window,
+            Vec2::new(-1000.0, 0.0),
+            0.15,
+        );
+        drag(&mut flock, &mut world, &mut window, Vec2::ZERO, 0.4);
+        let sleeper = pet(&flock, id);
+        let offset = sleeper.position().x - window.x;
+        assert!(
+            offset > start + 30.0,
+            "la fenêtre a filé sous lui : {start} → {offset}"
+        );
+        assert!(matches!(sleeper.support(), Support::Ground { .. }));
+        // Montée vite puis arrêtée net : elle le lance en l'air, et il
+        // retombe dessus (sans passer à travers).
+        drag(
+            &mut flock,
+            &mut world,
+            &mut window,
+            Vec2::new(0.0, -900.0),
+            0.25,
+        );
+        let mut highest = f32::MAX;
+        for _ in 0..(1.5 / TICK) as usize {
+            drag(&mut flock, &mut world, &mut window, Vec2::ZERO, TICK);
+            highest = highest.min(pet(&flock, id).position().y);
+        }
+        assert!(highest < window.y - 10.0, "{highest} {}", window.y);
+        let landed = pet(&flock, id);
+        assert!(
+            matches!(landed.support(), Support::Ground { surface } if surface >> 8 == 9),
+            "{:?} à {:?}",
+            landed.support(),
+            landed.position()
+        );
+        assert!((landed.position().y - window.y).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_desktoppet_sheep_still_climbs_in_realistic_physics() {
+        // Son animation le fait grimper le long du bord de l'écran : elle le
+        // mène, la pesanteur ne le fait pas retomber.
+        let world = world(None);
+        let mut flock = Flock::new();
+        flock.set_realistic(true);
+        let pelote = bundled("pelote");
+        let id = flock.spawn(Arc::clone(&pelote), 3, &world, Some(700.0));
+        let floor = *world.floor_under(10.0).unwrap();
+        {
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos = Vec2::new(pelote.physics.width * 0.5, floor.y);
+            pet.prev_pos = pet.pos;
+            pet.set_ground(&floor);
+            pet.facing = -1.0;
+            assert!(pet.force("vertical_walk_up"));
+        }
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let climber = pet(&flock, id);
+        assert_eq!(climber.behavior_name(), "vertical_walk_up");
+        assert!(
+            climber.position().y < floor.y - 30.0,
+            "il grimpe : {:?}",
+            climber.position()
         );
     }
 

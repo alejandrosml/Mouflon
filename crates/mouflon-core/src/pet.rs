@@ -2292,6 +2292,9 @@ fn bodies_hit(
         let push = contact.normal * (contact.depth / (ma + mb));
         a.pos -= push * ma;
         b.pos += push * mb;
+        // Poussé vers le bas, il ne passe pas sous le sol.
+        a.keep_above_floor(world);
+        b.keep_above_floor(world);
     }
     for (pet, after) in [(a, ra), (b, rb)] {
         match pet.support {
@@ -3378,8 +3381,13 @@ mod tests {
                         && p.x < 1440.0 + margin
                         && p.y > -margin
                         && p.y <= 825.0 + 0.01,
-                    "{p:?} {}",
-                    pet.behavior_name()
+                    "{p:?} {} angle {} spin {} vel {:?} carry {:?} support {:?} t {t}",
+                    pet.behavior_name(),
+                    pet.angle,
+                    pet.spin,
+                    pet.vel,
+                    pet.carry,
+                    pet.support
                 );
                 *seconds_in
                     .entry(pet.behavior_name().to_owned())
