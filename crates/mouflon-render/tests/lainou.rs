@@ -32,11 +32,7 @@ fn lainou_loads_and_paints_both_ways() {
     // chacune des quatre images de la chute (rapide).
     assert_eq!(frames.frames.len(), 2 * 245 + 2 * (245 + 4 * 2));
     assert_eq!((art.width, art.height), (96.0, 96.0));
-    let bytes: usize = frames
-        .frames
-        .iter()
-        .map(|f| f.bitmap.rgba.data().len())
-        .sum();
+    let bytes: usize = frames.frames.iter().map(|f| f.bitmap.byte_size()).sum();
     eprintln!("{:.1} Mo d'images en mémoire", bytes as f64 / 1e6);
     assert!(bytes < 56_000_000, "{bytes} octets");
     assert!(frames.frames.iter().all(|f| f.bitmap.width <= 192));

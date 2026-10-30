@@ -86,6 +86,23 @@ pub fn current_pid() -> i32 {
     std::process::id() as i32
 }
 
+/// Fait passer le fil courant après tout le reste : un travail de fond (la
+/// compression des images) qui ne doit jamais retenir l'affichage. Sur Mac,
+/// la classe de service « utilitaire » : le système le place de préférence
+/// sur les cœurs économes, et le ralentit quand la batterie est basse.
+pub fn lower_thread_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: fonction de libpthread sans pointeur, qui ne change que la
+        // classe de service du fil qui l'appelle.
+        let status =
+            unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
+        if status != 0 {
+            log::debug!("classe de service du fil inchangée ({status})");
+        }
+    }
+}
+
 /// Une ligne des crédits de la fenêtre « À propos ».
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AboutLine<'a> {

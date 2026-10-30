@@ -5,7 +5,6 @@ use std::io::Cursor;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mouflon_core::{Facings, SpritePage, SpriteSheet};
-use vello::peniko::Blob;
 
 use crate::display::Bitmap;
 
@@ -74,7 +73,6 @@ impl SpriteFrames {
             .collect();
         let decoded = decode_pages(&pages, sheet);
         let mut tile: Option<(u32, u32)> = None;
-        let regular = sheet.tile_count();
         let mut frames =
             Vec::with_capacity(pages.iter().map(|p| p.tiles_x * p.tiles_y).sum::<u32>() as usize);
         for page in decoded {
@@ -88,11 +86,21 @@ impl SpriteFrames {
             tile = Some(page.tile);
             frames.extend(page.frames);
         }
-        let (tile_width, tile_height) = tile.unwrap_or((1, 1));
+        Ok(Self::assemble(sheet, tile.unwrap_or((1, 1)), frames))
+    }
+
+    /// Les images d'une planche aux cases de `tile` pixels, déjà découpées.
+    pub(crate) fn assemble(
+        sheet: &SpriteSheet,
+        tile: (u32, u32),
+        frames: Vec<SpriteFrame>,
+    ) -> Self {
+        let (tile_width, tile_height) = tile;
+        let regular = sheet.tile_count();
         let [ax, ay] = sheet
             .anchor
             .unwrap_or([tile_width as f32 * 0.5, tile_height as f32]);
-        Ok(Self {
+        Self {
             tile_width,
             tile_height,
             scale: sheet.scale,
@@ -101,7 +109,71 @@ impl SpriteFrames {
             frames,
             facings: sheet.facings,
             anchor: (ax, ay),
-        })
+        }
+    }
+
+    /// Octets qu'occupent les images.
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
+        self.frames.iter().map(|f| f.bitmap.byte_size()).sum()
+    }
+
+    /// Reste-t-il des images à compresser ? Toutes, sauf le pixel art
+    /// agrandi : quand chaque pixel de la planche devient un carré net de
+    /// plusieurs pixels de l'écran (voir [`Self::crisp`]), les petits écarts
+    /// de la compression se verraient agrandis eux aussi.
+    #[must_use]
+    pub fn compressible(&self) -> bool {
+        !self.crisp() && self.frames.iter().any(compressible)
+    }
+
+    /// Pixel art agrandi d'un nombre entier de fois (deux au moins) sur un
+    /// écran Retina : ses images s'y posent pixel pour pixel, sans lissage.
+    #[must_use]
+    pub fn crisp(&self) -> bool {
+        let k = self.scale * PIXELS_PER_POINT;
+        k > 1.999 && (k - k.round()).abs() < 0.01
+    }
+
+    /// Les mêmes images, compressées en BC7 (voir [`crate::bc7`]) : quatre
+    /// fois moins de mémoire, en mémoire comme sur le GPU. Le travail se
+    /// partage entre `threads` fils, qui appellent d'abord `setup` (pour
+    /// baisser leur priorité, par exemple).
+    #[must_use]
+    pub fn compressed(&self, threads: usize, setup: &(dyn Fn() + Sync)) -> Self {
+        let next = AtomicUsize::new(0);
+        let workers = threads.clamp(1, 16).min(self.frames.len().max(1));
+        let done: Vec<Vec<(usize, Bitmap)>> = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..workers)
+                .map(|_| {
+                    scope.spawn(|| {
+                        setup();
+                        let mut done = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(frame) = self.frames.get(i) else {
+                                break;
+                            };
+                            if !self.crisp() && compressible(frame) {
+                                done.push((i, frame.bitmap.compressed()));
+                            }
+                        }
+                        done
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|job| job.join().unwrap_or_default())
+                .collect()
+        });
+        let mut frames = self.frames.clone();
+        for (i, bitmap) in done.into_iter().flatten() {
+            frames[i].bitmap = bitmap;
+        }
+        Self {
+            frames,
+            ..self.clone()
+        }
     }
 
     /// Place du dessin autour de son point d'appui, devant et derrière
@@ -195,6 +267,11 @@ impl SpriteFrames {
             }
         }
     }
+}
+
+/// Une image à compresser : pas vide, pas déjà compressée.
+fn compressible(frame: &SpriteFrame) -> bool {
+    frame.bitmap.width > 1 && !frame.bitmap.is_compressed()
 }
 
 /// Une planche découpée.
@@ -481,11 +558,11 @@ impl Image<'_> {
             );
         }
         SpriteFrame {
-            bitmap: Bitmap {
-                width: (visible.x1 - visible.x0) as u32,
-                height: (visible.y1 - visible.y0) as u32,
-                rgba: Blob::from(out),
-            },
+            bitmap: Bitmap::from_rgba(
+                (visible.x1 - visible.x0) as u32,
+                (visible.y1 - visible.y0) as u32,
+                out,
+            ),
             x: (visible.x0 - tile.x0) as f32,
             y: (visible.y0 - tile.y0) as f32,
             texel: 1.0,
@@ -496,11 +573,7 @@ impl Image<'_> {
 /// Case vide : un pixel transparent.
 fn empty_frame(texel: f32) -> SpriteFrame {
     SpriteFrame {
-        bitmap: Bitmap {
-            width: 1,
-            height: 1,
-            rgba: Blob::from(vec![0u8; 4]),
-        },
+        bitmap: Bitmap::from_rgba(1, 1, vec![0u8; 4]),
         x: 0.0,
         y: 0.0,
         texel,
@@ -693,7 +766,7 @@ fn resample(rgba: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Vec
         (frame.y / reduction.texel).round() as usize,
     );
     let fw = frame.bitmap.width as usize;
-    for (row, line) in frame.bitmap.rgba.data().chunks_exact(fw * 4).enumerate() {
+    for (row, line) in frame.bitmap.to_rgba().chunks_exact(fw * 4).enumerate() {
         let start = ((fy + row) * out_w as usize + fx) * 4;
         out[start..start + fw * 4].copy_from_slice(line);
     }
@@ -734,7 +807,7 @@ pub fn encode_png_rgba(bitmap: &Bitmap) -> Vec<u8> {
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         if let Ok(mut writer) = encoder.write_header() {
-            let _ = writer.write_image_data(bitmap.rgba.data());
+            let _ = writer.write_image_data(&bitmap.to_rgba());
         }
     }
     out
@@ -754,11 +827,7 @@ mod tests {
                 rgba.extend_from_slice(&pixel(x, y));
             }
         }
-        encode_png_rgba(&Bitmap {
-            width,
-            height,
-            rgba: Blob::from(rgba),
-        })
+        encode_png_rgba(&Bitmap::from_rgba(width, height, rgba))
     }
 
     /// Une planche encodée autrement qu'en RGBA (couleurs seules, gris).
@@ -799,7 +868,7 @@ mod tests {
             .iter()
             .map(|f| {
                 let b = &f.bitmap;
-                (b.width, b.height, b.rgba.data().to_vec(), f.x, f.y)
+                (b.width, b.height, b.to_rgba().into_owned(), f.x, f.y)
             })
             .collect()
     }
@@ -892,7 +961,7 @@ mod tests {
         let column = &frames.frames[1];
         assert_eq!((column.bitmap.width, column.bitmap.height), (1, 2));
         assert_eq!((column.x, column.y), (1.0, 0.0));
-        assert_eq!(&column.bitmap.rgba.data()[..4], &[10, 20, 30, 255]);
+        assert_eq!(&column.bitmap.to_rgba()[..4], &[10, 20, 30, 255]);
     }
 
     #[test]
@@ -912,11 +981,11 @@ mod tests {
         let frames = SpriteFrames::decode(&sheet).unwrap();
         let left = frames.pick(1, -1.0).unwrap();
         assert!(!left.faces_right);
-        assert_eq!(&left.frame.bitmap.rgba.data()[..2], &[10, 1]);
+        assert_eq!(&left.frame.bitmap.to_rgba()[..2], &[10, 1]);
         assert_eq!(left.anchor_x, 2.0);
         let right = frames.pick(1, 1.0).unwrap();
         assert!(right.faces_right);
-        assert_eq!(&right.frame.bitmap.rgba.data()[..2], &[200, 1]);
+        assert_eq!(&right.frame.bitmap.to_rgba()[..2], &[200, 1]);
         assert_eq!(right.anchor_x, 6.0, "point d'appui en miroir");
     }
 
@@ -941,13 +1010,13 @@ mod tests {
         // Seconde image intermédiaire : vers la gauche, puis vers la droite.
         let left = frames.pick(5, -1.0).unwrap();
         assert!(!left.faces_right);
-        assert_eq!(&left.frame.bitmap.rgba.data()[..2], &[30, 1]);
+        assert_eq!(&left.frame.bitmap.to_rgba()[..2], &[30, 1]);
         let right = frames.pick(5, 1.0).unwrap();
         assert!(right.faces_right);
-        assert_eq!(&right.frame.bitmap.rgba.data()[..2], &[230, 1]);
+        assert_eq!(&right.frame.bitmap.to_rgba()[..2], &[230, 1]);
         // La planche principale ne change pas.
         let main = frames.pick(1, 1.0).unwrap();
-        assert_eq!(&main.frame.bitmap.rgba.data()[..2], &[200, 1]);
+        assert_eq!(&main.frame.bitmap.to_rgba()[..2], &[200, 1]);
     }
 
     #[test]

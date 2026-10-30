@@ -179,6 +179,8 @@ pub struct FrameStats {
     period: Period,
     /// Images des animaux sur le GPU : nombre et octets.
     textures: (usize, usize),
+    /// Octets des images des animaux à l'écran, en mémoire.
+    images: usize,
     /// Ressources du processus au résumé précédent.
     usage: Option<(Instant, platform::ProcessUsage)>,
 }
@@ -209,6 +211,7 @@ impl FrameStats {
             journal: None,
             period: Period::default(),
             textures: (0, 0),
+            images: 0,
             // Point de départ du temps de calcul du premier résumé.
             usage: platform::process_usage().map(|usage| (begun, usage)),
         }
@@ -350,7 +353,7 @@ impl FrameStats {
             let line = format!(
                 "S {at:.4} images {} plus_grand_ecart {:.1} plus_longue_prep {:.1} lentes {} \
                  moyennes rel {:.3} sim {:.3} son {:.3} fen {:.3} dep {:.3} des {:.3} att {:.3} \
-                 env {:.3} rendus {} textures_gpu {} mo_gpu {:.1} {}",
+                 env {:.3} rendus {} textures_gpu {} mo_gpu {:.1} mo_images {:.1} {}",
                 period.frames,
                 period.worst_gap,
                 period.worst_work,
@@ -366,6 +369,7 @@ impl FrameStats {
                 period.phases.renders,
                 self.textures.0,
                 self.textures.1 as f64 / 1e6,
+                self.images as f64 / 1e6,
                 usage_since_last(&mut self.usage, started),
             );
             *period = Period::default();
@@ -379,6 +383,11 @@ impl FrameStats {
     /// Images des animaux gardées sur le GPU (nombre, octets), pour les résumés.
     pub fn set_textures(&mut self, textures: (usize, usize)) {
         self.textures = textures;
+    }
+
+    /// Octets des images des animaux à l'écran, en mémoire, pour les résumés.
+    pub fn set_images(&mut self, bytes: usize) {
+        self.images = bytes;
     }
 
     #[must_use]

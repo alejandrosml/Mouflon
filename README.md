@@ -22,7 +22,10 @@ throw them across the desktop.
   tail…), so it is drawn the same way; the full vector renderer (Vello)
   only starts for drawings that cannot be baked, and stops when they leave.
   At launch, each kind of pet decodes its sheets on its own threads, one
-  row of tiles at a time, while the menu and the GPU get ready. Images
+  row of tiles at a time, while the menu and the GPU get ready. Its images
+  are then compressed to BC7 in the background (four times less memory,
+  read as is by the GPU) and kept on disk: the next launches read them
+  ready-made in a few milliseconds. Images
   follow the display's own clock
   (its full rate for brisk moves, half a ProMotion display's rate for a
   stroll, 30 fps at rest, 20 fps asleep), a sprite is
@@ -260,7 +263,10 @@ se laissent attraper et lancer à travers le bureau.
   (Vello) ne se met en route que pour un dessin qui ne se cuit pas, et
   s'arrête quand il s'en va. Au lancement, chaque espèce décode ses
   planches sur ses propres fils, une rangée de cases à la fois, pendant que
-  le menu et le GPU se préparent. Les images suivent l'horloge de
+  le menu et le GPU se préparent. Ses images sont ensuite compressées en
+  BC7 en arrière-plan (quatre fois moins de mémoire, lues telles quelles
+  par le GPU) et gardées sur le disque : les lancements suivants les
+  relisent toutes prêtes en quelques millisecondes. Les images suivent l'horloge de
   l'écran lui-même (sa pleine cadence pour un mouvement vif, la moitié de
   celle d'un écran ProMotion pour une promenade, 30 i/s au repos, 20 i/s
   endormi), une image n'est redessinée que quand elle change, et la liste des

@@ -14,7 +14,6 @@ use mouflon_render::vello::kurbo::Affine;
 use mouflon_render::vello::peniko::{
     Blob, Color, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
 };
-use mouflon_render::vello::util::RenderContext;
 use mouflon_render::vello::wgpu::{self, util::TextureBlitter, util::TextureBlitterBuilder};
 use mouflon_render::vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 use winit::window::Window;
@@ -38,6 +37,73 @@ pub enum GpuError {
     Format,
     #[error("Vello : {0}")]
     Vello(#[from] mouflon_render::vello::Error),
+}
+
+/// Instance wgpu et appareils, comme `vello::util::RenderContext`, mais
+/// l'appareil demande aussi la lecture des textures compressées BC (BC7 pour
+/// les images des animaux) quand le GPU la connaît : tous les Mac.
+struct GpuContext {
+    instance: wgpu::Instance,
+    devices: Vec<DeviceHandle>,
+}
+
+struct DeviceHandle {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl GpuContext {
+    fn new() -> Self {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            display: None,
+            backends: wgpu::Backends::from_env().unwrap_or_default(),
+            flags: wgpu::InstanceFlags::from_build_config().with_env(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::from_env_or_default(),
+        });
+        Self {
+            instance,
+            devices: Vec::new(),
+        }
+    }
+
+    /// Un appareil qui peut dessiner dans `compatible_surface` (ou le premier
+    /// venu), créé au besoin : son rang dans `devices`.
+    async fn device(&mut self, compatible_surface: Option<&wgpu::Surface<'_>>) -> Option<usize> {
+        let found = match compatible_surface {
+            Some(surface) => self
+                .devices
+                .iter()
+                .position(|d| d.adapter.is_surface_supported(surface)),
+            None => (!self.devices.is_empty()).then_some(0),
+        };
+        if found.is_some() {
+            return found;
+        }
+        let adapter =
+            wgpu::util::initialize_adapter_from_env_or_default(&self.instance, compatible_surface)
+                .await
+                .ok()?;
+        let wanted = wgpu::Features::CLEAR_TEXTURE
+            | wgpu::Features::PIPELINE_CACHE
+            | wgpu::Features::TEXTURE_COMPRESSION_BC;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: adapter.features() & wanted,
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            })
+            .await
+            .ok()?;
+        self.devices.push(DeviceHandle {
+            adapter,
+            device,
+            queue,
+        });
+        Some(self.devices.len() - 1)
+    }
 }
 
 /// Une fenêtre à redessiner : sa surface, ce qu'on y dessine, la fenêtre.
@@ -78,7 +144,7 @@ struct VelloPath {
 }
 
 pub struct Gpu {
-    context: RenderContext,
+    context: GpuContext,
     quick: Option<Quick>,
     vello: Option<VelloPath>,
     /// Dernier dessin passé par Vello : sans dessin vectoriel depuis un
@@ -250,7 +316,7 @@ impl Gpu {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            context: RenderContext::new(),
+            context: GpuContext::new(),
             quick: None,
             vello: None,
             vello_used: None,
@@ -270,6 +336,14 @@ impl Gpu {
         self.quick.as_ref().map_or((0, 0), Quick::texture_usage)
     }
 
+    /// Oublie les images qui n'ont pas servi à la dernière image (voir
+    /// [`Quick::forget_unused`]).
+    pub fn forget_unused_images(&mut self) {
+        if let Some(quick) = self.quick.as_mut() {
+            quick.forget_unused();
+        }
+    }
+
     /// Crée la surface d'une fenêtre (et le GPU au premier appel).
     pub fn create_surface(
         &mut self,
@@ -281,7 +355,7 @@ impl Gpu {
         let dev_id =
             pollster::block_on(self.context.device(Some(&surface))).ok_or(GpuError::NoDevice)?;
         let handle = &self.context.devices[dev_id];
-        let caps = surface.get_capabilities(handle.adapter());
+        let caps = surface.get_capabilities(&handle.adapter);
         let format = caps
             .formats
             .iter()
@@ -329,7 +403,7 @@ impl Gpu {
     /// une fois l'appareil créé.
     #[must_use]
     pub fn describe(&self) -> Option<String> {
-        let info = self.context.devices.first()?.adapter().get_info();
+        let info = self.context.devices.first()?.adapter.get_info();
         let kind = match info.device_type {
             wgpu::DeviceType::IntegratedGpu => "intégré",
             wgpu::DeviceType::DiscreteGpu => "séparé",
@@ -337,7 +411,19 @@ impl Gpu {
             wgpu::DeviceType::Cpu => "logiciel",
             wgpu::DeviceType::Other => "autre",
         };
-        Some(format!("{}, {:?}, {kind}", info.name, info.backend))
+        let bc7 = self
+            .context
+            .devices
+            .first()?
+            .device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        Some(format!(
+            "{}, {:?}, {kind}{}",
+            info.name,
+            info.backend,
+            if bc7 { ", images BC7" } else { "" }
+        ))
     }
 
     /// Programmes du rendu direct pour des fenêtres au format `format`.
@@ -519,7 +605,7 @@ impl Gpu {
     }
 
     /// Image de la fenêtre à dessiner, ou `None` (surface à refaire, écran perdu…).
-    fn acquire(context: &RenderContext, surface: &PetSurface) -> Option<wgpu::SurfaceTexture> {
+    fn acquire(context: &GpuContext, surface: &PetSurface) -> Option<wgpu::SurfaceTexture> {
         match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
@@ -676,13 +762,17 @@ mod tests {
         )
     }
 
-    fn pets() -> Vec<(Arc<mouflon_core::PetDef>, PetArt)> {
+    /// Lainou et Pelote, images compressées ou non.
+    fn pets(compressed: bool) -> Vec<(Arc<mouflon_core::PetDef>, PetArt)> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets");
         ["lainou", "pelote"]
             .iter()
             .map(|name| {
                 let def = Arc::new(load_pet(&root.join(name).join("pet.toml")).expect("pet.toml"));
-                let art = PetArt::load(&def).expect("dessin");
+                let mut art = PetArt::load(&def).expect("dessin");
+                if compressed {
+                    art = art.compressed(8, &|| {}).expect("images à compresser");
+                }
                 (def, art)
             })
             .collect()
@@ -690,7 +780,7 @@ mod tests {
 
     /// Listes d'affichage de Lainou et Pelote dans des situations variées, à
     /// deux échelles : (nom, liste).
-    fn sample_lists() -> Vec<(String, DisplayList)> {
+    fn sample_lists(compressed: bool) -> Vec<(String, DisplayList)> {
         let world = mouflon_core::World::new(vec![mouflon_core::Screen {
             frame: mouflon_core::Rect::new(0.0, 0.0, 1440.0, 900.0),
             usable: mouflon_core::Rect::new(0.0, 25.0, 1440.0, 800.0),
@@ -712,7 +802,7 @@ mod tests {
             })
             .collect();
         let mut lists = Vec::new();
-        for (def, art) in pets() {
+        for (def, art) in pets(compressed) {
             let mut pet = mouflon_core::Pet::spawn(0, Arc::clone(&def), 7, &world, Some(600.0));
             for _ in 0..600 {
                 pet.step(mouflon_core::TICK, &world, &mouflon_core::Input::default());
@@ -763,7 +853,7 @@ mod tests {
 
     #[test]
     fn direct_rendering_matches_vello() {
-        let mut context = RenderContext::new();
+        let mut context = GpuContext::new();
         let Some(dev_id) = pollster::block_on(context.device(None)) else {
             eprintln!("pas de GPU ici : comparaison sautée");
             return;
@@ -773,7 +863,7 @@ mod tests {
         let mut quick = Quick::new(device);
         let mut vello = VelloPath::new(device).expect("Vello");
         let mut worst = (0u8, 0.0f64, 0.0f64);
-        for (name, list) in sample_lists() {
+        for (name, list) in sample_lists(false) {
             let fast = target(device, &list);
             let fast_view = fast.create_view(&Default::default());
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -801,11 +891,11 @@ mod tests {
             if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
                 let file = format!("{dir}/{}", name.replace([' ', '×'], "-"));
                 for (suffix, pixels) in [("rapide", &a), ("vello", &b)] {
-                    let bitmap = mouflon_render::display::Bitmap {
-                        width: list.width,
-                        height: list.height,
-                        rgba: mouflon_render::vello::peniko::Blob::from(pixels.clone()),
-                    };
+                    let bitmap = mouflon_render::display::Bitmap::from_rgba(
+                        list.width,
+                        list.height,
+                        pixels.clone(),
+                    );
                     let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
                     std::fs::write(format!("{file}-{suffix}.png"), png).expect("png");
                 }
@@ -826,12 +916,58 @@ mod tests {
         assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
     }
 
+    /// Les images compressées en BC7 donnent, au rendu direct, presque
+    /// exactement les mêmes images que les originales : lues par le GPU, ou
+    /// décompressées avant de partir quand il ne sait pas les lire.
+    #[test]
+    fn compressed_images_look_like_the_originals() {
+        let mut context = GpuContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : comparaison sautée");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let bc7 = device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        eprintln!("textures BC7 lues par le GPU : {bc7}");
+        let originals = sample_lists(false);
+        let compressed = sample_lists(true);
+        for (gpu_reads_bc7, mut quick) in [
+            (bc7, Quick::new(device)),
+            (false, Quick::new(device).without_bc7()),
+        ] {
+            let mut worst = (0u8, 0.0f64, 0.0f64);
+            for ((name, original), (_, packed)) in originals.iter().zip(&compressed) {
+                let images = [original, packed].map(|list| {
+                    let texture = target(device, list);
+                    let view = texture.create_view(&Default::default());
+                    let mut encoder = device.create_command_encoder(&Default::default());
+                    quick.render(device, queue, &mut encoder, &view, FORMAT, list);
+                    queue.submit([encoder.finish()]);
+                    read(device, queue, &texture)
+                });
+                let (max, mean, far) = compare(&images[0], &images[1]);
+                eprintln!(
+                    "{name} (BC7 lu par le GPU : {gpu_reads_bc7}) : écart max {max}, moyen \
+                     {mean:.4}, {:.3} % au-delà de 6",
+                    far * 100.0
+                );
+                worst = (worst.0.max(max), worst.1.max(mean), worst.2.max(far));
+            }
+            eprintln!("pire : {worst:?}");
+            assert!(worst.1 < 0.2, "écart moyen {}", worst.1);
+            assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
+        }
+    }
+
     /// Un dessin vectoriel cuit en images (le Mannequin), posé par le rendu
     /// direct, ressemble à ses tracés dessinés par Vello : mêmes formes, même
     /// éclairage, aux bords près (les images sont posées tournées et étirées).
     #[test]
     fn a_baked_rig_looks_like_its_vector_drawing() {
-        let mut context = RenderContext::new();
+        let mut context = GpuContext::new();
         let Some(dev_id) = pollster::block_on(context.device(None)) else {
             eprintln!("pas de GPU ici : comparaison sautée");
             return;
@@ -906,11 +1042,11 @@ mod tests {
             let (a, b) = (read(device, queue, &fast), read(device, queue, &slow));
             if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
                 for (suffix, pixels) in [("cuit", &a), ("vello", &b)] {
-                    let bitmap = mouflon_render::display::Bitmap {
-                        width: fast_list.width,
-                        height: fast_list.height,
-                        rgba: mouflon_render::vello::peniko::Blob::from(pixels.clone()),
-                    };
+                    let bitmap = mouflon_render::display::Bitmap::from_rgba(
+                        fast_list.width,
+                        fast_list.height,
+                        pixels.clone(),
+                    );
                     let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
                     std::fs::write(format!("{dir}/mannequin-{case}-{suffix}.png"), png)
                         .expect("png");
@@ -945,7 +1081,7 @@ mod tests {
     /// grandir en route.
     #[test]
     fn one_submit_draws_each_window_as_if_alone() {
-        let mut context = RenderContext::new();
+        let mut context = GpuContext::new();
         let Some(dev_id) = pollster::block_on(context.device(None)) else {
             eprintln!("pas de GPU ici : essai sauté");
             return;
@@ -956,7 +1092,7 @@ mod tests {
         // Trois fois chaque situation : bien plus d'éléments que le tampon
         // de départ n'en reçoit.
         let lists: Vec<(String, DisplayList)> =
-            sample_lists().into_iter().cycle().take(84).collect();
+            sample_lists(false).into_iter().cycle().take(84).collect();
         let draws: usize = lists.iter().map(|(_, list)| Quick::draws(list)).sum();
         assert!(
             draws > crate::quick::FIRST_CAPACITY,

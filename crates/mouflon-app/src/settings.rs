@@ -99,6 +99,9 @@ impl Settings {
 pub struct Paths {
     pub settings: PathBuf,
     pub pets: PathBuf,
+    /// Images des animaux déjà prêtes (sur macOS : `~/Library/Caches/…`),
+    /// que le système peut effacer : elles seraient simplement refaites.
+    pub images: PathBuf,
 }
 
 impl Paths {
@@ -122,6 +125,7 @@ impl Paths {
         Self {
             settings: dirs.config_dir().join("settings.toml"),
             pets: dirs.data_dir().join("pets"),
+            images: dirs.cache_dir().join("images"),
         }
     }
 
@@ -182,10 +186,12 @@ mod tests {
         let old = Paths {
             settings: root.join("ancien/settings.toml"),
             pets: root.join("ancien/pets"),
+            images: root.join("ancien/images"),
         };
         let new = Paths {
             settings: root.join("nouveau/settings.toml"),
             pets: root.join("nouveau/pets"),
+            images: root.join("nouveau/images"),
         };
         std::fs::create_dir_all(old.pets.join("esheep")).unwrap();
         std::fs::write(old.pets.join("esheep/animations.xml"), "<animations/>").unwrap();

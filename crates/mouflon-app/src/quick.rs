@@ -9,7 +9,9 @@
 //!
 //! - **image** : la case, téléversée une fois (alpha prémultiplié, bordée
 //!   d'un pixel transparent pour que ses bords tournés restent lisses),
-//!   lue au plus proche ou par interpolation bilinéaire ;
+//!   lue au plus proche ou par interpolation bilinéaire ; une image
+//!   compressée en BC7 part telle quelle, et le GPU la décode en la lisant
+//!   (s'il ne sait pas, elle est décompressée avant de partir) ;
 //! - **ombre** : rectangle arrondi flouté, par la même approximation
 //!   analytique que Vello (Raph Levien, « Blurred rounded rectangles ») ;
 //! - **disque** : cercle antialiasé, rempli d'une couleur ou d'un dégradé
@@ -26,7 +28,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use mouflon_render::display::{Command, DisplayList, Paint, Stop};
+use mouflon_render::display::{Bitmap, Command, DisplayList, Paint, Pixels, Stop};
 use mouflon_render::vello::kurbo::{Affine, Point, Rect, Shape, Vec2};
 use mouflon_render::vello::peniko::{Color, Extend, Mix};
 use mouflon_render::vello::wgpu;
@@ -258,6 +260,8 @@ pub struct Quick {
     pipelines: HashMap<wgpu::TextureFormat, Pipelines>,
     textures: HashMap<u64, Texture>,
     texture_bytes: usize,
+    /// Le GPU lit les textures BC7.
+    bc7: bool,
     /// Textures des calques, par taille et format de fenêtre.
     offscreens: HashMap<(u32, u32, wgpu::TextureFormat), Offscreen>,
     /// Numéro de l'image en cours (pour oublier les images les plus anciennes).
@@ -356,6 +360,9 @@ impl Quick {
             offscreens: HashMap::new(),
             textures: HashMap::new(),
             texture_bytes: 0,
+            bc7: device
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             tick: 0,
             bytes: Vec::with_capacity(SLOT * 8),
             calls: Vec::with_capacity(8),
@@ -524,19 +531,16 @@ impl Quick {
                     alpha: own,
                     smooth,
                 } => {
-                    let key = bitmap.rgba.id();
-                    self.upload(
-                        device,
-                        queue,
-                        key,
-                        bitmap.width,
-                        bitmap.height,
-                        bitmap.rgba.data(),
+                    let key = bitmap.id();
+                    self.upload(device, queue, bitmap);
+                    // L'image et sa bordure transparente d'un pixel (et ce qui
+                    // complète une image compressée, transparent aussi).
+                    let (tw, th) = bitmap.texture_size();
+                    let mut p = Params::quad(
+                        size,
+                        *transform,
+                        Rect::new(-1.0, -1.0, f64::from(tw) - 1.0, f64::from(th) - 1.0),
                     );
-                    let (w, h) = (f64::from(bitmap.width), f64::from(bitmap.height));
-                    // L'image et sa bordure transparente d'un pixel.
-                    let mut p =
-                        Params::quad(size, *transform, Rect::new(-1.0, -1.0, w + 1.0, h + 1.0));
                     p.set(ALPHA, own * alpha);
                     p.set(FLAG, if *smooth { 1.0 } else { 0.0 });
                     self.push(Kind::Image, Some(key), &p);
@@ -794,46 +798,35 @@ impl Quick {
         });
     }
 
-    /// Téléverse une image (alpha non prémultiplié) si elle n'est pas déjà
-    /// sur le GPU : prémultipliée, et bordée d'un pixel transparent.
-    fn upload(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        key: u64,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
-    ) {
+    /// Téléverse une image si elle n'est pas déjà sur le GPU : prémultipliée
+    /// et bordée d'un pixel transparent (voir [`Bitmap::texture_size`]), en
+    /// blocs BC7 si elle est compressée et que le GPU les lit.
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, bitmap: &Bitmap) {
         let tick = self.tick;
-        if let Some(texture) = self.textures.get_mut(&key) {
+        if let Some(texture) = self.textures.get_mut(&bitmap.id()) {
             texture.last_used = tick;
             return;
         }
-        let (w, h) = (width as usize, height as usize);
-        if rgba.len() < w * h * 4 {
+        let (tw, th) = bitmap.texture_size();
+        let rgba;
+        let (format, data, bytes_per_row, rows) = match &bitmap.pixels {
+            Pixels::Bc7(blocks) if self.bc7 => (
+                wgpu::TextureFormat::Bc7RgbaUnorm,
+                blocks.data(),
+                tw / 4 * 16,
+                th / 4,
+            ),
+            _ => {
+                rgba = bitmap.texture_rgba();
+                (wgpu::TextureFormat::Rgba8Unorm, rgba.as_slice(), tw * 4, th)
+            }
+        };
+        if data.len() < (bytes_per_row * rows) as usize {
             return;
         }
-        let (pw, ph) = (w + 2, h + 2);
-        let mut padded = vec![0u8; pw * ph * 4];
-        for y in 0..h {
-            let src = &rgba[y * w * 4..(y + 1) * w * 4];
-            let dst = &mut padded[((y + 1) * pw + 1) * 4..((y + 1) * pw + 1 + w) * 4];
-            for (d, s) in dst
-                .as_chunks_mut::<4>()
-                .0
-                .iter_mut()
-                .zip(src.as_chunks::<4>().0)
-            {
-                let a = u16::from(s[3]);
-                // (c · a + 127) / 255, arrondi.
-                let mul = |c: u8| ((u16::from(c) * a + 127) / 255) as u8;
-                *d = [mul(s[0]), mul(s[1]), mul(s[2]), s[3]];
-            }
-        }
         let size = wgpu::Extent3d {
-            width: pw as u32,
-            height: ph as u32,
+            width: tw,
+            height: th,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -842,7 +835,7 @@ impl Quick {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -853,14 +846,15 @@ impl Quick {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &padded,
+            data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(pw as u32 * 4),
-                rows_per_image: Some(ph as u32),
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(rows),
             },
             size,
         );
+        let bytes = (bytes_per_row * rows) as usize;
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mouflon-image"),
@@ -870,16 +864,32 @@ impl Quick {
                 resource: wgpu::BindingResource::TextureView(&view),
             }],
         });
-        self.texture_bytes += padded.len();
+        self.texture_bytes += bytes;
         self.textures.insert(
-            key,
+            bitmap.id(),
             Texture {
                 bind_group,
                 _texture: texture,
-                bytes: padded.len(),
+                bytes,
                 last_used: tick,
             },
         );
+    }
+
+    /// Le même moteur, qui décompresse lui-même les images BC7 (comme sur un
+    /// GPU qui ne les lit pas).
+    #[cfg(test)]
+    pub(crate) fn without_bc7(mut self) -> Self {
+        self.bc7 = false;
+        self
+    }
+
+    /// Oublie les images qui n'ont pas servi à la dernière image : celles
+    /// qu'une version compressée remplace ne reserviront plus.
+    pub fn forget_unused(&mut self) {
+        let tick = self.tick;
+        self.textures.retain(|_, t| t.last_used >= tick);
+        self.texture_bytes = self.textures.values().map(|t| t.bytes).sum();
     }
 
     /// Au-delà du budget, oublie les images les moins récemment montrées

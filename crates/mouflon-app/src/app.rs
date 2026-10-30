@@ -43,6 +43,11 @@ const ASLEEP_FPS: f64 = 20.0;
 /// Après un mouvement vif, la cadence reste pleine ce temps-là avant de
 /// ralentir : elle ne change pas d'allure à chaque rebond qui se calme.
 const FULL_RATE_HOLD: Duration = Duration::from_millis(300);
+/// La compression des images d'une espèce attend ce temps après son
+/// arrivée : les premières chutes passent avant.
+const COMPRESS_DELAY: Duration = Duration::from_secs(3);
+/// Images gardées sur le disque qui n'ont pas servi depuis ce temps : effacées.
+const IMAGES_KEPT: Duration = Duration::from_secs(90 * 24 * 3600);
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -52,6 +57,8 @@ pub enum UserEvent {
     Frame,
     /// Le dessin de cet animal (identifiant) est prêt.
     ArtReady(String),
+    /// Les images de cet animal sont compressées (voir `App::compress_later`).
+    ArtCompressed(String),
 }
 
 /// Ce qu'un essai fait de lui-même à mi-parcours, pour passer aussi par un
@@ -570,6 +577,7 @@ impl App {
         if entry.art().is_none() {
             return;
         }
+        self.compress_later(&entry);
         self.seed = self
             .seed
             .wrapping_mul(6_364_136_223_846_793_005)
@@ -629,6 +637,82 @@ impl App {
                 log::warn!("dessins préparés sur le fil principal : {e}");
                 false
             }
+        }
+    }
+
+    /// Compresse les images d'une espèce sur des fils de fond, un peu après
+    /// son arrivée (voir [`crate::library::Entry::compress`]) ;
+    /// `UserEvent::ArtCompressed` arrive quand c'est fait. Rien à faire pour
+    /// un dessin vectoriel, du pixel art agrandi, ou des images reprises
+    /// déjà compressées du disque.
+    fn compress_later(&self, entry: &Entry) {
+        if !entry.compressible() {
+            return;
+        }
+        let job = (entry.clone(), Arc::clone(&self.proxy));
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-compression".into())
+            .spawn(move || {
+                let (entry, proxy) = job;
+                platform::lower_thread_priority();
+                std::thread::sleep(COMPRESS_DELAY);
+                let threads =
+                    std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4));
+                let Some(done) = entry.compress(threads, &platform::lower_thread_priority) else {
+                    return;
+                };
+                log::info!(
+                    "images de {} compressées en {} ms sur {threads} fils : {:.1} → {:.1} Mo",
+                    entry.def.meta.name,
+                    done.took.as_millis(),
+                    done.before as f64 / 1e6,
+                    done.after as f64 / 1e6,
+                );
+                if let Ok(proxy) = proxy.lock() {
+                    let _ = proxy.send_event(UserEvent::ArtCompressed(entry.def.meta.id.clone()));
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("images non compressées : {e}");
+        }
+    }
+
+    /// Les images d'une espèce sont compressées : ses fenêtres prennent le
+    /// dessin compressé, et le GPU oublie les images d'avant.
+    fn art_compressed(&mut self, id: &str) {
+        let Some(entry) = self.library.pets.iter().find(|e| e.def.meta.id == id) else {
+            return;
+        };
+        // La bibliothèque a pu être rechargée entre-temps : jamais de décodage
+        // ici, sur le fil de l'affichage.
+        if !entry.art_ready() {
+            return;
+        }
+        let Some(art) = entry.art() else {
+            return;
+        };
+        let pets = self.flock.pets();
+        let mut swapped = 0;
+        for pw in self.windows.values_mut() {
+            let same = pets
+                .iter()
+                .any(|p| p.id() == pw.pet && Arc::ptr_eq(p.def(), &entry.def));
+            if same && !Arc::ptr_eq(&pw.art, &art) {
+                pw.art = Arc::clone(&art);
+                // Redessinée à la prochaine image, avec les images compressées.
+                pw.sprite = None;
+                swapped += 1;
+            }
+        }
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.forget_unused_images();
+        }
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!(
+                "images de {} compressées ({:.1} Mo, {swapped} fenêtre(s))",
+                entry.def.meta.name,
+                art.image_bytes() as f64 / 1e6
+            ));
         }
     }
 
@@ -1445,6 +1529,14 @@ impl App {
         let textures = self.gpu.as_ref().map_or((0, 0), Gpu::texture_usage);
         if let Some(stats) = &mut self.stats {
             stats.set_textures(textures);
+            // Une fois par espèce (ses fenêtres partagent le même dessin).
+            let mut arts: Vec<&Arc<PetArt>> = Vec::new();
+            for pw in self.windows.values() {
+                if !arts.iter().any(|a| Arc::ptr_eq(a, &pw.art)) {
+                    arts.push(&pw.art);
+                }
+            }
+            stats.set_images(arts.iter().map(|a| a.image_bytes()).sum());
             let pets = self.flock.pets().iter().map(|p| {
                 let view = p.view(alpha);
                 crate::stats::PetLine {
@@ -1598,6 +1690,18 @@ impl ApplicationHandler<UserEvent> for App {
         }
         self.started = true;
         let begun = Instant::now();
+        // Les images gardées pour des animaux ou des tailles délaissés s'effacent.
+        if let Some(dir) = self.paths.as_ref().map(|p| p.images.clone()) {
+            let _ = std::thread::Builder::new()
+                .name("mouflon-menage".into())
+                .spawn(move || {
+                    platform::lower_thread_priority();
+                    let removed = mouflon_render::cache::prune(&dir, IMAGES_KEPT);
+                    if removed > 0 {
+                        log::info!("{removed} fichier(s) d'images délaissés effacés");
+                    }
+                });
+        }
         // Essai (MOUFLON_ESSAI) : journal complet dès le début.
         let trial = crate::stats::trial();
         if let Some(duration) = trial {
@@ -1786,6 +1890,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
+            UserEvent::ArtCompressed(id) => self.art_compressed(&id),
         }
     }
 

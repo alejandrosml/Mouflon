@@ -4,11 +4,15 @@
 //! - [`animate`] : animation procédurale des calques à partir des signaux du moteur ;
 //! - [`paint`] : dessin complet d'un animal (ombre, lumière, particules) ;
 //! - [`display`] : liste d'affichage intermédiaire ;
+//! - [`bc7`] : compression des images des animaux pour le GPU ;
+//! - [`cache`] : images des animaux déjà prêtes, gardées sur le disque ;
 //! - [`vello_scene`] et [`svg`] : traduction vers Vello (écran) ou SVG (aperçu).
 #![forbid(unsafe_code)]
 
 pub mod animate;
 pub mod bake;
+pub mod bc7;
+pub mod cache;
 pub mod display;
 pub mod paint;
 pub mod rig;

@@ -19,7 +19,7 @@ use tiny_skia::{
     SpreadMode, Transform,
 };
 use vello::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
-use vello::peniko::{Blob, Color, Extend, Fill};
+use vello::peniko::{Color, Extend, Fill};
 
 use crate::display::{Bitmap, LineCap, LineJoin, Paint, Stop, StrokeStyle};
 use crate::rig::{Item, Part, Rig};
@@ -409,9 +409,5 @@ fn to_bitmap(pixmap: &Pixmap) -> Bitmap {
         let un = |c: u8| ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8;
         rgba.extend_from_slice(&[un(r), un(g), un(b), a]);
     }
-    Bitmap {
-        width: pixmap.width(),
-        height: pixmap.height(),
-        rgba: Blob::from(rgba),
-    }
+    Bitmap::from_rgba(pixmap.width(), pixmap.height(), rgba)
 }

@@ -8,8 +8,9 @@
 //! animal qu'on y dépose apparaît dans le menu sans relancer l'app.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::time::{Instant, SystemTime};
 
 use mouflon_core::{Appearance, LoadError, PetDef, load_pet, parse_pet_toml};
 use mouflon_render::PetArt;
@@ -26,53 +27,133 @@ pub struct Entry {
     /// Dessin préparé à la première apparition : décoder des centaines
     /// d'images prend un moment, et elles n'occupent la mémoire que si
     /// l'animal sert.
-    art: Arc<OnceLock<Option<Arc<PetArt>>>>,
+    art: Arc<ArtSlot>,
+    /// Dossier des images déjà prêtes (voir [`mouflon_render::cache`]).
+    images: Option<Arc<Path>>,
+}
+
+/// Le dessin d'une espèce : préparé à la première demande (les autres
+/// demandes attendent), puis remplacé par sa version aux images compressées.
+#[derive(Debug, Default)]
+struct ArtSlot {
+    /// `None` : pas encore préparé ; `Some(None)` : illisible.
+    art: Mutex<Option<Option<Arc<PetArt>>>>,
+    /// La compression des images a été lancée (ou n'avait pas lieu d'être).
+    compressing: AtomicBool,
+}
+
+/// Ce qu'a donné la compression des images d'une espèce.
+#[derive(Debug)]
+pub struct Compressed {
+    /// Octets des images avant et après.
+    pub before: usize,
+    pub after: usize,
+    pub took: std::time::Duration,
 }
 
 impl Entry {
-    fn new(def: PetDef, size: f32) -> Self {
+    fn new(def: PetDef, size: f32, images: Option<Arc<Path>>) -> Self {
         let base = Arc::new(def);
         Self {
             def: Arc::new(base.scaled(size)),
             base,
-            art: Arc::new(OnceLock::new()),
+            art: Arc::default(),
+            images,
         }
     }
 
     /// Met l'animal à une autre taille ; son dessin sera refait à la demande.
     fn resize(&mut self, size: f32) {
         self.def = Arc::new(self.base.scaled(size));
-        self.art = Arc::new(OnceLock::new());
+        self.art = Arc::default();
     }
 
     /// Le dessin de l'animal a-t-il déjà été préparé (ou trouvé illisible) ?
+    /// Non tant qu'il se prépare.
     #[must_use]
     pub fn art_ready(&self) -> bool {
-        self.art.get().is_some()
+        match self.art.art.try_lock() {
+            Ok(art) => art.is_some(),
+            Err(TryLockError::Poisoned(art)) => art.into_inner().is_some(),
+            Err(TryLockError::WouldBlock) => false,
+        }
     }
 
-    /// Dessin de l'animal, préparé à la première demande ; `None` s'il est
-    /// illisible (l'erreur est notée au journal une fois).
+    /// Dessin de l'animal, préparé à la première demande (en reprenant les
+    /// images déjà prêtes s'il y en a) ; `None` s'il est illisible (l'erreur
+    /// est notée au journal une fois).
     pub fn art(&self) -> Option<Arc<PetArt>> {
-        self.art
-            .get_or_init(|| {
-                let started = std::time::Instant::now();
-                match PetArt::load(&self.def) {
-                    Ok(art) => {
-                        log::info!(
-                            "dessin de {} prêt en {} ms",
-                            self.def.meta.name,
-                            started.elapsed().as_millis()
-                        );
-                        Some(Arc::new(art))
-                    }
-                    Err(e) => {
-                        log::error!("{} : dessin invalide : {e}", self.def.meta.name);
-                        None
-                    }
+        let mut art = self.art.art.lock().unwrap_or_else(PoisonError::into_inner);
+        art.get_or_insert_with(|| {
+            let started = Instant::now();
+            match PetArt::load_cached(&self.def, self.images.as_deref()) {
+                Ok(art) => {
+                    log::info!(
+                        "dessin de {} prêt en {} ms{}",
+                        self.def.meta.name,
+                        started.elapsed().as_millis(),
+                        if art.from_cache() {
+                            format!(
+                                " (images déjà prêtes, {:.1} Mo)",
+                                art.image_bytes() as f64 / 1e6
+                            )
+                        } else {
+                            String::new()
+                        }
+                    );
+                    Some(Arc::new(art))
                 }
-            })
-            .clone()
+                Err(e) => {
+                    log::error!("{} : dessin invalide : {e}", self.def.meta.name);
+                    None
+                }
+            }
+        })
+        .clone()
+    }
+
+    /// Compresse les images du dessin, une seule fois, sur `threads` fils
+    /// qui appellent d'abord `setup` ; elles sont gardées sur le disque pour
+    /// les prochains lancements, et le dessin compressé remplace l'autre.
+    /// `None` s'il n'y avait rien à compresser (ou si c'est déjà fait).
+    pub fn compress(&self, threads: usize, setup: &(dyn Fn() + Sync)) -> Option<Compressed> {
+        if self.art.compressing.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        let art = self.art()?;
+        let started = Instant::now();
+        let packed = Arc::new(art.compressed(threads, setup)?);
+        if let Some(dir) = &self.images
+            && let Err(e) = packed.keep(&self.def, dir)
+        {
+            log::warn!(
+                "images de {} non gardées dans {} : {e}",
+                self.def.meta.name,
+                dir.display()
+            );
+        }
+        *self.art.art.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Some(Arc::clone(&packed)));
+        Some(Compressed {
+            before: art.image_bytes(),
+            after: packed.image_bytes(),
+            took: started.elapsed(),
+        })
+    }
+
+    /// Reste-t-il des images à compresser ? (Sans attendre un dessin en
+    /// préparation.)
+    #[must_use]
+    pub fn compressible(&self) -> bool {
+        if self.art.compressing.load(Ordering::Acquire) {
+            return false;
+        }
+        match self.art.art.try_lock() {
+            Ok(art) => art
+                .as_ref()
+                .is_some_and(|a| a.as_ref().is_some_and(|a| a.compressible())),
+            Err(_) => false,
+        }
     }
 }
 
@@ -81,6 +162,8 @@ pub struct Library {
     pub pets: Vec<Entry>,
     /// Dossier des animaux de l'utilisateur.
     dir: Option<PathBuf>,
+    /// Dossier des images déjà prêtes.
+    images: Option<Arc<Path>>,
     /// Animaux livrés dans l'app, dans l'ordre : le premier est l'animal par défaut.
     bundled: Vec<String>,
     /// Animaux passés en argument, rechargés avec le reste.
@@ -200,9 +283,10 @@ fn builtin_mannequin() -> Result<PetDef, LoadError> {
 
 impl Library {
     #[must_use]
-    pub fn load(user_dir: Option<&Path>, size: f32) -> Self {
+    pub fn load(user_dir: Option<&Path>, images: Option<&Path>, size: f32) -> Self {
         let mut library = Self {
             dir: user_dir.map(Path::to_path_buf),
+            images: images.map(Arc::from),
             size,
             ..Self::default()
         };
@@ -266,7 +350,7 @@ impl Library {
     }
 
     fn add(&mut self, def: PetDef, origin: &str) {
-        let entry = Entry::new(def, self.size);
+        let entry = Entry::new(def, self.size, self.images.clone());
         // Un dessin vectoriel se lit vite : on le vérifie tout de suite. Les
         // images attendent la première apparition (leurs en-têtes sont déjà vérifiés).
         if matches!(entry.def.appearance, Appearance::Rig { .. }) && entry.art().is_none() {
@@ -406,7 +490,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut library = Library::load(Some(&pets), 1.0);
+        let mut library = Library::load(Some(&pets), None, 1.0);
         assert_eq!(library.pets.len(), 1);
         assert_eq!(library.dir(), Some(pets.as_path()));
         assert!(!library.changed_since(&stamp(&pets)));

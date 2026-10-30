@@ -1,5 +1,6 @@
 //! Dessin d'un animal dans sa fenêtre : ombre, personnage, lumière, particules.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use mouflon_core::{
@@ -11,6 +12,7 @@ use vello::peniko::{Color, Extend, Fill, Mix};
 
 use crate::animate::{PoseTransforms, pose};
 use crate::bake::BakedRig;
+use crate::cache;
 use crate::display::{Command, DisplayList, Paint, Stop, rgba};
 use crate::rig::{Item, Part, Rig, RigError};
 use crate::sprites::{SpriteError, SpriteFrames};
@@ -49,6 +51,12 @@ pub struct PetArt {
     /// Distance parcourue pendant un cycle de marche (points) : les pattes
     /// d'un dessin vectoriel balaient juste ce qu'il faut pour ne pas glisser.
     pub stride: f32,
+    /// Clé des planches au moment où elles ont été lues (voir
+    /// [`cache::key`]) : les images gardées sur le disque portent celle des
+    /// planches dont elles viennent, même si un fichier change entre-temps.
+    sheet_key: Option<u64>,
+    /// Images reprises telles quelles du disque.
+    from_cache: bool,
 }
 
 /// Fenêtre d'un animal : taille en points et position du point d'appui.
@@ -61,6 +69,12 @@ pub struct Canvas {
 
 impl PetArt {
     pub fn load(def: &PetDef) -> Result<Self, ArtError> {
+        Self::load_cached(def, None)
+    }
+
+    /// Comme [`Self::load`], en reprenant d'abord les images déjà prêtes
+    /// gardées dans le dossier `cache` (voir [`crate::cache`]).
+    pub fn load_cached(def: &PetDef, cache: Option<&Path>) -> Result<Self, ArtError> {
         match &def.appearance {
             Appearance::Rig { svg, height } => {
                 let rig = Rig::parse(svg)?;
@@ -77,10 +91,20 @@ impl PetArt {
                     drawn: Drawn::default(),
                     baked,
                     stride: def.stride(),
+                    sheet_key: None,
+                    from_cache: false,
                 })
             }
             Appearance::Sprites(sheet) => {
-                let frames = SpriteFrames::decode(sheet)?;
+                let sheet_key = cache.and_then(|_| cache::key(sheet));
+                let kept = cache.zip(sheet_key).and_then(|(dir, key)| {
+                    cache::load(&cache::path(dir, &def.meta.id, sheet), key, sheet)
+                });
+                let from_cache = kept.is_some();
+                let frames = match kept {
+                    Some(frames) => frames,
+                    None => SpriteFrames::decode(sheet)?,
+                };
                 let p = def.physics;
                 Ok(Self {
                     width: frames.tile_width as f32 * sheet.scale,
@@ -91,9 +115,59 @@ impl PetArt {
                     drawn: sheet.drawn,
                     baked: None,
                     stride: def.stride(),
+                    sheet_key,
+                    from_cache,
                 })
             }
         }
+    }
+
+    /// Images reprises telles quelles du disque (voir [`crate::cache`]).
+    #[must_use]
+    pub fn from_cache(&self) -> bool {
+        self.from_cache
+    }
+
+    /// Des images restent-elles à compresser (voir
+    /// [`SpriteFrames::compressible`]) ?
+    #[must_use]
+    pub fn compressible(&self) -> bool {
+        matches!(&self.look, Look::Sprites(frames) if frames.compressible())
+    }
+
+    /// Octets qu'occupent les images d'un animal en images.
+    #[must_use]
+    pub fn image_bytes(&self) -> usize {
+        match &self.look {
+            Look::Sprites(frames) => frames.byte_size(),
+            Look::Rig(_) => 0,
+        }
+    }
+
+    /// Le même dessin, images compressées en BC7 sur `threads` fils (voir
+    /// [`SpriteFrames::compressed`]) ; `None` s'il n'y a rien à compresser.
+    #[must_use]
+    pub fn compressed(&self, threads: usize, setup: &(dyn Fn() + Sync)) -> Option<Self> {
+        let Look::Sprites(frames) = &self.look else {
+            return None;
+        };
+        if !frames.compressible() {
+            return None;
+        }
+        Some(Self {
+            look: Look::Sprites(Arc::new(frames.compressed(threads, setup))),
+            ..self.clone()
+        })
+    }
+
+    /// Garde les images dans le dossier `cache` pour les prochains lancements.
+    pub fn keep(&self, def: &PetDef, cache: &Path) -> std::io::Result<()> {
+        let (Look::Sprites(frames), Appearance::Sprites(sheet), Some(key)) =
+            (&self.look, &def.appearance, self.sheet_key)
+        else {
+            return Ok(());
+        };
+        cache::save(&cache::path(cache, &def.meta.id, sheet), key, frames)
     }
 
     /// Place du dessin devant et derrière son point d'appui (points), pour
