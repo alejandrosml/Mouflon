@@ -48,6 +48,33 @@ impl Vec2 {
             self
         }
     }
+
+    #[must_use]
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y
+    }
+
+    /// Produit vectoriel en 2D (un nombre) : positif quand `other` tourne
+    /// dans le sens horaire de l'écran par rapport à `self` (y vers le bas).
+    #[must_use]
+    pub fn cross(self, other: Self) -> f32 {
+        self.x * other.y - self.y * other.x
+    }
+
+    /// Le vecteur tourné d'un quart de tour dans le sens horaire de l'écran :
+    /// la vitesse d'un point à `self` du centre d'un corps qui tourne à un
+    /// radian par seconde.
+    #[must_use]
+    pub fn perp(self) -> Self {
+        Self::new(-self.y, self.x)
+    }
+
+    /// Le vecteur tourné de `angle` radians dans le sens horaire de l'écran.
+    #[must_use]
+    pub fn rotated(self, angle: f32) -> Self {
+        let (s, c) = angle.sin_cos();
+        Self::new(c * self.x - s * self.y, s * self.x + c * self.y)
+    }
 }
 
 impl Add for Vec2 {

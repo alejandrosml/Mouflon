@@ -34,6 +34,7 @@ pub enum Action {
     /// Taille des animaux : rang dans [`crate::settings::SIZES`].
     SetSize(usize),
     SetCollisions(bool),
+    SetRealisticPhysics(bool),
     SetFrontmostOnly(bool),
     /// Marcher sous le Dock (il faut l'autorisation d'Accessibilité).
     SetWalkUnderDock(bool),

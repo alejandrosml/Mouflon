@@ -496,17 +496,20 @@ fn paint_sprite(
     }
     // En mouvement : écrasement depuis les pattes, balancement sous la main qui
     // le tient, inclinaison en vol, culbute, demi-tour qui pivote.
-    // Tenu, il se balance autour du point où le curseur le tient.
+    // Tenu, il se balance autour du point où le curseur le tient ; il roule
+    // (culbute, physique réaliste) autour du milieu de son corps.
+    let middle = Point::new(g.x, g.y - f64::from(art.body.1 / 1.02) * 0.5 + offset);
     let pivot = match (view.support, view.grip) {
         (Support::Held, Some(grip)) => pt(grip),
         (Support::Held, None) => {
             Point::new(g.x, g.y - f64::from(frames.tile_height) * s * 0.95 + offset)
         }
-        _ => Point::new(g.x, g.y - f64::from(art.body.1 / 1.02) * 0.5 + offset),
+        _ => middle,
     };
     let sx = motion.mirror.signum() * motion.mirror.abs().max(0.12) * (1.0 + 0.5 * motion.squash);
     let sy = 1.0 - motion.squash;
     let transform = world
+        * Affine::rotate_about(motion.roll, middle)
         * Affine::rotate_about(motion.angle, pivot)
         * Affine::translate((g.x, g.y + offset))
         * Affine::scale_non_uniform(sx, sy)
@@ -528,8 +531,11 @@ pub struct SpriteMotion {
     pub mirror: f64,
     /// > 0 : écrasé ; < 0 : étiré.
     pub squash: f64,
-    /// Rotation dans le repère de l'écran (radians, sens horaire).
+    /// Inclinaison et balancement dans le repère de l'écran (radians, sens
+    /// horaire), autour de la main qui le tient ou du milieu du corps.
     pub angle: f64,
+    /// Culbute, autour du milieu du corps.
+    pub roll: f64,
 }
 
 impl SpriteMotion {
@@ -541,7 +547,7 @@ impl SpriteMotion {
             Support::Held => f64::from(view.pose.swing) * 0.9,
             Support::Air => lean * 0.8,
             Support::Ground { .. } => lean * 0.3,
-        } + f64::from(view.pose.roll);
+        };
         let facings = match &art.look {
             Look::Sprites(frames) => frames.facings,
             Look::Rig(_) => Facings::Right,
@@ -562,13 +568,17 @@ impl SpriteMotion {
                 f64::from(view.pose.squash)
             },
             angle,
+            roll: f64::from(view.pose.roll),
         }
     }
 
     /// Image au repos : on la dessine nette, au pixel près.
     #[must_use]
     pub fn is_rest(&self) -> bool {
-        self.squash.abs() < 0.004 && self.angle.abs() < 0.003 && self.mirror.abs() > 0.999
+        self.squash.abs() < 0.004
+            && self.angle.abs() < 0.003
+            && self.roll.abs() < 0.003
+            && self.mirror.abs() > 0.999
     }
 
     /// Le mouvement au millième près : deux mouvements de même clé se
@@ -576,15 +586,16 @@ impl SpriteMotion {
     /// une image de 320 pixels. Au repos, l'image se pose au pixel près quel
     /// que soit ce qui reste du mouvement : une seule clé.
     #[must_use]
-    pub fn key(&self) -> [i32; 3] {
+    pub fn key(&self) -> [i32; 4] {
         let thousandths = |v: f64| (v * 1000.0).round() as i32;
         if self.is_rest() {
-            return [thousandths(self.mirror.signum()), 0, 0];
+            return [thousandths(self.mirror.signum()), 0, 0, 0];
         }
         [
             thousandths(self.mirror),
             thousandths(self.squash),
             thousandths(self.angle),
+            thousandths(self.roll),
         ]
     }
 }
@@ -604,7 +615,7 @@ pub struct SpriteKey {
     shadow: Option<[i32; 2]>,
     /// Le mouvement ajouté par Mouflon : une inclinaison qui ne change pas
     /// (au plafond, contre un mur) ne fait rien redessiner.
-    motion: [i32; 3],
+    motion: [i32; 4],
 }
 
 impl SpriteKey {

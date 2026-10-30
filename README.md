@@ -89,9 +89,23 @@ state (a change made in one is seen at once in the others):
 - **A right click on a pet** (or Control-click): say goodbye to that one, add
   another of its kind, change the size, mute, pause, open the settings. It
   waits under its menu; the others go on with their lives.
-- **The settings window**: size, sounds, collisions between pets, walking only
-  on the frontmost app, walking under the Dock, opening Mouflon at login, and
-  the pets folder, each option with a line saying what it does.
+- **The settings window**: size, sounds, realistic physics, collisions between
+  pets, walking only on the frontmost app, walking under the Dock, opening
+  Mouflon at login, and the pets folder, each option with a line saying what it
+  does.
+
+With *Realistic physics* (on by default), each pet is a rigid body with a mass,
+an angle and a spin, in Mouflon's own 2D physics engine (`mouflon-core`,
+`physics.rs`, pure Rust). A window you drag carries the pets standing on it as
+long as their feet hold; jerk it and it slides from under them, pull it down
+faster than they can fall and they drop, raise it and stop sharply and they are
+tossed up. Held, a pet hangs from the point you took it by and swings like a
+pendulum; let go, it keeps the momentum of your hand and its spin, bounces off
+the edges of the screens and the sides of windows, then gets back on its feet.
+With collisions on, pets hit each other in mid-air (trading momentum) and can
+land and ride on each other's back. Without it, the physics of eSheep and
+desktopPet: a pet sticks to its window and falls straight down. The whole
+engine costs about 15 µs per 1/120 s step for 32 pets.
 
 Pets walk on the Dock. With *Walk under the Dock*, they go down to the bottom of
 the screen, pass behind the Dock and can jump onto it. To know where the Dock
@@ -233,7 +247,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 
 | Crate | Role | `unsafe` |
 |---|---|---|
-| `mouflon-core` | physics, behaviors, pet formats, world (screens, visible window ledges) | forbidden |
+| `mouflon-core` | physics (classic, and the realistic rigid-body engine), behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; rigs baked into images (tiny-skia); Vello or SVG output | forbidden |
 | `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
 | `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
@@ -374,10 +388,10 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
   ajouter un autre de son espèce, changer la taille, couper les sons, mettre
   en pause, ouvrir les réglages. Il attend sous son menu ; les autres
   continuent leur vie.
-- **La fenêtre des réglages** : taille, sons, collisions entre animaux, marche
-  sur la seule app au premier plan, marche sous le Dock, ouverture de Mouflon à
-  l'ouverture de session et dossier des animaux, chaque option avec une ligne
-  qui dit ce qu'elle fait.
+- **La fenêtre des réglages** : taille, sons, physique réaliste, collisions
+  entre animaux, marche sur la seule app au premier plan, marche sous le Dock,
+  ouverture de Mouflon à l'ouverture de session et dossier des animaux, chaque
+  option avec une ligne qui dit ce qu'elle fait.
 
 Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
@@ -387,6 +401,20 @@ Accessibilité), qui ne lui sert à rien d'autre ; la fenêtre des réglages le
 dit, et propose d'ouvrir Réglages Système tant que l'autorisation manque.
 L'option est facultative. Lancé avec `cargo run`, c'est le Terminal qui reçoit
 l'autorisation.
+
+Avec « Physique réaliste » (cochée d'origine), chaque animal est un corps
+rigide qui a une masse, un angle et une rotation, dans le moteur physique 2D de
+Mouflon (`mouflon-core`, `physics.rs`, en Rust pur). Une fenêtre qu'on déplace
+emporte les animaux posés dessus tant que leurs pattes tiennent ; secouée d'un
+coup sec, elle file sous eux ; tirée vers le bas plus vite qu'ils ne tombent,
+elle les lâche ; montée puis arrêtée net, elle les lance en l'air. Tenu, un
+animal pend sous le point par lequel on l'a pris et se balance comme un
+pendule ; lâché, il garde l'élan de la main et sa rotation, rebondit sur les
+bords des écrans et les côtés des fenêtres, puis se remet sur ses pattes. Avec
+les collisions, les animaux se heurtent en plein vol (ils échangent leur élan)
+et peuvent se poser sur le dos l'un de l'autre, qui les emporte. Sans elle, la
+physique d'eSheep et de desktopPet : l'animal colle à sa fenêtre et tombe tout
+droit. Tout le moteur coûte environ 15 µs par pas de 1/120 s pour 32 animaux.
 
 « Ouvrir Mouflon à l'ouverture de session » inscrit l'app auprès de macOS
 (Réglages Système → Général → Ouverture), qui garde ce choix : la case montre
@@ -525,7 +553,7 @@ ses comportements : [docs/format.md](docs/format.md).
 
 | Crate | Rôle | `unsafe` |
 |---|---|---|
-| `mouflon-core` | physique, comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
+| `mouflon-core` | physique (classique, et le moteur réaliste de corps rigides), comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; rigs cuits en images (tiny-skia) ; sortie Vello ou SVG | interdit |
 | `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |

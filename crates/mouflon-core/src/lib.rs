@@ -18,6 +18,7 @@ pub mod expr;
 pub mod format;
 pub mod math;
 pub mod pet;
+pub mod physics;
 pub mod world;
 
 pub use def::{

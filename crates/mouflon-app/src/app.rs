@@ -306,6 +306,7 @@ impl App {
         let now = Instant::now();
         let mut flock = Flock::new();
         flock.set_collisions(settings.collisions);
+        flock.set_realistic(settings.realistic_physics);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -1249,6 +1250,7 @@ impl App {
                 self.sync_windows(event_loop);
             }
             Action::SetCollisions(on) => self.set_collisions(on),
+            Action::SetRealisticPhysics(on) => self.set_realistic_physics(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
             Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
             Action::SetOpenAtLogin(on) => self.login = platform::set_login_item(on),
@@ -1300,6 +1302,7 @@ impl App {
             sounds: self.settings.sounds,
             // Celles du troupeau : un essai peut les imposer.
             collisions: self.flock.collisions(),
+            realistic_physics: self.flock.realistic(),
             frontmost_only: self.settings.frontmost_only,
             walk_under_dock: self.settings.walk_under_dock,
             trusted: platform::accessibility_trusted(),
@@ -1344,6 +1347,15 @@ impl App {
         if on {
             self.warm_up_sounds();
         }
+    }
+
+    fn set_realistic_physics(&mut self, on: bool) {
+        if self.settings.realistic_physics == on && self.flock.realistic() == on {
+            return;
+        }
+        self.settings.realistic_physics = on;
+        self.flock.set_realistic(on);
+        self.save_settings();
     }
 
     fn set_collisions(&mut self, on: bool) {
@@ -2033,10 +2045,11 @@ impl ApplicationHandler<UserEvent> for App {
                 stats.raw(line);
             }
             stats.raw(format!(
-                "REGLAGES taille {} sons {} collisions {} premier_plan {} dock {} animaux {:?}",
+                "REGLAGES taille {} sons {} collisions {} physique_realiste {} premier_plan {} dock {} animaux {:?}",
                 self.settings.size_factor(),
                 self.settings.sounds,
                 self.flock.collisions(),
+                self.flock.realistic(),
                 self.settings.frontmost_only,
                 self.settings.walk_under_dock,
                 crate::stats::trial_pets(),

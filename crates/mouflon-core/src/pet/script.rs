@@ -284,7 +284,13 @@ impl Pet {
         };
     }
 
-    fn land_script(&mut self, surface: &Surface, speed: f32, world: &World, input: &Input) -> bool {
+    pub(super) fn land_script(
+        &mut self,
+        surface: &Surface,
+        speed: f32,
+        world: &World,
+        input: &Input,
+    ) -> bool {
         let before = (self.support, self.ground_ref, self.walking_off);
         // Les conditions « sur le sol » ou « sur une fenêtre » portent sur la surface d'arrivée.
         self.set_ground(surface);

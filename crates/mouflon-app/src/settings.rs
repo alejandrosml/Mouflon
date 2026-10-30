@@ -21,6 +21,10 @@ pub struct Settings {
     pub frontmost_only: bool,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     pub collisions: bool,
+    /// Physique réaliste (voir `mouflon_core::physics`) : les fenêtres
+    /// emportent les animaux et peuvent les faire tomber, lancés ils tournent
+    /// et rebondissent. Sans elle, celle d'eSheep et de desktopPet.
+    pub realistic_physics: bool,
     /// Taille des animaux, par rapport à celle prévue par chacun.
     pub size: f32,
     /// Marcher sous le Dock : les animaux descendent jusqu'en bas de l'écran,
@@ -40,6 +44,7 @@ impl Default for Settings {
             default_pet: None,
             frontmost_only: true,
             collisions: false,
+            realistic_physics: true,
             size: 1.0,
             walk_under_dock: false,
             sounds: true,
@@ -200,6 +205,7 @@ mod tests {
             default_pet: Some("esheep".into()),
             frontmost_only: false,
             collisions: true,
+            realistic_physics: false,
             size: 1.0,
             walk_under_dock: false,
             sounds: true,

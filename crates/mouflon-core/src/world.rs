@@ -105,6 +105,9 @@ pub struct World {
     /// (`None` : à recalculer au prochain relevé).
     windows: Vec<WindowRect>,
     options: Option<LedgeOptions>,
+    /// Relevés des fenêtres reçus, même identiques au précédent : la
+    /// physique réaliste sait ainsi qu'une fenêtre n'a pas bougé.
+    polls: u64,
 }
 
 impl World {
@@ -148,6 +151,7 @@ impl World {
     /// fournie par le système. Le relevé revient plusieurs fois par seconde,
     /// le plus souvent à l'identique : rien n'est alors recalculé.
     pub fn set_windows(&mut self, windows: &[WindowRect], options: LedgeOptions) {
+        self.polls += 1;
         if self.options == Some(options) && self.windows == windows {
             return;
         }
@@ -164,6 +168,57 @@ impl World {
     #[must_use]
     pub fn walls(&self) -> &[Wall] {
         &self.walls
+    }
+
+    /// Les fenêtres du dernier relevé, au premier plan d'abord.
+    #[must_use]
+    pub fn windows(&self) -> &[WindowRect] {
+        &self.windows
+    }
+
+    /// Nombre de relevés des fenêtres reçus jusqu'ici.
+    #[must_use]
+    pub fn polls(&self) -> u64 {
+        self.polls
+    }
+
+    /// Devient une copie de `other`, en gardant la mémoire déjà allouée
+    /// (la physique réaliste en refait une à chaque pas).
+    pub(crate) fn copy_from(&mut self, other: &World) {
+        self.screens.clone_from(&other.screens);
+        self.surfaces.clone_from(&other.surfaces);
+        self.walls.clone_from(&other.walls);
+        self.windows.clone_from(&other.windows);
+        self.arena = other.arena;
+        self.bounds = other.bounds;
+        self.options = other.options;
+        self.polls = other.polls;
+    }
+
+    /// Déplace les rebords et les côtés de chaque fenêtre de ce que dit
+    /// `offset` (identifiant de la fenêtre → décalage, ou rien).
+    pub(crate) fn shift_windows(&mut self, offset: impl Fn(u64) -> Option<Vec2>) {
+        for surface in &mut self.surfaces {
+            if surface.kind == SurfaceKind::Window
+                && let Some(d) = offset(surface.id >> 8)
+            {
+                surface.x0 += d.x;
+                surface.x1 += d.x;
+                surface.y += d.y;
+            }
+        }
+        for wall in &mut self.walls {
+            if let Some(d) = offset(wall.window) {
+                wall.x += d.x;
+                wall.y0 += d.y;
+                wall.y1 += d.y;
+            }
+        }
+    }
+
+    /// Ajoute une surface (le dos d'un animal, en physique réaliste).
+    pub(crate) fn push_surface(&mut self, surface: Surface) {
+        self.surfaces.push(surface);
     }
 
     /// Premier côté de fenêtre que franchit l'avant d'un animal qui va de

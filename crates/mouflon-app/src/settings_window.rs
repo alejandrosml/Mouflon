@@ -21,6 +21,7 @@ const ACCESSIBILITY: u32 = 7;
 /// « Ouvrir Réglages Système » sous « Ouvrir Mouflon à l'ouverture de session ».
 const LOGIN_APPROVAL: u32 = 8;
 const FOLDER: u32 = 9;
+const PHYSICS: u32 = 10;
 
 /// Ce que la fenêtre montre : les réglages de l'app, et ce qu'en dit le
 /// système (autorisation d'Accessibilité, ouverture de session).
@@ -30,6 +31,7 @@ pub struct Shown {
     pub size: usize,
     pub sounds: bool,
     pub collisions: bool,
+    pub realistic_physics: bool,
     pub frontmost_only: bool,
     pub walk_under_dock: bool,
     /// Mouflon a l'autorisation d'Accessibilité.
@@ -78,6 +80,12 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
         FormSection {
             title: t.walks_section.clone(),
             rows: vec![
+                check(
+                    PHYSICS,
+                    &t.realistic_physics,
+                    Some(&t.realistic_physics_help),
+                    None,
+                ),
                 check(COLLISIONS, &t.collisions, Some(&t.collisions_help), None),
                 check(
                     FRONTMOST,
@@ -137,6 +145,7 @@ pub fn values(shown: &Shown) -> Vec<FormValue> {
     vec![
         FormValue::Step(SIZE, shown.size),
         FormValue::Check(SOUNDS, shown.sounds),
+        FormValue::Check(PHYSICS, shown.realistic_physics),
         FormValue::Check(COLLISIONS, shown.collisions),
         FormValue::Check(FRONTMOST, shown.frontmost_only),
         FormValue::Check(DOCK, shown.walk_under_dock),
@@ -154,6 +163,7 @@ pub fn action(event: UiEvent) -> Option<Action> {
         UiEvent::Step(SIZE, size) => Action::SetSize(size),
         UiEvent::Check(SOUNDS, on) => Action::SetSounds(on),
         UiEvent::Check(COLLISIONS, on) => Action::SetCollisions(on),
+        UiEvent::Check(PHYSICS, on) => Action::SetRealisticPhysics(on),
         UiEvent::Check(FRONTMOST, on) => Action::SetFrontmostOnly(on),
         UiEvent::Check(DOCK, on) => Action::SetWalkUnderDock(on),
         UiEvent::Check(LOGIN, on) => Action::SetOpenAtLogin(on),
@@ -179,6 +189,7 @@ mod tests {
             size: 1,
             sounds: true,
             collisions: false,
+            realistic_physics: true,
             frontmost_only: true,
             walk_under_dock: false,
             trusted: false,
@@ -246,6 +257,10 @@ mod tests {
             Some(Action::SetWalkUnderDock(true))
         );
         assert_eq!(action(UiEvent::Step(SIZE, 3)), Some(Action::SetSize(3)));
+        assert_eq!(
+            action(UiEvent::Check(PHYSICS, false)),
+            Some(Action::SetRealisticPhysics(false))
+        );
         assert_eq!(action(UiEvent::FormShown), Some(Action::RefreshSettings));
         assert_eq!(action(UiEvent::Menu(1)), None);
     }
