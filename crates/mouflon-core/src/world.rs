@@ -101,6 +101,10 @@ pub struct World {
     walls: Vec<Wall>,
     arena: Rect,
     bounds: Rect,
+    /// Fenêtres et réglages d'où viennent les rebords et les côtés actuels
+    /// (`None` : à recalculer au prochain relevé).
+    windows: Vec<WindowRect>,
+    options: Option<LedgeOptions>,
 }
 
 impl World {
@@ -127,6 +131,8 @@ impl World {
             .reduce(|a, b| a.union(&b))
             .unwrap_or_default();
         self.surfaces.retain(|s| s.kind != SurfaceKind::Floor);
+        // Les rebords dépendent des zones utiles : à refaire au prochain relevé.
+        self.options = None;
         for (i, screen) in self.screens.iter().enumerate() {
             self.surfaces.push(Surface {
                 id: FLOOR_ID_BIT | i as u64,
@@ -139,12 +145,19 @@ impl World {
     }
 
     /// Remplace les rebords et les côtés des fenêtres à partir de la liste
-    /// fournie par le système.
+    /// fournie par le système. Le relevé revient plusieurs fois par seconde,
+    /// le plus souvent à l'identique : rien n'est alors recalculé.
     pub fn set_windows(&mut self, windows: &[WindowRect], options: LedgeOptions) {
+        if self.options == Some(options) && self.windows == windows {
+            return;
+        }
         let ledges = visible_ledges(windows, &self.screens, options);
         self.surfaces.retain(|s| s.kind == SurfaceKind::Floor);
         self.surfaces.extend(ledges);
         self.walls = visible_walls(windows);
+        self.windows.clear();
+        self.windows.extend_from_slice(windows);
+        self.options = Some(options);
     }
 
     /// Côtés visibles des fenêtres.
@@ -418,6 +431,41 @@ mod tests {
         let floor = world.floor_under(100.0).unwrap();
         assert_eq!(floor.y, 825.0);
         assert_eq!(floor.kind, SurfaceKind::Floor);
+    }
+
+    #[test]
+    fn ledges_follow_the_windows_and_the_screens() {
+        let window = WindowRect {
+            id: 7,
+            frame: Rect::new(100.0, 300.0, 400.0, 300.0),
+        };
+        let mut world = World::new(vec![screen()]);
+        let ledge = |world: &World| {
+            world
+                .surfaces()
+                .iter()
+                .find(|s| s.kind == SurfaceKind::Window)
+                .map(|s| (s.x0, s.x1, s.y))
+        };
+        world.set_windows(&[window], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((100.0, 500.0, 300.0)));
+        // Le même relevé : rien ne change.
+        world.set_windows(&[window], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((100.0, 500.0, 300.0)));
+        // La fenêtre bouge : le rebord suit.
+        let moved = WindowRect {
+            frame: Rect::new(150.0, 320.0, 400.0, 300.0),
+            ..window
+        };
+        world.set_windows(&[moved], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((150.0, 550.0, 320.0)));
+        // Un écran plus étroit : le même relevé redonne un rebord coupé au bord.
+        let mut narrow = screen();
+        narrow.frame.w = 400.0;
+        narrow.usable.w = 400.0;
+        world.set_screens(vec![narrow]);
+        world.set_windows(&[moved], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((150.0, 400.0, 320.0)));
     }
 
     #[test]
