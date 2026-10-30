@@ -2,6 +2,7 @@
 //! d'avance à la finesse de l'écran et rognées à leur contenu.
 
 use std::io::Cursor;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mouflon_core::{Facings, SpritePage, SpriteSheet};
@@ -279,7 +280,14 @@ fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, Sp
     let texel = reduction.as_ref().map_or(1.0, |r| r.texel);
     let mut scratch = Scratch::default();
     let mut band = Vec::new();
-    let mut frames = Vec::with_capacity((page.tiles_x * page.tiles_y) as usize);
+    // Au plus une case entière (réduite) par image : le bloc ne grandit pas en route.
+    let tiles = (page.tiles_x * page.tiles_y) as usize;
+    let (out_w, out_h) = reduction
+        .as_ref()
+        .map_or((tile_w as usize, tile_h as usize), |r| {
+            (r.columns.len(), r.rows.len())
+        });
+    let mut block = Block::with_capacity(tiles, tiles * out_w.max(1) * out_h.max(1) * 4);
     for _ in 0..page.tiles_y {
         rows.read_band(tile_h as usize, &mut band)?;
         if let Some([kr, kg, kb]) = sheet.key_color {
@@ -302,19 +310,23 @@ fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, Sp
             };
             // Seuls les pixels visibles de la case comptent : on réduit et on
             // rogne le rectangle qui les contient, pas toute la case.
-            let frame = match image.visible(tile) {
-                None => empty_frame(texel),
-                Some(visible) => match &reduction {
-                    None => image.frame(visible, tile),
-                    Some(reduction) => reduction.frame(&image, tile, visible, &mut scratch),
-                },
-            };
-            frames.push(frame);
+            match (image.visible(tile), &reduction) {
+                (None, _) => block.empty(texel),
+                (Some(visible), None) => block.crop(
+                    &image,
+                    visible,
+                    ((visible.x0 - tile.x0) as f32, (visible.y0 - tile.y0) as f32),
+                    1.0,
+                ),
+                (Some(visible), Some(reduction)) => {
+                    reduction.frame(&image, tile, visible, &mut scratch, &mut block);
+                }
+            }
         }
     }
     Ok(DecodedPage {
         tile: (tile_w, tile_h),
-        frames,
+        frames: block.finish(),
     })
 }
 
@@ -470,40 +482,107 @@ impl Image<'_> {
         }
         bounds
     }
+}
 
-    /// Image telle quelle (pas de réduction) : les pixels de `visible`,
-    /// placés dans leur case `tile`.
-    fn frame(&self, visible: Area, tile: Area) -> SpriteFrame {
-        let mut out = Vec::with_capacity((visible.x1 - visible.x0) * (visible.y1 - visible.y0) * 4);
-        for y in visible.y0..visible.y1 {
-            out.extend_from_slice(
-                &self.rgba[(y * self.width + visible.x0) * 4..(y * self.width + visible.x1) * 4],
-            );
-        }
-        SpriteFrame {
-            bitmap: Bitmap {
-                width: (visible.x1 - visible.x0) as u32,
-                height: (visible.y1 - visible.y0) as u32,
-                rgba: Blob::from(out),
-            },
-            x: (visible.x0 - tile.x0) as f32,
-            y: (visible.y0 - tile.y0) as f32,
-            texel: 1.0,
-        }
+/// Les images d'une planche, rangées bout à bout dans un seul bloc de
+/// mémoire. Allouées une à une, des centaines de petites images se mêlaient
+/// aux tampons du décodage, et la mémoire libérée entre elles restait
+/// comptée au processus ; un bloc par planche n'en laisse pas.
+#[derive(Debug, Default)]
+struct Block {
+    pixels: Vec<u8>,
+    frames: Vec<Placed>,
+}
+
+/// Une image du bloc : début de ses pixels, taille, coin dans sa case.
+#[derive(Debug)]
+struct Placed {
+    start: usize,
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+    texel: f32,
+}
+
+/// Une image dans le bloc de sa planche, vue comme ses seuls pixels.
+#[derive(Debug)]
+struct View {
+    block: Arc<Vec<u8>>,
+    range: std::ops::Range<usize>,
+}
+
+impl AsRef<[u8]> for View {
+    fn as_ref(&self) -> &[u8] {
+        &self.block[self.range.clone()]
     }
 }
 
-/// Case vide : un pixel transparent.
-fn empty_frame(texel: f32) -> SpriteFrame {
-    SpriteFrame {
-        bitmap: Bitmap {
+impl Block {
+    /// Un bloc pour `frames` images d'au plus `bytes` octets en tout.
+    fn with_capacity(frames: usize, bytes: usize) -> Self {
+        Self {
+            pixels: Vec::with_capacity(bytes),
+            frames: Vec::with_capacity(frames),
+        }
+    }
+
+    /// Ajoute les pixels `area` de `image`, coin (`x`, `y`) dans sa case
+    /// (pixels de la planche).
+    fn crop(&mut self, image: &Image<'_>, area: Area, (x, y): (f32, f32), texel: f32) {
+        let start = self.pixels.len();
+        for row in area.y0..area.y1 {
+            let from = (row * image.width + area.x0) * 4;
+            self.pixels
+                .extend_from_slice(&image.rgba[from..from + (area.x1 - area.x0) * 4]);
+        }
+        self.frames.push(Placed {
+            start,
+            width: (area.x1 - area.x0) as u32,
+            height: (area.y1 - area.y0) as u32,
+            x,
+            y,
+            texel,
+        });
+    }
+
+    /// Case vide : un pixel transparent.
+    fn empty(&mut self, texel: f32) {
+        let start = self.pixels.len();
+        self.pixels.extend_from_slice(&[0; 4]);
+        self.frames.push(Placed {
+            start,
             width: 1,
             height: 1,
-            rgba: Blob::from(vec![0u8; 4]),
-        },
-        x: 0.0,
-        y: 0.0,
-        texel,
+            x: 0.0,
+            y: 0.0,
+            texel,
+        });
+    }
+
+    /// Les images, chacune vue dans le bloc (rendu à sa taille juste).
+    fn finish(mut self) -> Vec<SpriteFrame> {
+        self.pixels.shrink_to_fit();
+        let block = Arc::new(self.pixels);
+        self.frames
+            .into_iter()
+            .map(|p| {
+                let len = p.width as usize * p.height as usize * 4;
+                SpriteFrame {
+                    bitmap: Bitmap {
+                        width: p.width,
+                        height: p.height,
+                        rgba: Blob::new(Arc::new(View {
+                            block: Arc::clone(&block),
+                            range: p.start..p.start + len,
+                        })),
+                    },
+                    x: p.x,
+                    y: p.y,
+                    texel: p.texel,
+                }
+            })
+            .collect()
     }
 }
 
@@ -542,7 +621,14 @@ impl Reduction {
     /// La case `tile` réduite, rognée à ses pixels visibles. Le résultat est
     /// exactement celui de la réduction de toute la case, rognée ensuite :
     /// hors de `visible`, les pixels sont transparents et ne comptent pas.
-    fn frame(&self, image: &Image<'_>, tile: Area, visible: Area, s: &mut Scratch) -> SpriteFrame {
+    fn frame(
+        &self,
+        image: &Image<'_>,
+        tile: Area,
+        visible: Area,
+        s: &mut Scratch,
+        block: &mut Block,
+    ) {
         let local = |area: Area| {
             (
                 area.x0 - tile.x0,
@@ -556,7 +642,8 @@ impl Reduction {
         let (oy0, oy1) = Self::span(&self.rows, vy0, vy1);
         let (ow, oh) = (ox1 - ox0, oy1 - oy0);
         if ow == 0 || oh == 0 {
-            return empty_frame(self.texel);
+            block.empty(self.texel);
+            return;
         }
         // Pixels de la case lus par ces filtres.
         let sx0 = self.columns[ox0].first().map_or(0, |t| t.0);
@@ -617,14 +704,15 @@ impl Reduction {
             y1: oh,
         };
         let Some(visible) = out.visible(all) else {
-            return empty_frame(self.texel);
+            block.empty(self.texel);
+            return;
         };
-        let mut frame = out.frame(visible, all);
         // Coin de l'image dans la case, en pixels de la planche.
-        frame.x = (ox0 + visible.x0) as f32 * self.texel;
-        frame.y = (oy0 + visible.y0) as f32 * self.texel;
-        frame.texel = self.texel;
-        frame
+        let corner = (
+            (ox0 + visible.x0) as f32 * self.texel,
+            (oy0 + visible.y0) as f32 * self.texel,
+        );
+        block.crop(&out, visible, corner, self.texel);
     }
 }
 
@@ -687,7 +775,9 @@ fn resample(rgba: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Vec
     let Some(visible) = image.visible(all) else {
         return out;
     };
-    let frame = reduction.frame(&image, all, visible, &mut Scratch::default());
+    let mut block = Block::default();
+    reduction.frame(&image, all, visible, &mut Scratch::default(), &mut block);
+    let frame = &block.finish()[0];
     let (fx, fy) = (
         (frame.x / reduction.texel).round() as usize,
         (frame.y / reduction.texel).round() as usize,
