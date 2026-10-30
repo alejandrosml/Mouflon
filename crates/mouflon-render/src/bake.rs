@@ -399,7 +399,7 @@ pub(crate) fn to_stroke(style: &StrokeStyle) -> tiny_skia::Stroke {
 }
 
 /// Pixels prémultipliés de tiny-skia → image RGBA non prémultipliée.
-fn to_bitmap(pixmap: &Pixmap) -> Bitmap {
+pub(crate) fn to_bitmap(pixmap: &Pixmap) -> Bitmap {
     let mut rgba = Vec::with_capacity(pixmap.data().len());
     for &[r, g, b, a] in pixmap.data().as_chunks::<4>().0 {
         if a == 0 {

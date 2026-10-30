@@ -15,6 +15,7 @@ pub mod bc7;
 pub mod cache;
 pub mod display;
 pub mod paint;
+pub mod props;
 pub mod raster;
 pub mod rig;
 pub mod saucer;

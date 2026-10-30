@@ -808,12 +808,12 @@ mod tests {
             usable: mouflon_core::Rect::new(0.0, 25.0, 1440.0, 800.0),
             scale: 2.0,
         }]);
-        let dust: Vec<Particle> = (0..5)
+        let dust: Vec<Particle> = (0..6)
             .map(|i| Particle {
-                kind: if i % 2 == 0 {
-                    ParticleKind::Dust
-                } else {
-                    ParticleKind::Bubble
+                kind: match i % 3 {
+                    0 => ParticleKind::Dust,
+                    1 => ParticleKind::Bubble,
+                    _ => ParticleKind::Leaf,
                 },
                 pos: Vec2::new(590.0 + i as f32 * 9.0, 760.0 - i as f32 * 7.0),
                 vel: Vec2::new(0.0, 0.0),
@@ -871,6 +871,34 @@ mod tests {
             }
         }
         lists
+    }
+
+    /// Les animaux, leurs particules (feuilles d'un coup de vent comprises)
+    /// et la soucoupe passent par le rendu direct : Vello reste à l'arrêt.
+    #[test]
+    fn pets_particles_and_saucer_need_no_vello() {
+        // Chaque liste est vérifiée en chemin.
+        assert!(!sample_lists(false).is_empty());
+        let canvas = mouflon_render::saucer::saucer_canvas();
+        for beam in [0.0, 1.0] {
+            let view = mouflon_core::SaucerView {
+                pos: Vec2::new(500.0, 300.0),
+                tilt: 0.1,
+                beam,
+                beam_len: 180.0,
+                lights: 0.4,
+            };
+            let mut list = DisplayList::new(
+                (f64::from(canvas.width) * 2.0) as u32,
+                (f64::from(canvas.height) * 2.0) as u32,
+            );
+            let frame = Frame {
+                origin: view.pos - canvas.anchor,
+                scale: 2.0,
+            };
+            mouflon_render::saucer::paint_saucer(&view, &frame, &Style::default(), &mut list);
+            assert!(Quick::supports(&list), "soucoupe, faisceau {beam}");
+        }
     }
 
     #[test]

@@ -47,8 +47,10 @@ const DRAW_BYTES: u32 = 13 * 16;
 /// Déclaration des paramètres dans le programme, et sa version « immediates ».
 const UNIFORM_DRAW: &str = "@group(0) @binding(0) var<uniform> draw: Draw;";
 const IMMEDIATE_DRAW: &str = "var<immediate> draw: Draw;";
-/// Éléments par fenêtre, au plus (un animal en a rarement plus d'une dizaine).
-const MAX_DRAWS: usize = 64;
+/// Éléments par fenêtre, au plus. Un animal en a rarement plus d'une dizaine
+/// (des feuilles qui volent autour de lui comprises), mais la fenêtre d'un
+/// écran entier (`MOUFLON_SCENE`) les porte tous, avec la soucoupe.
+const MAX_DRAWS: usize = 2048;
 /// Places du tampon de paramètres au départ ; il double quand une image de
 /// toutes les fenêtres en demande davantage.
 pub(crate) const FIRST_CAPACITY: usize = 64;
