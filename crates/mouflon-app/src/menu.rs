@@ -30,10 +30,11 @@ pub enum Action {
     Quit,
 }
 
-/// Une espèce dans le menu : son nom, suivi du nombre d'animaux à l'écran.
+/// Une espèce dans le menu : son nom, suivi du nombre d'animaux à l'écran
+/// quand il y en a plusieurs (un seul se voit bien sans le dire).
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn counted(name: &str, count: usize) -> String {
-    if count == 0 {
+    if count <= 1 {
         name.to_owned()
     } else {
         format!("{name} ({count})")
@@ -53,7 +54,8 @@ mod native {
     /// Le menu de l'icône de Mouflon :
     ///
     /// - « Ajouter Lainou » (le préféré), « Ajouter un animal ▸ » (chaque espèce,
-    ///   avec le nombre d'animaux déjà à l'écran : un clic en ajoute un de plus),
+    ///   avec le nombre d'animaux déjà à l'écran s'il y en a plusieurs : un
+    ///   clic en ajoute un de plus),
     ///   « Dire au revoir ▸ » (à tous, ou à un animal d'une espèce),
     ///   « Tous ensemble » ;
     /// - « Pause », « Sons », « Collisions entre animaux » ;
@@ -325,8 +327,10 @@ mod tests {
     use super::counted;
 
     #[test]
-    fn a_species_shows_how_many_are_on_screen() {
+    fn a_species_shows_how_many_are_on_screen_from_two() {
         assert_eq!(counted("Lainou", 0), "Lainou");
+        assert_eq!(counted("Lainou", 1), "Lainou");
         assert_eq!(counted("Lainou", 2), "Lainou (2)");
+        assert_eq!(counted("Lainou", 12), "Lainou (12)");
     }
 }

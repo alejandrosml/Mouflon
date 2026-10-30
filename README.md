@@ -72,12 +72,12 @@ cargo run --release
 ```
 
 Launched from the repository, Mouflon also loads the pets of `pets/` and of the
-`animaux/` folder: Poete drops onto your frontmost window if it is there,
-Pelote otherwise. The menu bar icon adds pets (the same one as many times as
-you like: each kind shows how many are on screen), gets them all to play
-together, says goodbye to all of them or to one of a kind, pauses, mutes them
-and turns collisions on; its *Settings* change their size, let them walk under
-the Dock and open the pets folder. It also shows *About Mouflon*.
+`animaux/` folder: Poete drops onto your frontmost window if it is there, Pelote
+otherwise. The menu bar icon adds pets (the same one as many times as you like:
+each kind shows how many are on screen when there are several), gets them all to
+play together, says goodbye to all of them or to one of a kind, pauses, mutes
+them and turns collisions on; its *Settings* change their size, let them walk
+under the Dock and open the pets folder. It also shows *About Mouflon*.
 
 Pets walk on the Dock. With *Walk Under the Dock*, they go down to the bottom of
 the screen, pass behind the Dock and can jump onto it. To know where the Dock
@@ -310,14 +310,14 @@ se laissent attraper et lancer à travers le bureau.
 cargo run --release
 ```
 
-Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du
-dossier `animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est,
-sinon Pelote. L'icône de la barre des menus ajoute des animaux (le même autant
-de fois qu'on veut : chaque espèce dit combien des siens sont à l'écran), les
-fait jouer tous ensemble, dit au revoir à tous ou à un seul d'une espèce, met
-en pause, coupe les sons et active les collisions ; ses « Réglages » changent
-leur taille, les font marcher sous le Dock et ouvrent le dossier des animaux.
-Elle affiche aussi « À propos de Mouflon ».
+Lancé depuis le dépôt, Mouflon charge aussi les animaux de `pets/` et du dossier
+`animaux/` : Poete tombe sur ta fenêtre au premier plan s'il y est, sinon
+Pelote. L'icône de la barre des menus ajoute des animaux (le même autant de fois
+qu'on veut : chaque espèce dit combien des siens sont à l'écran quand ils sont
+plusieurs), les fait jouer tous ensemble, dit au revoir à tous ou à un seul
+d'une espèce, met en pause, coupe les sons et active les collisions ; ses
+« Réglages » changent leur taille, les font marcher sous le Dock et ouvrent le
+dossier des animaux. Elle affiche aussi « À propos de Mouflon ».
 
 Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descendent
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
