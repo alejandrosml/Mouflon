@@ -128,6 +128,12 @@ MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 python3 tools/essai/analyse.py mouflon-essai.log
 ```
 
+`MOUFLON_VITRINE=folder` opens the settings window, saves pictures of it in
+that folder (plain, then with its notes in light and dark mode) with a pet's
+menu written out, then quits; `MOUFLON_LANGUE=de` picks another language than
+macOS's. The CI does it in five languages on every Mac build, which shows the
+window's layout without a Mac at hand.
+
 The `essais/` and `animaux/` folders are ignored by git: keep test pets and
 pets you do not publish there.
 
@@ -390,6 +396,13 @@ mémoire et le processeur utilisés.
 MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 python3 tools/essai/analyse.py mouflon-essai.log
 ```
+
+`MOUFLON_VITRINE=dossier` ouvre la fenêtre des réglages, en enregistre des
+images dans ce dossier (telle quelle, puis avec ses remarques, en clair et en
+sombre) avec le texte du menu d'un animal, puis quitte ; `MOUFLON_LANGUE=de`
+choisit une autre langue que celle de macOS. La CI le fait en cinq langues à
+chaque construction pour Mac : on voit la mise en page de la fenêtre sans
+avoir de Mac sous la main.
 
 Les dossiers `essais/` et `animaux/` sont ignorés par git : on y garde les
 animaux d'essai et ceux qu'on ne publie pas.
