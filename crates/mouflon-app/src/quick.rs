@@ -17,6 +17,12 @@
 //! - **disque** : cercle antialiasé, rempli d'une couleur ou d'un dégradé
 //!   (linéaire, ou radial à deux cercles comme en SVG).
 //!
+//! Les paramètres de chaque élément (une douzaine de `vec4`) partent avec
+//! la commande de dessin elle-même (« immediates » : `setVertexBytes` sur
+//! Metal) : ni tampon à remplir à chaque image, ni tampon de transit à créer
+//! puis détruire. Sur un GPU qui ne le permet pas, ils passent par un tampon
+//! uniforme, une place par élément choisie par décalage dynamique.
+//!
 //! Un calque d'opacité qui ne contient qu'un élément revient à multiplier
 //! l'opacité de cet élément : c'est le cas d'un animal en images qui
 //! s'efface. Un calque de plusieurs éléments (un dessin vectoriel cuit en
@@ -36,6 +42,11 @@ use mouflon_render::vello::wgpu;
 /// Place d'un élément dans le tampon de paramètres : l'alignement exigé
 /// pour un décalage dynamique (256 octets sur tous les GPU).
 const SLOT: usize = 256;
+/// Octets des paramètres d'un élément (`Draw` : treize `vec4`).
+const DRAW_BYTES: u32 = 13 * 16;
+/// Déclaration des paramètres dans le programme, et sa version « immediates ».
+const UNIFORM_DRAW: &str = "@group(0) @binding(0) var<uniform> draw: Draw;";
+const IMMEDIATE_DRAW: &str = "var<immediate> draw: Draw;";
 /// Éléments par fenêtre, au plus (un animal en a rarement plus d'une dizaine).
 const MAX_DRAWS: usize = 64;
 /// Places du tampon de paramètres au départ ; il double quand une image de
@@ -253,10 +264,14 @@ pub struct Quick {
     params_layout: wgpu::BindGroupLayout,
     nearest: wgpu::Sampler,
     bilinear: wgpu::Sampler,
-    params: wgpu::Buffer,
+    /// Tampon de paramètres (sans « immediates » seulement).
+    params: Option<wgpu::Buffer>,
+    /// Échantillonneurs, et le tampon de paramètres s'il y en a un.
     params_group: wgpu::BindGroup,
     /// Éléments que le tampon de paramètres peut recevoir.
     capacity: usize,
+    /// Les paramètres partent avec chaque commande de dessin.
+    immediates: bool,
     pipelines: HashMap<wgpu::TextureFormat, Pipelines>,
     textures: HashMap<u64, Texture>,
     texture_bytes: usize,
@@ -275,37 +290,51 @@ pub struct Quick {
 impl Quick {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
+        let immediates = device.features().contains(wgpu::Features::IMMEDIATES)
+            && device.limits().max_immediate_size >= DRAW_BYTES;
+        Self::with(device, immediates)
+    }
+
+    /// Le même moteur, paramètres passés par un tampon uniforme (comme sur
+    /// un GPU sans « immediates »).
+    #[cfg(test)]
+    pub(crate) fn with_uniforms(device: &wgpu::Device) -> Self {
+        Self::with(device, false)
+    }
+
+    fn with(device: &wgpu::Device, immediates: bool) -> Self {
+        debug_assert!(SHADER.contains(UNIFORM_DRAW));
+        let source = if immediates {
+            SHADER.replace(UNIFORM_DRAW, IMMEDIATE_DRAW)
+        } else {
+            SHADER.to_owned()
+        };
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mouflon-rapide"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
         });
+        let sampler_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
+        let buffer_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: NonZeroU64::new(SLOT as u64),
+            },
+            count: None,
+        };
+        let entries = [buffer_entry, sampler_entry(1), sampler_entry(2)];
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mouflon-rapide-parametres"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(SLOT as u64),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: if immediates { &entries[1..] } else { &entries },
         });
+        let immediate_size = if immediates { DRAW_BYTES } else { 0 };
         let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mouflon-rapide-image"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -322,12 +351,12 @@ impl Quick {
         let shapes_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mouflon-rapide-formes"),
             bind_group_layouts: &[Some(&params_layout)],
-            immediate_size: 0,
+            immediate_size,
         });
         let images_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mouflon-rapide-images"),
             bind_group_layouts: &[Some(&params_layout), Some(&image_layout)],
-            immediate_size: 0,
+            immediate_size,
         });
         let sampler = |filter: wgpu::FilterMode| {
             device.create_sampler(&wgpu::SamplerDescriptor {
@@ -343,8 +372,17 @@ impl Quick {
             sampler(wgpu::FilterMode::Nearest),
             sampler(wgpu::FilterMode::Linear),
         );
-        let (params, params_group) =
-            params_buffer(device, &params_layout, &nearest, &bilinear, FIRST_CAPACITY);
+        let (params, params_group, capacity) = if immediates {
+            (
+                None,
+                samplers_group(device, &params_layout, &nearest, &bilinear),
+                usize::MAX,
+            )
+        } else {
+            let (buffer, group) =
+                params_buffer(device, &params_layout, &nearest, &bilinear, FIRST_CAPACITY);
+            (Some(buffer), group, FIRST_CAPACITY)
+        };
         Self {
             module,
             image_layout,
@@ -355,7 +393,8 @@ impl Quick {
             bilinear,
             params,
             params_group,
-            capacity: FIRST_CAPACITY,
+            capacity,
+            immediates,
             pipelines: HashMap::new(),
             offscreens: HashMap::new(),
             textures: HashMap::new(),
@@ -488,13 +527,15 @@ impl Quick {
         self.calls.clear();
         if draws > self.capacity {
             let capacity = draws.next_power_of_two();
-            (self.params, self.params_group) = params_buffer(
+            let params;
+            (params, self.params_group) = params_buffer(
                 device,
                 &self.params_layout,
                 &self.nearest,
                 &self.bilinear,
                 capacity,
             );
+            self.params = Some(params);
             self.capacity = capacity;
         }
     }
@@ -687,6 +728,9 @@ impl Quick {
             multiview_mask: None,
         });
         let mut current: Option<Kind> = None;
+        if self.immediates {
+            pass.set_bind_group(0, &self.params_group, &[]);
+        }
         for (i, call) in self.calls.iter().enumerate().skip(first) {
             if call.in_layer != in_layer {
                 continue;
@@ -699,7 +743,12 @@ impl Quick {
                 });
                 current = Some(call.kind);
             }
-            pass.set_bind_group(0, &self.params_group, &[(i * SLOT) as u32]);
+            if self.immediates {
+                let at = i * SLOT;
+                pass.set_immediates(0, &self.bytes[at..at + DRAW_BYTES as usize]);
+            } else {
+                pass.set_bind_group(0, &self.params_group, &[(i * SLOT) as u32]);
+            }
             if call.composite {
                 let Some(layer) = layer else { continue };
                 pass.set_bind_group(1, layer, &[]);
@@ -764,8 +813,10 @@ impl Quick {
     /// Envoie les paramètres de toutes les passes de l'image (avant
     /// `queue.submit`), puis oublie au besoin les images les plus anciennes.
     pub fn finish(&mut self, queue: &wgpu::Queue) {
-        if !self.bytes.is_empty() {
-            queue.write_buffer(&self.params, 0, &self.bytes);
+        if let Some(params) = &self.params
+            && !self.bytes.is_empty()
+        {
+            queue.write_buffer(params, 0, &self.bytes);
         }
         self.forget_old();
     }
@@ -920,6 +971,29 @@ impl Quick {
     pub fn texture_usage(&self) -> (usize, usize) {
         (self.textures.len(), self.texture_bytes)
     }
+}
+
+/// Groupe de liaison des seuls échantillonneurs (paramètres en « immediates »).
+fn samplers_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    nearest: &wgpu::Sampler,
+    bilinear: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mouflon-rapide-echantillonneurs"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(nearest),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(bilinear),
+            },
+        ],
+    })
 }
 
 /// Tampon de paramètres pour `capacity` éléments, et son groupe de liaison

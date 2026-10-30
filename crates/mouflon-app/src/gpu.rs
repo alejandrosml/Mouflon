@@ -87,12 +87,24 @@ impl GpuContext {
                 .ok()?;
         let wanted = wgpu::Features::CLEAR_TEXTURE
             | wgpu::Features::PIPELINE_CACHE
-            | wgpu::Features::TEXTURE_COMPRESSION_BC;
+            | wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::IMMEDIATES;
+        let features = adapter.features() & wanted;
+        // Les paramètres d'un élément du rendu direct (208 octets) partent
+        // avec sa commande de dessin quand le GPU le permet.
+        let immediates = if features.contains(wgpu::Features::IMMEDIATES) {
+            adapter.limits().max_immediate_size.min(256)
+        } else {
+            0
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: adapter.features() & wanted,
-                required_limits: wgpu::Limits::default(),
+                required_features: features,
+                required_limits: wgpu::Limits {
+                    max_immediate_size: immediates,
+                    ..wgpu::Limits::default()
+                },
                 ..Default::default()
             })
             .await
@@ -914,6 +926,37 @@ mod tests {
         eprintln!("pire : {worst:?}");
         assert!(worst.1 < 0.35, "écart moyen {}", worst.1);
         assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
+    }
+
+    /// Paramètres passés avec chaque commande (« immediates ») ou par un
+    /// tampon uniforme : exactement la même image.
+    #[test]
+    fn immediates_and_uniforms_draw_the_same() {
+        let mut context = GpuContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : comparaison sautée");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let mut fast = Quick::new(device);
+        let mut slow = Quick::with_uniforms(device);
+        eprintln!(
+            "« immediates » : {} (jusqu'à {} octets)",
+            device.features().contains(wgpu::Features::IMMEDIATES),
+            device.limits().max_immediate_size
+        );
+        for (name, list) in sample_lists(false) {
+            let images = [&mut fast, &mut slow].map(|quick| {
+                let texture = target(device, &list);
+                let view = texture.create_view(&Default::default());
+                let mut encoder = device.create_command_encoder(&Default::default());
+                quick.render(device, queue, &mut encoder, &view, FORMAT, &list);
+                queue.submit([encoder.finish()]);
+                read(device, queue, &texture)
+            });
+            assert!(images[0] == images[1], "{name} : images différentes");
+        }
     }
 
     /// Les images compressées en BC7 donnent, au rendu direct, presque
