@@ -77,6 +77,16 @@ jobs:
             bash "tools/essai/Essai de 3 minutes.command" | tee essai-console.log
           grep -q "essai terminé" essais/*/sortie.log
 
+      # La même chose en une minute, avec une seule fenêtre par écran
+      # (`MOUFLON_SCENE`, l'autre façon d'afficher, à l'essai) : qu'elle
+      # tourne sans planter. Un échec ne fait pas échouer la construction.
+      - name: Essai d'une minute, une fenêtre par écran
+        continue-on-error: true
+        run: |
+          MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_DUREE=60 perl -e 'alarm 240; exec @ARGV' \
+            bash "tools/essai/Essai de 3 minutes (une fenêtre par écran).command" | tee essai-scene-console.log
+          grep -q "essai terminé" essais/*-une-fenetre/sortie.log
+
       # Vitrine : la fenêtre des réglages en images, en plusieurs langues
       # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
       # sombre — et le texte du menu d'un animal (`vitrine/`). Rien n'y est
@@ -105,6 +115,7 @@ jobs:
           name: essai-journal
           path: |
             essai-console.log
+            essai-scene-console.log
             essais/
 
       - name: Publier la version

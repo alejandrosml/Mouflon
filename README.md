@@ -170,6 +170,12 @@ was, the slowest images, animations short of images, position jumps, each
 collision step by step, the resources, and what the Mac was doing around the
 longest hitches. The CI runs the same trial on every Mac build.
 
+`Essai de 3 minutes (une fenêtre par écran).command` runs the same trial with
+another way of showing the pets, to compare the two (`MOUFLON_SCENE=1`): one
+transparent window per screen where all the pets (and saucers) are drawn,
+taking clicks only when the pointer is on a pet, instead of one window per
+pet moved at every image. Its results go to `essais/<date>-une-fenetre/`.
+
 Without the script: `MOUFLON_ESSAI=180` runs a trial of 180 seconds
 (`MOUFLON_JOURNAL` names the journal, `mouflon-essai.log` by default),
 `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses its pets and
@@ -494,6 +500,13 @@ va dans `essais/<date>/` :
 d'images, les sauts de position, chaque collision pas à pas, les ressources,
 et ce que faisait le Mac autour des plus longs à-coups. La CI fait le même
 essai à chaque construction pour Mac.
+
+`Essai de 3 minutes (une fenêtre par écran).command` fait le même essai avec
+une autre façon de montrer les animaux, pour comparer les deux
+(`MOUFLON_SCENE=1`) : une seule fenêtre transparente par écran, où se
+dessinent tous les animaux (et les soucoupes), qui ne prend les clics que
+quand le curseur est sur un animal, au lieu d'une fenêtre par animal
+déplacée à chaque image. Ses résultats vont dans `essais/<date>-une-fenetre/`.
 
 Sans le script : `MOUFLON_ESSAI=180` lance un essai de 180 secondes
 (`MOUFLON_JOURNAL` nomme le journal, `mouflon-essai.log` par défaut),

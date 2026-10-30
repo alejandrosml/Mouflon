@@ -122,6 +122,22 @@ struct SaucerWindow {
     list: DisplayList,
 }
 
+/// Essai d'une autre façon d'afficher (`MOUFLON_SCENE=1`) : une seule
+/// fenêtre transparente par écran, où se dessinent tous les animaux (et les
+/// soucoupes), au lieu d'une fenêtre par animal qu'on déplace à chaque
+/// image. Elle ne prend les clics que quand le curseur est sur un animal.
+/// De quoi comparer, dans le journal d'un essai, ce que coûtent les
+/// déplacements de fenêtres et ce que coûte un grand dessin.
+struct Stage {
+    /// Le rectangle de l'écran (repère commun, points).
+    rect: Rect,
+    window: Arc<Window>,
+    surface: PetSurface,
+    scale: f64,
+    hittest: bool,
+    list: DisplayList,
+}
+
 /// Une surprise (voir `mouflon_core::surprise`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Surprise {
@@ -150,6 +166,9 @@ pub struct App {
     flock: Flock,
     windows: HashMap<WindowId, PetWindow>,
     saucer_windows: HashMap<WindowId, SaucerWindow>,
+    /// Une fenêtre par écran au lieu d'une par animal (voir [`Stage`]).
+    staged: bool,
+    stages: HashMap<WindowId, Stage>,
     /// Surprises à venir : quand, et laquelle si elle est imposée (un essai,
     /// `MOUFLON_SURPRISE`) ; sinon tirée au sort.
     surprises: Vec<(Instant, Option<Surprise>)>,
@@ -362,6 +381,8 @@ impl App {
             flock,
             windows: HashMap::new(),
             saucer_windows: HashMap::new(),
+            staged: std::env::var("MOUFLON_SCENE").is_ok_and(|v| !v.is_empty() && v != "0"),
+            stages: HashMap::new(),
             surprises: Vec::new(),
             gpu: None,
             list: DisplayList::default(),
@@ -912,6 +933,10 @@ impl App {
     /// Une fenêtre par animal : on en crée pour les nouveaux venus (dont les
     /// personnages secondaires des scènes desktopPet) et on ferme celles des partis.
     fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
+        if self.staged {
+            self.sync_stages(event_loop);
+            return;
+        }
         // Rien n'a changé dans le troupeau : les fenêtres sont à jour.
         let generation = self.flock.generation();
         if self.windows_generation == Some(generation) {
@@ -1683,8 +1708,113 @@ impl App {
         }
     }
 
+    /// Une fenêtre par écran (voir [`Stage`]) : refaites quand les écrans
+    /// changent.
+    fn sync_stages(&mut self, event_loop: &ActiveEventLoop) {
+        let screens: Vec<Rect> = self.world.screens().iter().map(|s| s.frame).collect();
+        let same = self.stages.len() == screens.len()
+            && self
+                .stages
+                .values()
+                .all(|stage| screens.contains(&stage.rect));
+        if same {
+            return;
+        }
+        for stage in self.stages.values() {
+            platform::keep_pet_window(&*stage.window);
+        }
+        self.stages.clear();
+        for rect in screens {
+            let attrs = Window::default_attributes()
+                .with_title("Mouflon — scène")
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_window_level(WindowLevel::AlwaysOnTop)
+                .with_inner_size(LogicalSize::new(f64::from(rect.w), f64::from(rect.h)))
+                .with_position(LogicalPosition::new(f64::from(rect.x), f64::from(rect.y)))
+                .with_active(false);
+            #[cfg(target_os = "macos")]
+            let attrs = {
+                use winit::platform::macos::WindowAttributesExtMacOS;
+                attrs.with_has_shadow(false).with_accepts_first_mouse(true)
+            };
+            let window = match event_loop.create_window(attrs) {
+                Ok(w) => Arc::new(w),
+                Err(e) => {
+                    log::error!("impossible de créer la fenêtre de l'écran : {e}");
+                    continue;
+                }
+            };
+            platform::prepare_pet_window(&*window);
+            let _ = window.set_cursor_hittest(false);
+            let gpu = self.gpu.get_or_insert_with(Gpu::new);
+            let size = window.inner_size();
+            let surface = match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("rendu de l'écran indisponible : {e}");
+                    platform::keep_pet_window(&*window);
+                    continue;
+                }
+            };
+            let scale = window.scale_factor();
+            log::info!(
+                "scène : une fenêtre pour l'écran {:.0}×{:.0} en {:.0},{:.0}",
+                rect.w,
+                rect.h,
+                rect.x,
+                rect.y
+            );
+            if let Some(stats) = &self.stats {
+                stats.note(format_args!(
+                    "scène : fenêtre de l'écran {:.0}×{:.0}",
+                    rect.w, rect.h
+                ));
+            }
+            self.stages.insert(
+                window.id(),
+                Stage {
+                    rect,
+                    window,
+                    surface,
+                    scale,
+                    hittest: false,
+                    list: DisplayList::default(),
+                },
+            );
+        }
+    }
+
+    /// Le dessin d'un animal, s'il est prêt (jamais de décodage ici).
+    fn art_of(&self, pet: &Pet) -> Option<Arc<PetArt>> {
+        self.library
+            .entry_of(pet.def())
+            .filter(|entry| entry.art_ready())
+            .and_then(crate::library::Entry::art)
+    }
+
+    /// L'animal sous le curseur (le plus en avant), pour une fenêtre d'écran.
+    fn pet_under_cursor(&self) -> Option<u32> {
+        let cursor = self.cursor()?;
+        self.flock
+            .pets()
+            .iter()
+            .rev()
+            .filter(|p| !p.is_child())
+            .find(|p| {
+                self.art_of(p)
+                    .is_some_and(|art| hit_test(cursor, &p.view(1.0), &art))
+            })
+            .map(Pet::id)
+    }
+
     /// Une fenêtre par soucoupe en visite ; on ferme celles des parties.
     fn sync_saucers(&mut self, event_loop: &ActiveEventLoop) {
+        if self.staged {
+            // Elles se dessinent dans les fenêtres des écrans.
+            return;
+        }
         let visiting: Vec<u32> = self
             .flock
             .saucers()
@@ -2011,6 +2141,9 @@ impl App {
     }
 
     fn pet_of(&self, window: WindowId) -> Option<u32> {
+        if self.stages.contains_key(&window) {
+            return self.pet_under_cursor();
+        }
         self.windows.get(&window).map(|w| w.pet)
     }
 
@@ -2172,9 +2305,20 @@ impl App {
         self.sync_menu();
         phases.windows = lap(&mut mark);
 
+        // Fenêtres d'écran (voir `Stage`) : le dessin de chaque animal.
+        let arts: Vec<(u32, Arc<PetArt>)> = if self.staged {
+            self.flock
+                .pets()
+                .iter()
+                .filter_map(|p| Some((p.id(), self.art_of(p)?)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let Self {
             windows,
             saucer_windows,
+            stages,
             flock,
             gpu,
             style,
@@ -2294,8 +2438,70 @@ impl App {
             phases.paint += started.elapsed();
             saucers.push(sw);
         }
+        // Une fenêtre par écran : tous ceux qui s'y trouvent, à chaque image.
+        let mut staged: Vec<&mut Stage> = Vec::new();
+        for stage in stages.values_mut() {
+            if gpu.is_none() {
+                continue;
+            }
+            let art_of = |id: u32| arts.iter().find(|(p, _)| *p == id).map(|(_, a)| a);
+            let hit = pointer.dragging.is_some()
+                || cursor.is_some_and(|c| {
+                    stage.rect.contains(c)
+                        && flock.pets().iter().any(|p| {
+                            !p.is_child()
+                                && art_of(p.id())
+                                    .is_some_and(|art| hit_test(c, &p.view(alpha), art))
+                        })
+                });
+            if hit != stage.hittest {
+                let started = Instant::now();
+                let _ = stage.window.set_cursor_hittest(hit);
+                stage.hittest = hit;
+                phases.hittest += started.elapsed();
+                if hit && pointer.dragging.is_none() {
+                    *full_rate_until = Some(now + HOVER_FULL_RATE);
+                }
+            }
+            let size = stage.window.inner_size();
+            stage.list.clear(size.width, size.height);
+            if !settling {
+                let frame = Frame {
+                    origin: Vec2::new(stage.rect.x, stage.rect.y),
+                    scale: stage.scale,
+                };
+                let overlaps = |r: Rect| {
+                    r.x < stage.rect.x + stage.rect.w
+                        && r.x + r.w > stage.rect.x
+                        && r.y < stage.rect.y + stage.rect.h
+                        && r.y + r.h > stage.rect.y
+                };
+                let started = Instant::now();
+                for saucer in flock.saucers() {
+                    let view = saucer.view();
+                    let canvas = mouflon_render::saucer::saucer_canvas();
+                    let at = view.pos - canvas.anchor;
+                    if overlaps(Rect::new(at.x, at.y, canvas.width, canvas.height)) {
+                        mouflon_render::saucer::paint_saucer(&view, &frame, style, &mut stage.list);
+                    }
+                }
+                for pet in flock.pets() {
+                    let Some(art) = art_of(pet.id()) else {
+                        continue;
+                    };
+                    let view = pet.view(alpha);
+                    let canvas = art.canvas();
+                    let at = view.ground - canvas.anchor;
+                    if overlaps(Rect::new(at.x, at.y, canvas.width, canvas.height)) {
+                        paint_pet(art, &view, &frame, style, &mut stage.list);
+                    }
+                }
+                phases.paint += started.elapsed();
+            }
+            staged.push(stage);
+        }
         if let Some(gpu) = gpu.as_mut()
-            && !(redraw.is_empty() && saucers.is_empty())
+            && !(redraw.is_empty() && saucers.is_empty() && staged.is_empty())
         {
             let mut jobs: Vec<Job<'_>> = redraw
                 .iter_mut()
@@ -2309,6 +2515,11 @@ impl App {
                 surface: &mut sw.surface,
                 list: &sw.list,
                 window: &sw.window,
+            }));
+            jobs.extend(staged.iter_mut().map(|stage| Job {
+                surface: &mut stage.surface,
+                list: &stage.list,
+                window: &stage.window,
             }));
             let done = gpu.render_all(&mut jobs);
             drop(jobs);
@@ -2583,13 +2794,15 @@ impl ApplicationHandler<UserEvent> for App {
                 stats.raw(line);
             }
             stats.raw(format!(
-                "REGLAGES taille {} sons {} collisions {} physique_realiste {} premier_plan {} dock {} animaux {:?}",
+                "REGLAGES taille {} sons {} collisions {} physique_realiste {} premier_plan {} dock {} surprises {} scene {} animaux {:?}",
                 self.settings.size_factor(),
                 self.settings.sounds,
                 self.flock.collisions(),
                 self.flock.realistic(),
                 self.settings.frontmost_only,
                 self.settings.walk_under_dock,
+                self.settings.surprises,
+                self.staged,
                 crate::stats::trial_pets(),
             ));
             // Diagnostics : pile du fil principal quand une image tarde,
@@ -2978,6 +3191,13 @@ impl App {
                 }
             },
             WindowEvent::CursorMoved { position, .. } => {
+                if let Some(stage) = self.stages.get(&window_id) {
+                    let local = position.to_logical::<f64>(stage.scale);
+                    self.pointer.cursor = Some(Vec2::new(
+                        stage.rect.x + local.x as f32,
+                        stage.rect.y + local.y as f32,
+                    ));
+                }
                 if let Some(pw) = self.windows.get(&window_id)
                     && pw.position.is_some()
                 {
@@ -2989,6 +3209,9 @@ impl App {
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Some(stage) = self.stages.get_mut(&window_id) {
+                    stage.scale = scale_factor;
+                }
                 if let Some(pw) = self.windows.get_mut(&window_id) {
                     pw.scale = scale_factor;
                     pw.position = None;
@@ -2996,6 +3219,11 @@ impl App {
                 }
             }
             WindowEvent::Resized(size) => {
+                if let (Some(stage), Some(gpu)) =
+                    (self.stages.get_mut(&window_id), self.gpu.as_ref())
+                {
+                    gpu.resize(&mut stage.surface, size.width, size.height);
+                }
                 if let (Some(pw), Some(gpu)) = (self.windows.get_mut(&window_id), self.gpu.as_ref())
                 {
                     gpu.resize(&mut pw.surface, size.width, size.height);
