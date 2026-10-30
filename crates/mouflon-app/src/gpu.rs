@@ -21,6 +21,10 @@ use winit::window::Window;
 
 use crate::quick::Quick;
 
+/// Format des fenêtres sur Mac (et le plus souvent ailleurs) : ses programmes
+/// se préparent avant d'ouvrir la première fenêtre.
+const USUAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {
     #[error("impossible de créer la surface : {0}")]
@@ -297,6 +301,7 @@ impl Gpu {
         };
         surface.configure(&handle.device, &config);
         self.prepare(dev_id, format);
+        self.format.get_or_insert(format);
         Ok(PetSurface {
             surface,
             config,
@@ -311,7 +316,16 @@ impl Gpu {
         self.quick
             .get_or_insert_with(|| Quick::new(device))
             .prepare(device, format);
-        self.format.get_or_insert(format);
+    }
+
+    /// Met le GPU en route avant même la première fenêtre, pendant que les
+    /// dessins se décodent à côté : appareil, puis programmes du rendu direct
+    /// pour le format habituel des fenêtres.
+    pub fn prepare_ahead(&mut self) {
+        match pollster::block_on(self.context.device(None)) {
+            Some(dev_id) => self.prepare(dev_id, USUAL_FORMAT),
+            None => log::warn!("pas de GPU pour l'instant"),
+        }
     }
 
     /// Met le GPU en route avant d'ouvrir la moindre fenêtre : appareil,
@@ -321,8 +335,8 @@ impl Gpu {
     /// en a besoin.
     pub fn warm_up(&mut self, list: &DisplayList) -> Result<(), GpuError> {
         let dev_id = pollster::block_on(self.context.device(None)).ok_or(GpuError::NoDevice)?;
-        // Le format des fenêtres déjà ouvertes, sinon celui des fenêtres sur Mac.
-        let format = self.format.unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
+        // Le format des fenêtres déjà ouvertes, sinon le format habituel.
+        let format = self.format.unwrap_or(USUAL_FORMAT);
         self.prepare(dev_id, format);
         let handle = &self.context.devices[dev_id];
         let (width, height) = (list.width.max(1), list.height.max(1));

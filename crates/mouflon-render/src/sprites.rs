@@ -2,6 +2,7 @@
 //! d'avance à la finesse de l'écran et rognées à leur contenu.
 
 use std::io::Cursor;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mouflon_core::{Facings, SpritePage, SpriteSheet};
 use vello::peniko::Blob;
@@ -65,47 +66,19 @@ impl SpriteFrames {
         if sheet.pages.is_empty() {
             return Err(SpriteError::Invalid("aucune planche".into()));
         }
-        // Les planches se décodent en parallèle (une bande par animation : il
-        // y en a souvent des dizaines).
-        let workers = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZero::get)
-            .clamp(1, 8);
         // Les images intermédiaires suivent celles de la planche principale.
         let pages: Vec<&SpritePage> = sheet
             .pages
             .iter()
             .chain(sheet.inbetweens.iter().flat_map(|i| i.pages.iter()))
             .collect();
-        let per_worker = pages.len().div_ceil(workers);
-        let decoded: Vec<Result<Vec<DecodedPage>, SpriteError>> = std::thread::scope(|scope| {
-            let jobs: Vec<_> = pages
-                .chunks(per_worker)
-                .map(|pages| {
-                    scope.spawn(move || {
-                        pages
-                            .iter()
-                            .map(|page| decode_page(page, sheet))
-                            .collect::<Result<Vec<_>, _>>()
-                    })
-                })
-                .collect();
-            jobs.into_iter()
-                .map(|job| {
-                    job.join()
-                        .unwrap_or_else(|_| Err(SpriteError::Invalid("décodage interrompu".into())))
-                })
-                .collect()
-        });
+        let decoded = decode_pages(&pages, sheet);
         let mut tile: Option<(u32, u32)> = None;
         let regular = sheet.tile_count();
         let mut frames =
             Vec::with_capacity(pages.iter().map(|p| p.tiles_x * p.tiles_y).sum::<u32>() as usize);
-        for page in decoded
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-        {
+        for page in decoded {
+            let page = page?;
             if tile.is_some_and(|t| t != page.tile) {
                 return Err(SpriteError::Invalid(format!(
                     "cases de {} × {} pixels, différentes des autres planches",
@@ -228,6 +201,54 @@ impl SpriteFrames {
 struct DecodedPage {
     tile: (u32, u32),
     frames: Vec<SpriteFrame>,
+}
+
+/// Décode les planches en parallèle, résultats dans l'ordre des planches.
+///
+/// Elles sont souvent des dizaines (une bande par animation), de tailles
+/// variées. Chaque fil prend la plus grande de celles qui restent : les plus
+/// longues partent d'abord et aucun fil ne finit seul sur une grosse planche
+/// pendant que les autres attendent (ordonnancement « plus long d'abord »).
+fn decode_pages(
+    pages: &[&SpritePage],
+    sheet: &SpriteSheet,
+) -> Vec<Result<DecodedPage, SpriteError>> {
+    let mut order: Vec<usize> = (0..pages.len()).collect();
+    order.sort_by_key(|&i| {
+        let (w, h) = pages[i].png.size().unwrap_or((0, 0));
+        std::cmp::Reverse(u64::from(w) * u64::from(h))
+    });
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .clamp(1, 8)
+        .min(pages.len().max(1));
+    let next = AtomicUsize::new(0);
+    let mut slots: Vec<Option<Result<DecodedPage, SpriteError>>> =
+        std::iter::repeat_with(|| None).take(pages.len()).collect();
+    let done: Vec<Vec<(usize, Result<DecodedPage, SpriteError>)>> = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    while let Some(&i) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        done.push((i, decode_page(pages[i], sheet)));
+                    }
+                    done
+                })
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|job| job.join().unwrap_or_default())
+            .collect()
+    });
+    for (i, page) in done.into_iter().flatten() {
+        slots[i] = Some(page);
+    }
+    // Une planche sans résultat : son fil s'est arrêté en route.
+    slots
+        .into_iter()
+        .map(|slot| slot.unwrap_or_else(|| Err(SpriteError::Invalid("décodage interrompu".into()))))
+        .collect()
 }
 
 fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, SpriteError> {
@@ -585,9 +606,13 @@ pub fn decode_png_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), SpriteError>
         .ok_or_else(|| SpriteError::Invalid("image trop grande".into()))?;
     let mut buf = vec![0; size];
     let info = reader.next_frame(&mut buf)?;
-    let pixels = (info.width * info.height) as usize;
+    let pixels = info.width as usize * info.height as usize;
     let rgba = match info.color_type {
-        png::ColorType::Rgba => buf[..pixels * 4].to_vec(),
+        // Déjà en RGBA : le tampon sert tel quel, sans copie.
+        png::ColorType::Rgba => {
+            buf.truncate(pixels * 4);
+            buf
+        }
         png::ColorType::Rgb => buf[..pixels * 3]
             .as_chunks::<3>()
             .0

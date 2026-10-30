@@ -592,6 +592,30 @@ impl App {
         self.sync_windows(event_loop);
     }
 
+    /// Lance le décodage des dessins de ces animaux, une espèce par fil, sans
+    /// les attendre : `Entry::art` attend ensuite ceux qui ne sont pas prêts
+    /// (ou décode sur place si un fil n'a pas pu être lancé).
+    fn decode_ahead(&self, starters: &[usize]) -> Vec<Entry> {
+        let mut species: Vec<Entry> = Vec::new();
+        for entry in starters.iter().filter_map(|&i| self.library.pets.get(i)) {
+            if !species.iter().any(|e| e.def.meta.id == entry.def.meta.id) {
+                species.push(entry.clone());
+            }
+        }
+        for entry in species.iter().filter(|e| !e.art_ready()) {
+            let entry = entry.clone();
+            let spawned = std::thread::Builder::new()
+                .name("mouflon-dessins".into())
+                .spawn(move || {
+                    let _ = entry.art();
+                });
+            if let Err(e) = spawned {
+                log::warn!("dessins préparés sur le fil principal : {e}");
+            }
+        }
+        species
+    }
+
     /// Prépare les dessins d'un animal sur un fil à part ; `UserEvent::ArtReady`
     /// arrive quand c'est fait. `false` si le fil n'a pas pu être lancé.
     fn prepare_art(&mut self, entry: &Entry) -> bool {
@@ -1573,6 +1597,26 @@ impl ApplicationHandler<UserEvent> for App {
             self.library.dir().map(std::path::Path::to_path_buf),
         );
 
+        // Animaux du lancement : ceux de l'essai s'il en demande, sinon le préféré.
+        let mut starters: Vec<usize> = Vec::new();
+        if trial.is_some() {
+            for id in crate::stats::trial_pets() {
+                match self.library.pets.iter().position(|e| e.def.meta.id == id) {
+                    Some(i) => starters.push(i),
+                    None => log::warn!("essai : animal « {id} » introuvable"),
+                }
+            }
+        }
+        if starters.is_empty() {
+            let index = self
+                .library
+                .default_index(self.settings.default_pet.as_deref());
+            starters = vec![index; self.settings.start_count.clamp(1, 32) as usize];
+        }
+        // Leurs dessins se décodent dès maintenant, une espèce par fil, pendant
+        // que le fil principal crée le menu et met le GPU en route.
+        let species = self.decode_ahead(&starters);
+
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             let proxy = Arc::clone(&self.proxy);
@@ -1601,28 +1645,8 @@ impl ApplicationHandler<UserEvent> for App {
         // cela ne doit tomber pendant la première chute.
         let mut mark = Instant::now();
         let mut steps = vec![("menu", mark - begun)];
-        let index = self
-            .library
-            .default_index(self.settings.default_pet.as_deref());
-        // Animaux du lancement : ceux de l'essai s'il en demande, sinon le préféré.
-        let mut starters: Vec<usize> = Vec::new();
-        if trial.is_some() {
-            for id in crate::stats::trial_pets() {
-                match self.library.pets.iter().position(|e| e.def.meta.id == id) {
-                    Some(i) => starters.push(i),
-                    None => log::warn!("essai : animal « {id} » introuvable"),
-                }
-            }
-        }
-        if starters.is_empty() {
-            starters = vec![index; self.settings.start_count.clamp(1, 32) as usize];
-        }
-        for &i in &starters {
-            if let Some(entry) = self.library.pets.get(i) {
-                let _ = entry.art();
-            }
-        }
-        steps.push(("dessins", lap(&mut mark)));
+        self.gpu.get_or_insert_with(Gpu::new).prepare_ahead();
+        steps.push(("GPU", lap(&mut mark)));
         if self.settings.sounds {
             self.warm_up_sounds();
         }
@@ -1635,10 +1659,15 @@ impl ApplicationHandler<UserEvent> for App {
             None => self.refresh_windows(Instant::now()),
         }
         steps.push(("relevé des fenêtres", lap(&mut mark)));
+        // Les dessins décodés à côté : on attend ceux qui ne sont pas prêts.
+        for entry in &species {
+            let _ = entry.art();
+        }
+        steps.push(("fin des dessins", lap(&mut mark)));
         for &i in &starters {
             self.spawn(event_loop, i);
         }
-        steps.push(("fenêtres et programmes du GPU", lap(&mut mark)));
+        steps.push(("fenêtres", lap(&mut mark)));
         self.warm_up_gpu();
         steps.push(("image d'essai", lap(&mut mark)));
         self.start_clock();
@@ -1659,14 +1688,14 @@ impl ApplicationHandler<UserEvent> for App {
             // À la moitié, puis aux trois quarts, le dernier arrivé d'une
             // espèce s'en va (sa fenêtre se ferme) et un autre arrive.
             let start = Instant::now();
-            let mut species: Vec<usize> = Vec::new();
+            let mut kinds: Vec<usize> = Vec::new();
             for &i in &starters {
-                if !species.contains(&i) {
-                    species.push(i);
+                if !kinds.contains(&i) {
+                    kinds.push(i);
                 }
             }
             for (k, at) in [duration / 2, duration * 3 / 4].into_iter().enumerate() {
-                if let Some(&kind) = species.get(k % species.len().max(1)) {
+                if let Some(&kind) = kinds.get(k % kinds.len().max(1)) {
                     self.trial_steps
                         .push((start + at, TrialStep::Goodbye(kind)));
                     self.trial_steps
