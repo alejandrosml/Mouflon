@@ -1675,7 +1675,14 @@ impl ApplicationHandler<UserEvent> for App {
         // cela ne doit tomber pendant la première chute.
         let mut mark = Instant::now();
         let mut steps = vec![("menu", mark - begun)];
-        self.gpu.get_or_insert_with(Gpu::new).prepare_ahead();
+        let gpu = self.gpu.get_or_insert_with(Gpu::new);
+        gpu.prepare_ahead();
+        if let Some(gpu) = gpu.describe() {
+            log::info!("GPU : {gpu}");
+            if let Some(stats) = &self.stats {
+                stats.raw(format!("GPU {gpu}"));
+            }
+        }
         steps.push(("GPU", lap(&mut mark)));
         if self.settings.sounds {
             self.warm_up_sounds();

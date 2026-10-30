@@ -318,6 +318,21 @@ impl Gpu {
         })
     }
 
+    /// Le GPU et l'interface graphique employés (« Apple M2, Metal, intégré »),
+    /// une fois l'appareil créé.
+    #[must_use]
+    pub fn describe(&self) -> Option<String> {
+        let info = self.context.devices.first()?.adapter().get_info();
+        let kind = match info.device_type {
+            wgpu::DeviceType::IntegratedGpu => "intégré",
+            wgpu::DeviceType::DiscreteGpu => "séparé",
+            wgpu::DeviceType::VirtualGpu => "virtuel",
+            wgpu::DeviceType::Cpu => "logiciel",
+            wgpu::DeviceType::Other => "autre",
+        };
+        Some(format!("{}, {:?}, {kind}", info.name, info.backend))
+    }
+
     /// Programmes du rendu direct pour des fenêtres au format `format`.
     fn prepare(&mut self, dev_id: usize, format: wgpu::TextureFormat) {
         let device = &self.context.devices[dev_id].device;
