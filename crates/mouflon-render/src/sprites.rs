@@ -12,6 +12,8 @@ use crate::display::Bitmap;
 pub enum SpriteError {
     #[error("PNG illisible : {0}")]
     Png(#[from] png::DecodingError),
+    #[error("planche introuvable : {0}")]
+    Io(#[from] std::io::Error),
     #[error("planche de sprites invalide : {0}")]
     Invalid(String),
 }
@@ -229,7 +231,7 @@ struct DecodedPage {
 }
 
 fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, SpriteError> {
-    let (width, height, mut rgba) = decode_png_rgba(&page.png)?;
+    let (width, height, mut rgba) = decode_png_rgba(&page.png.bytes()?)?;
     if let Some([kr, kg, kb]) = sheet.key_color {
         for px in rgba.as_chunks_mut::<4>().0 {
             if px[0] == kr && px[1] == kg && px[2] == kb {
@@ -624,7 +626,7 @@ pub fn encode_png_rgba(bitmap: &Bitmap) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mouflon_core::Inbetweens;
+    use mouflon_core::{Inbetweens, PngData};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -671,7 +673,7 @@ mod tests {
         let sheet = SpriteSheet {
             key_color: Some([255, 0, 255]),
             ..SpriteSheet::single(
-                Arc::from(png(4, 2, |x, _| match x {
+                PngData::from(png(4, 2, |x, _| match x {
                     0 | 1 => [255, 0, 255, 255],
                     3 => [10, 20, 30, 255],
                     _ => [0, 0, 0, 0],
@@ -695,7 +697,7 @@ mod tests {
     fn both_facings_pick_their_own_frames() {
         // Deux bandes de 2 images de 8 px : vers la gauche, puis vers la droite.
         let strip = |shade: u8| SpritePage {
-            png: Arc::from(png(16, 8, move |x, _| [shade, (x / 8) as u8, 0, 255])),
+            png: png(16, 8, move |x, _| [shade, (x / 8) as u8, 0, 255]).into(),
             tiles_x: 2,
             tiles_y: 1,
         };
@@ -703,7 +705,7 @@ mod tests {
             pages: vec![strip(10), strip(200)],
             facings: Facings::Both,
             anchor: Some([2.0, 7.0]),
-            ..SpriteSheet::single(Arc::from(Vec::new()), 1, 1)
+            ..SpriteSheet::single(Vec::new().into(), 1, 1)
         };
         let frames = SpriteFrames::decode(&sheet).unwrap();
         let left = frames.pick(1, -1.0).unwrap();
@@ -719,7 +721,7 @@ mod tests {
     #[test]
     fn inbetweens_follow_the_sheet_in_both_facings() {
         let strip = |shade: u8| SpritePage {
-            png: Arc::from(png(16, 8, move |x, _| [shade, (x / 8) as u8, 0, 255])),
+            png: png(16, 8, move |x, _| [shade, (x / 8) as u8, 0, 255]).into(),
             tiles_x: 2,
             tiles_y: 1,
         };
@@ -730,7 +732,7 @@ mod tests {
                 pages: vec![strip(30), strip(230)],
                 pairs: HashMap::from([((0, 1), (4, 1)), ((1, 0), (5, 1))]),
             })),
-            ..SpriteSheet::single(Arc::from(Vec::new()), 1, 1)
+            ..SpriteSheet::single(Vec::new().into(), 1, 1)
         };
         let frames = SpriteFrames::decode(&sheet).unwrap();
         assert_eq!(frames.frames.len(), 8);
@@ -751,7 +753,7 @@ mod tests {
         // Case de 8 px affichée à 0,375 point par pixel : 6 px à l'écran Retina.
         let sheet = SpriteSheet {
             scale: 0.375,
-            ..SpriteSheet::single(Arc::from(png(8, 8, |_, _| [90, 90, 90, 255])), 1, 1)
+            ..SpriteSheet::single(png(8, 8, |_, _| [90, 90, 90, 255]).into(), 1, 1)
         };
         let frames = SpriteFrames::decode(&sheet).unwrap();
         let f = &frames.frames[0];

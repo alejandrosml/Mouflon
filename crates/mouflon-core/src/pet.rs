@@ -2299,7 +2299,7 @@ mod tests {
     "#;
 
     fn def() -> Arc<PetDef> {
-        Arc::new(parse_pet_toml(PET, |_| Ok(b"<svg/>".to_vec())).unwrap())
+        Arc::new(parse_pet_toml(PET, |_: &str| Ok(b"<svg/>".to_vec())).unwrap())
     }
 
     fn world() -> World {
@@ -3025,7 +3025,7 @@ mod tests {
     "#;
 
     fn social() -> Arc<PetDef> {
-        Arc::new(parse_pet_toml(SOCIAL, |_| Ok(b"<svg/>".to_vec())).unwrap())
+        Arc::new(parse_pet_toml(SOCIAL, |_: &str| Ok(b"<svg/>".to_vec())).unwrap())
     }
 
     /// Pose un animal du troupeau sur le sol, tourné et occupé comme voulu.

@@ -369,9 +369,9 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             key_color: text(image, "transparency").as_deref().and_then(key_color),
             skins,
             ..SpriteSheet::single(
-                Arc::from(original.ok_or_else(|| {
-                    LoadError::Xml("l'image <png> est absente ou illisible".into())
-                })?),
+                original
+                    .ok_or_else(|| LoadError::Xml("l'image <png> est absente ou illisible".into()))?
+                    .into(),
                 tiles_x,
                 tiles_y,
             )
@@ -939,7 +939,7 @@ pub(crate) mod tests {
         // Planche quatre fois plus fine, affichée à 50 % : tout est deux fois plus grand.
         let sprites = SpriteSheet {
             scale: 0.5,
-            ..SpriteSheet::single(Arc::from(png_header(32, 16)), 2, 1)
+            ..SpriteSheet::single(png_header(32, 16).into(), 2, 1)
         };
         let overrides = Overrides {
             meta: None,

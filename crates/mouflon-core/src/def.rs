@@ -56,9 +56,48 @@ pub struct Drawn {
 /// Une image PNG découpée en cases de même taille.
 #[derive(Clone, Debug)]
 pub struct SpritePage {
-    pub png: Arc<[u8]>,
+    pub png: PngData,
     pub tiles_x: u32,
     pub tiles_y: u32,
+}
+
+/// Octets d'une planche PNG : en mémoire (image intégrée à un fichier
+/// desktopPet, essais), ou dans un fichier relu à chaque décodage. Une
+/// planche pèse souvent des mégaoctets : un animal qui ne sert pas n'en
+/// coûte ainsi rien, et un animal à l'écran ne garde que ses images décodées.
+#[derive(Clone, Debug)]
+pub enum PngData {
+    Bytes(Arc<[u8]>),
+    File {
+        path: Arc<std::path::Path>,
+        /// Largeur et hauteur, lues dans l'en-tête au chargement.
+        size: (u32, u32),
+    },
+}
+
+impl PngData {
+    /// Largeur et hauteur de l'image.
+    #[must_use]
+    pub fn size(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Bytes(bytes) => png_size(bytes),
+            Self::File { size, .. } => Some(*size),
+        }
+    }
+
+    /// Le fichier PNG entier (lu sur le disque s'il n'est pas en mémoire).
+    pub fn bytes(&self) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+        match self {
+            Self::Bytes(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
+            Self::File { path, .. } => std::fs::read(path).map(std::borrow::Cow::Owned),
+        }
+    }
+}
+
+impl From<Vec<u8>> for PngData {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Bytes(Arc::from(bytes))
+    }
 }
 
 /// Images intermédiaires entre deux images d'une animation, pour un
@@ -106,7 +145,7 @@ pub struct SpriteSheet {
 impl SpriteSheet {
     /// Planche unique façon desktopPet.
     #[must_use]
-    pub fn single(png: Arc<[u8]>, tiles_x: u32, tiles_y: u32) -> Self {
+    pub fn single(png: PngData, tiles_x: u32, tiles_y: u32) -> Self {
         Self {
             pages: vec![SpritePage {
                 png,
@@ -145,7 +184,7 @@ impl SpriteSheet {
     #[must_use]
     pub fn tile_size(&self) -> Option<(u32, u32)> {
         let page = self.pages.first()?;
-        let (w, h) = png_size(&page.png)?;
+        let (w, h) = page.png.size()?;
         Some((w / page.tiles_x.max(1), h / page.tiles_y.max(1)))
     }
 

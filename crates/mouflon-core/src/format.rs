@@ -64,7 +64,7 @@ use serde::Deserialize;
 
 use crate::def::{
     Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Inbetweens, Motion,
-    PetDef, PetMeta, Physics, Reflexes, Script, Sound, SoundCue, SpriteClip, SpritePage,
+    PetDef, PetMeta, Physics, PngData, Reflexes, Script, Sound, SoundCue, SpriteClip, SpritePage,
     SpriteSheet, Transition, png_size,
 };
 use crate::expr::Expr;
@@ -93,13 +93,7 @@ fn format_error(message: impl Into<String>) -> LoadError {
 
 /// Charge un animal depuis un `pet.toml` ou un XML desktopPet.
 pub fn load_pet(path: &Path) -> Result<PetDef, LoadError> {
-    let read = |p: &Path| {
-        std::fs::read(p).map_err(|source| LoadError::Io {
-            path: p.to_path_buf(),
-            source,
-        })
-    };
-    let bytes = read(path)?;
+    let bytes = read_file(path)?;
     let text = String::from_utf8(bytes)
         .map_err(|_| format_error(format!("{} n'est pas en UTF-8", path.display())))?;
     match path
@@ -111,8 +105,64 @@ pub fn load_pet(path: &Path) -> Result<PetDef, LoadError> {
         Some("xml") => crate::desktoppet::import(text.trim_start_matches('\u{feff}')),
         _ => {
             let base = path.parent().unwrap_or_else(|| Path::new("."));
-            parse_pet_toml(&text, |name| read(&base.join(name)))
+            parse_pet_toml(&text, Folder { base })
         }
+    }
+}
+
+fn read_file(path: &Path) -> Result<Vec<u8>, LoadError> {
+    std::fs::read(path).map_err(|source| LoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Ressources nommées dans un `pet.toml` (images, sons, autres fichiers).
+pub trait Resources {
+    /// Contenu complet d'une ressource.
+    fn read(&self, name: &str) -> Result<Vec<u8>, LoadError>;
+
+    /// Une planche PNG. Par défaut lue tout de suite ; un dossier ne lit que
+    /// son en-tête, et le reste au décodage des images.
+    fn png(&self, name: &str) -> Result<PngData, LoadError> {
+        Ok(PngData::from(self.read(name)?))
+    }
+}
+
+/// Une fonction qui lit chaque ressource (essais, animaux en mémoire).
+impl<F: Fn(&str) -> Result<Vec<u8>, LoadError>> Resources for F {
+    fn read(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+        self(name)
+    }
+}
+
+/// Le dossier d'un `pet.toml`.
+struct Folder<'a> {
+    base: &'a Path,
+}
+
+impl Resources for Folder<'_> {
+    fn read(&self, name: &str) -> Result<Vec<u8>, LoadError> {
+        read_file(&self.base.join(name))
+    }
+
+    fn png(&self, name: &str) -> Result<PngData, LoadError> {
+        use std::io::Read as _;
+        let path = self.base.join(name);
+        let io = |source| LoadError::Io {
+            path: path.clone(),
+            source,
+        };
+        let mut header = [0u8; 24];
+        std::fs::File::open(&path)
+            .and_then(|mut f| f.read_exact(&mut header))
+            .map_err(io)?;
+        let size = png_size(&header)
+            .ok_or_else(|| format_error(format!("{} n'est pas un PNG", path.display())))?;
+        Ok(PngData::File {
+            path: Arc::from(path.as_path()),
+            size,
+        })
     }
 }
 
@@ -130,10 +180,7 @@ enum FrameSource {
 }
 
 /// Analyse un `pet.toml`. `resolve` lit une ressource nommée dans le fichier.
-pub fn parse_pet_toml(
-    text: &str,
-    resolve: impl Fn(&str) -> Result<Vec<u8>, LoadError>,
-) -> Result<PetDef, LoadError> {
+pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, LoadError> {
     let file: PetFile = toml::from_str(text)?;
     let meta = PetMeta {
         id: file.pet.id.clone(),
@@ -285,7 +332,7 @@ pub fn parse_pet_toml(
 /// Sons nommés de la section [sounds] : leurs fichiers sont lus tout de suite.
 fn load_sounds(
     table: &BTreeMap<String, SoundToml>,
-    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+    resolve: &impl Resources,
 ) -> Result<Vec<Sound>, LoadError> {
     table
         .iter()
@@ -304,7 +351,7 @@ fn load_sounds(
             }
             let clips = files
                 .iter()
-                .map(|file| resolve(file).map(Arc::from))
+                .map(|file| resolve.read(file).map(Arc::from))
                 .collect::<Result<_, _>>()?;
             Ok(Sound {
                 name: name.clone(),
@@ -365,7 +412,7 @@ fn sound_cues(
 fn parse_appearance(
     a: &AppearanceToml,
     strip_names: &[String],
-    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+    resolve: &impl Resources,
 ) -> Result<(Appearance, FrameSource), LoadError> {
     let strips = a.strips_left.is_some() || a.strips_right.is_some();
     let kinds =
@@ -379,7 +426,7 @@ fn parse_appearance(
     if let Some(svg) = &a.rig {
         return Ok((
             Appearance::Rig {
-                svg: Arc::from(resolve(svg)?),
+                svg: Arc::from(resolve.read(svg)?),
                 height: a.height.unwrap_or(64.0),
             },
             FrameSource::None,
@@ -403,7 +450,7 @@ fn parse_appearance(
             }
         };
         let page = SpritePage {
-            png: Arc::from(resolve(png)?),
+            png: resolve.png(png)?,
             tiles_x,
             tiles_y,
         };
@@ -482,7 +529,7 @@ fn parse_appearance(
 fn load_strips(
     a: &AppearanceToml,
     names: &[String],
-    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+    resolve: &impl Resources,
 ) -> Result<(Vec<SpritePage>, StripIndex, Facings), LoadError> {
     let [frame_w, frame_h] = a.frame.ok_or_else(|| {
         format_error("avec des bandes d'images, précise leur taille : `frame = [largeur, hauteur]`")
@@ -510,9 +557,10 @@ fn load_strips(
         let mut offset = 0;
         for name in names {
             let path = pattern.replace("{name}", name);
-            let png = resolve(&path)?;
-            let (w, h) =
-                png_size(&png).ok_or_else(|| format_error(format!("{path} n'est pas un PNG")))?;
+            let png = resolve.png(&path)?;
+            let (w, h) = png
+                .size()
+                .ok_or_else(|| format_error(format!("{path} n'est pas un PNG")))?;
             if w % frame_w != 0 || h % frame_h != 0 || w == 0 || h == 0 {
                 return Err(format_error(format!(
                     "{path} : {w} × {h} pixels, ce n'est pas un nombre entier d'images de {frame_w} × {frame_h}"
@@ -528,7 +576,7 @@ fn load_strips(
                 )));
             }
             pages.push(SpritePage {
-                png: Arc::from(png),
+                png,
                 tiles_x,
                 tiles_y,
             });
@@ -547,24 +595,26 @@ fn load_inbetweens(
     path: &str,
     sheet: &SpriteSheet,
     strips: Option<(&StripIndex, &[String])>,
-    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+    resolve: &impl Resources,
 ) -> Result<Inbetweens, LoadError> {
     let bad = |what: String| format_error(format!("{path} : {what}"));
-    let text = String::from_utf8(resolve(path)?).map_err(|_| bad("pas en UTF-8".into()))?;
+    let text = String::from_utf8(resolve.read(path)?).map_err(|_| bad("pas en UTF-8".into()))?;
     let file: InbetweensToml = toml::from_str(&text)?;
     let (tile_w, tile_h) = sheet.tile_size().unwrap_or((0, 0));
     // Les images intermédiaires sont numérotées après toutes les cases.
     let base = sheet.tile_count();
     let mut out = Inbetweens::default();
-    let page = |png: Vec<u8>, what: &str| -> Result<SpritePage, LoadError> {
-        let (w, h) = png_size(&png).ok_or_else(|| bad(format!("{what} n'est pas un PNG")))?;
+    let page = |png: PngData, what: &str| -> Result<SpritePage, LoadError> {
+        let (w, h) = png
+            .size()
+            .ok_or_else(|| bad(format!("{what} n'est pas un PNG")))?;
         if w % tile_w.max(1) != 0 || h % tile_h.max(1) != 0 || w == 0 || h == 0 {
             return Err(bad(format!(
                 "{what} : {w} × {h} pixels, ce n'est pas un nombre entier d'images de {tile_w} × {tile_h}"
             )));
         }
         Ok(SpritePage {
-            png: Arc::from(png),
+            png,
             tiles_x: w / tile_w,
             tiles_y: h / tile_h,
         })
@@ -579,7 +629,7 @@ fn load_inbetweens(
         let [tiles_x, tiles_y] = file
             .tiles
             .ok_or_else(|| bad("il manque `tiles = [colonnes, lignes]`".into()))?;
-        let page = page(resolve(sprites)?, sprites)?;
+        let page = page(resolve.png(sprites)?, sprites)?;
         if (page.tiles_x, page.tiles_y) != (tiles_x, tiles_y) {
             return Err(bad(format!(
                 "{sprites} : {} × {} cases, pas {tiles_x} × {tiles_y}",
@@ -642,7 +692,7 @@ fn load_inbetweens(
             .iter()
             .map(|pattern| {
                 let path = pattern.replace("{name}", name);
-                resolve(&path).map(|png| (path, png))
+                resolve.png(&path).map(|png| (path, png))
             })
             .collect::<Result<Vec<_>, _>>()
         else {
@@ -677,7 +727,7 @@ fn parse_desktoppet_sidecar(
     file: &PetFile,
     desktoppet: &DesktopPetToml,
     meta: PetMeta,
-    resolve: &impl Fn(&str) -> Result<Vec<u8>, LoadError>,
+    resolve: &impl Resources,
 ) -> Result<PetDef, LoadError> {
     if !file.behaviors.is_empty() {
         return Err(format_error(
@@ -695,7 +745,7 @@ fn parse_desktoppet_sidecar(
             }
         },
     };
-    let xml = String::from_utf8(resolve(&desktoppet.animations)?)
+    let xml = String::from_utf8(resolve.read(&desktoppet.animations)?)
         .map_err(|_| format_error(format!("{} n'est pas en UTF-8", desktoppet.animations)))?;
     let mut def = crate::desktoppet::import_with(
         xml.trim_start_matches('\u{feff}'),
@@ -1384,7 +1434,7 @@ pub(crate) mod tests {
             [desktoppet]
             animations = "animations.xml"
         "#;
-        let def = parse_pet_toml(toml, |name| match name {
+        let def = parse_pet_toml(toml, |name: &str| match name {
             "animations.xml" => Ok(crate::desktoppet::tests::sample().into_bytes()),
             // Cases de 16 × 16 pixels affichées à 25 % : la taille d'origine (4 points).
             "mouton.png" => Ok(png_header(32, 16)),
@@ -1545,7 +1595,7 @@ pub(crate) mod tests {
         assert!(err.contains("1 déplacements pour 4 images"), "{err}");
 
         // Le sens droit doit avoir autant d'images que le gauche.
-        let err = parse_pet_toml(STRIPS, |name| {
+        let err = parse_pet_toml(STRIPS, |name: &str| {
             if name == "d/marche.png" {
                 Ok(png_header(64 * 3, 64))
             } else {
@@ -1630,7 +1680,7 @@ pub(crate) mod tests {
         assert_eq!(sheet.inbetween(8, 9), None, "demi-tour : pas d'images");
 
         // Une bande d'images intermédiaires doit en avoir une par image.
-        let err = parse_pet_toml(&strips_with_inbetweens(), |name| {
+        let err = parse_pet_toml(&strips_with_inbetweens(), |name: &str| {
             if name == "ed/marche.png" {
                 Ok(png_header(64 * 3, 64))
             } else {
@@ -1807,11 +1857,11 @@ pub(crate) mod tests {
             name = "pas"
             frames = [2, 3, 4]
         "#;
-        let err = parse_pet_toml(toml, |_| Ok(png_header(64, 16)))
+        let err = parse_pet_toml(toml, |_: &str| Ok(png_header(64, 16)))
             .unwrap_err()
             .to_string();
         assert!(err.contains("la case 4"), "{err}");
-        let def = parse_pet_toml(&toml.replace("[2, 3, 4]", "[2, 3]"), |_| {
+        let def = parse_pet_toml(&toml.replace("[2, 3, 4]", "[2, 3]"), |_: &str| {
             Ok(png_header(64, 16))
         })
         .unwrap();
