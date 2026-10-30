@@ -40,8 +40,10 @@ struct Shared {
     fast: AtomicBool,
     /// Lire aussi le cadre du Dock (« Marcher sous le Dock »).
     dock: AtomicBool,
-    /// Demande de relevé immédiat.
+    /// Demande de relevé immédiat (Dock et dossier compris).
     now: Mutex<bool>,
+    /// Demande de relevé des fenêtres sans attendre (une fenêtre bouge).
+    soon: AtomicBool,
     wake: Condvar,
     stop: AtomicBool,
 }
@@ -96,8 +98,25 @@ impl Watcher {
         self.shared.pets.lock().ok()?.take()
     }
 
+    /// Relève souvent (ou plus) ; en passant au relevé fréquent, relève
+    /// tout de suite.
     pub fn set_fast(&self, fast: bool) {
-        self.shared.fast.store(fast, Ordering::Relaxed);
+        let was = self.shared.fast.swap(fast, Ordering::Relaxed);
+        if fast && !was {
+            self.poll_soon();
+        }
+    }
+
+    /// De quoi demander, d'un autre fil, un relevé des fenêtres sans attendre.
+    pub fn nudger(&self) -> Nudger {
+        Nudger {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+
+    /// Relève les fenêtres sans attendre le prochain tour (pas le Dock).
+    pub fn poll_soon(&self) {
+        self.nudger().nudge();
     }
 
     pub fn set_dock(&self, dock: bool) {
@@ -109,6 +128,25 @@ impl Watcher {
     pub fn refresh_now(&self) {
         if let Ok(mut now) = self.shared.now.lock() {
             *now = true;
+            self.shared.wake.notify_one();
+        }
+    }
+}
+
+/// Demande un relevé des fenêtres sans attendre : l'Accessibilité dit
+/// qu'une fenêtre bouge (voir `platform::follow_window_moves`).
+#[derive(Clone, Debug)]
+pub struct Nudger {
+    shared: Arc<Shared>,
+}
+
+impl Nudger {
+    pub fn nudge(&self) {
+        if self.shared.soon.swap(true, Ordering::AcqRel) {
+            // Déjà demandé : le fil de relevé va s'en occuper.
+            return;
+        }
+        if let Ok(_now) = self.shared.now.lock() {
             self.shared.wake.notify_one();
         }
     }
@@ -230,7 +268,9 @@ fn watch(shared: &Shared, pets: Option<&std::path::Path>, mut timing: Option<Tim
         let Ok(guard) = shared.now.lock() else {
             return;
         };
-        let Ok((mut guard, _)) = shared.wake.wait_timeout_while(guard, pause, |now| !*now) else {
+        let Ok((mut guard, _)) = shared.wake.wait_timeout_while(guard, pause, |now| {
+            !*now && !shared.soon.load(Ordering::Acquire)
+        }) else {
             return;
         };
         if *guard {
@@ -238,5 +278,15 @@ fn watch(shared: &Shared, pets: Option<&std::path::Path>, mut timing: Option<Tim
             slow_read = None;
         }
         *guard = false;
+        drop(guard);
+        if shared.soon.swap(false, Ordering::AcqRel) {
+            // Une fenêtre bouge : relevée tout de suite, mais pas plus souvent
+            // qu'en relevé fréquent (l'Accessibilité peut le dire à chaque
+            // image pendant qu'on la tire).
+            let since = started.elapsed();
+            if since < FAST {
+                std::thread::sleep(FAST - since);
+            }
+        }
     }
 }

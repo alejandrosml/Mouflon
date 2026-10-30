@@ -117,10 +117,12 @@ engine costs about 15 µs per 1/120 s step for 32 pets.
 Pets walk on the Dock. With *Walk under the Dock*, they go down to the bottom of
 the screen, pass behind the Dock and can jump onto it. To know where the Dock
 really is, Mouflon needs the Accessibility permission (System Settings →
-Privacy & Security → Accessibility), which it uses for nothing else; the
-settings window says so, and offers to open System Settings while the
-permission is missing. The option is not required. Launched with `cargo run`,
-the permission goes to the terminal app.
+Privacy & Security → Accessibility). It also uses it to be told at once when a
+window moves (only that moment: nothing in it is read), so that a pet standing
+on a window you start dragging leaves with it instead of waiting for the next
+poll; it uses it for nothing else. The settings window says so, and offers to
+open System Settings while the permission is missing. The option is not
+required. Launched with `cargo run`, the permission goes to the terminal app.
 
 *Open Mouflon at login* registers the app with macOS (System Settings →
 General → Login Items), which keeps that choice: the box shows what macOS says,
@@ -256,7 +258,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 |---|---|---|
 | `mouflon-core` | physics (classic, and the realistic rigid-body engine), behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; rigs baked into images (tiny-skia); Vello or SVG output | forbidden |
-| `mouflon-platform` | other apps' windows, screens, cursor, languages, the Dock (Accessibility), non-activating pet windows, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
+| `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating pet windows, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
 | `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
@@ -412,8 +414,11 @@ Les animaux marchent sur le Dock. Avec « Marcher sous le Dock », ils descenden
 jusqu'en bas de l'écran, passent derrière le Dock et peuvent sauter dessus.
 Pour savoir où est vraiment le Dock, Mouflon a besoin de l'autorisation
 d'Accessibilité (Réglages Système → Confidentialité et sécurité →
-Accessibilité), qui ne lui sert à rien d'autre ; la fenêtre des réglages le
-dit, et propose d'ouvrir Réglages Système tant que l'autorisation manque.
+Accessibilité). Elle lui sert aussi à être prévenu aussitôt qu'une fenêtre
+bouge (seulement ce moment : rien n'y est lu), pour qu'un animal posé sur une
+fenêtre qu'on commence à tirer parte avec elle au lieu d'attendre le prochain
+relevé ; elle ne lui sert à rien d'autre. La fenêtre des réglages le dit, et
+propose d'ouvrir Réglages Système tant que l'autorisation manque.
 L'option est facultative. Lancé avec `cargo run`, c'est le Terminal qui reçoit
 l'autorisation.
 
@@ -570,7 +575,7 @@ ses comportements : [docs/format.md](docs/format.md).
 |---|---|---|
 | `mouflon-core` | physique (classique, et le moteur réaliste de corps rigides), comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; rigs cuits en images (tiny-skia) ; sortie Vello ou SVG | interdit |
-| `mouflon-platform` | fenêtres des autres apps, écrans, curseur, langues, Dock (Accessibilité), fenêtres d'animaux non activantes, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
+| `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'animaux non activantes, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |

@@ -82,6 +82,11 @@ const WINDOW_STOPPED: f64 = 1.6;
 /// Une fenêtre qui saute plus loin que ceci d'un relevé à l'autre a été
 /// replacée (agrandie, envoyée sur un autre écran…) : elle n'a pas d'élan.
 const WINDOW_JUMP: f32 = 600.0;
+/// Écart entre la fenêtre relevée et sa position lissée au-delà duquel on
+/// ne lisse plus (points, plus ce que sa vitesse explique) : lisser un grand
+/// écart lui donnerait une vitesse qu'elle n'a pas eue, et lancerait les
+/// animaux qu'elle porte.
+const WINDOW_RESIDUAL: f32 = 24.0;
 
 /// Un corps au moment d'un choc : vitesse de son centre, vitesse de
 /// rotation (radians par seconde, sens horaire), inverses de sa masse et de
@@ -388,6 +393,8 @@ struct Tracked {
     /// Position lissée, et sa vitesse.
     shown: Vec2,
     vel: Vec2,
+    /// Déplacée d'un coup à ce pas (voir [`Tracker::jumped`]).
+    jumped: Vec2,
     seen: bool,
 }
 
@@ -407,6 +414,22 @@ impl Tracker {
         }
         match self.world.surface(surface) {
             Some(s) if s.kind == SurfaceKind::Window => self.window_velocity(s.id >> 8),
+            _ => Vec2::ZERO,
+        }
+    }
+
+    /// Déplacement d'un coup de la fenêtre de cette surface à ce pas :
+    /// replacée (un autre écran, une autre taille), ou vue bouger pour la
+    /// première fois après un calme, sans savoir comment elle est partie.
+    /// Les animaux posés dessus la suivent tel quel.
+    #[must_use]
+    pub fn jumped(&self, surface: SurfaceId) -> Vec2 {
+        match self.world.surface(surface) {
+            Some(s) if s.kind == SurfaceKind::Window => self
+                .windows
+                .iter()
+                .find(|t| t.id == s.id >> 8)
+                .map_or(Vec2::ZERO, |t| t.jumped),
             _ => Vec2::ZERO,
         }
     }
@@ -442,11 +465,13 @@ impl Tracker {
                     estimate: Vec2::ZERO,
                     shown: at,
                     vel: Vec2::ZERO,
+                    jumped: Vec2::ZERO,
                     seen: true,
                 });
                 continue;
             };
             tracked.seen = true;
+            tracked.jumped = Vec2::ZERO;
             if window.frame.w != tracked.width {
                 // Redimensionnée : le bord gauche bouge seul, le rebord ne se
                 // déplace pas sous les animaux (seule sa hauteur compte).
@@ -466,18 +491,28 @@ impl Tracker {
             let since = (time - tracked.known_at).max(1e-3);
             let jump = (at - tracked.known).length();
             if jump > WINDOW_JUMP || since > 0.5 {
-                // Replacée d'un coup, ou un premier relevé après un long calme :
-                // pas d'élan à en tirer.
+                // Replacée d'un coup, ou un premier relevé après un long calme
+                // (on ne sait pas comment elle est partie) : pas d'élan à en
+                // tirer. Elle est aussitôt à sa place, et ce qu'elle porte la
+                // suit tel quel, sans glisser.
                 tracked.estimate = Vec2::ZERO;
-                if jump > WINDOW_JUMP {
-                    tracked.shown = at;
-                    tracked.vel = Vec2::ZERO;
-                }
+                tracked.jumped = at - tracked.shown;
+                tracked.shown = at;
+                tracked.vel = Vec2::ZERO;
             } else {
                 let measured = (at - tracked.known) * (1.0 / since as f32);
                 tracked.estimate = tracked.estimate.lerp(measured, 0.7);
                 tracked.interval = (lerp(tracked.interval as f32, since as f32, 0.5) as f64)
                     .clamp(1.0 / 120.0, 0.25);
+                // Un relevé en retard la montre bien plus loin que ce qu'on
+                // montrait : elle y est aussitôt, et ce qu'elle porte la suit.
+                let residual = at - tracked.shown;
+                let explained = WINDOW_RESIDUAL
+                    + tracked.estimate.length() * (WINDOW_SMOOTHING + tracked.interval as f32);
+                if residual.length() > explained {
+                    tracked.jumped = residual;
+                    tracked.shown = at;
+                }
             }
             tracked.known = at;
             tracked.known_at = time;

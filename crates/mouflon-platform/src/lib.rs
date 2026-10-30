@@ -301,10 +301,11 @@ pub struct Beat {
 #[cfg(target_os = "macos")]
 pub use macos::{
     FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
-    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
-    request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
-    snapshot_form, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
+    follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
+    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
+    prepare_pet_window, request_accessibility, screens, set_login_item, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, snapshot_form, update_form, user_activity,
+    warm_up_sounds, window_max_fps, windows,
 };
 
 /// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
@@ -347,6 +348,14 @@ mod fallback {
     #[must_use]
     pub fn user_activity() -> Option<super::UserActivity> {
         None
+    }
+
+    /// Pas de signal des fenêtres qui bougent ici : le relevé suffit.
+    pub fn set_window_moves_handler(_handler: impl Fn() + 'static) {}
+
+    #[must_use]
+    pub fn follow_window_moves(_pids: &[i32]) -> usize {
+        0
     }
 
     pub fn prepare_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
@@ -500,10 +509,11 @@ mod fallback {
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
     FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
-    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
-    request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
-    snapshot_form, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
+    follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
+    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
+    prepare_pet_window, request_accessibility, screens, set_login_item, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, snapshot_form, update_form, user_activity,
+    warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

@@ -180,6 +180,11 @@ pub struct App {
     /// Personne devant la machine (essai de la CI) : on ne regarde pas ce
     /// que fait l'utilisateur.
     no_user: bool,
+    /// Apps dont les fenêtres bougeant sont signalées, et si l'Accessibilité
+    /// le permettait (voir `App::follow_moves`).
+    followed: Option<(bool, Vec<i32>)>,
+    /// L'autorisation d'Accessibilité, et quand elle a été relue.
+    trust: Option<(Instant, bool)>,
     trial_steps: Vec<(Instant, TrialStep)>,
     stats: Option<crate::stats::FrameStats>,
     frontmost: Option<i32>,
@@ -356,6 +361,8 @@ impl App {
             trial_end: None,
             activity: Cell::new(None),
             no_user: std::env::var_os("MOUFLON_ESSAI_CI").is_some(),
+            followed: None,
+            trust: None,
             trial_steps: Vec::new(),
             stats: None,
             frontmost: None,
@@ -573,7 +580,45 @@ impl App {
             ));
         }
         self.os_windows = snapshot.windows;
+        self.follow_moves();
         self.refresh_windows(now);
+    }
+
+    /// Les apps dont les fenêtres servent de rebords préviennent quand l'une
+    /// d'elles bouge (avec l'autorisation d'Accessibilité seulement).
+    fn follow_moves(&mut self) {
+        let mut pids: Vec<i32> = self
+            .os_windows
+            .iter()
+            .filter(|w| w.is_walkable())
+            .map(|w| w.pid)
+            .collect();
+        pids.sort_unstable();
+        pids.dedup();
+        // L'autorisation peut arriver en cours de route : relue toutes les
+        // deux secondes.
+        let now = Instant::now();
+        let trusted = match self.trust {
+            Some((at, trusted)) if now.duration_since(at) < SCREEN_POLL => trusted,
+            _ => {
+                let trusted = platform::accessibility_trusted();
+                self.trust = Some((now, trusted));
+                trusted
+            }
+        };
+        if self.followed.as_ref() == Some(&(trusted, pids.clone())) {
+            return;
+        }
+        let count = platform::follow_window_moves(&pids);
+        if let Some(stats) = &self.stats
+            && self.followed.as_ref().is_none_or(|(t, _)| *t != trusted)
+        {
+            stats.note(format_args!(
+                "fenêtres suivies par l'Accessibilité : {count} app(s){}",
+                if trusted { "" } else { " (pas d'autorisation)" }
+            ));
+        }
+        self.followed = Some((trusted, pids));
     }
 
     /// Applique le dernier relevé des fenêtres (sans rien redemander au système,
@@ -2252,6 +2297,10 @@ impl ApplicationHandler<UserEvent> for App {
                 .as_ref()
                 .and_then(|s| Some((s.sender()?, s.begun()))),
         );
+        // Avec l'Accessibilité, une fenêtre qui bouge est relevée aussitôt
+        // (voir `follow_window_moves`).
+        let nudger = watcher.nudger();
+        platform::set_window_moves_handler(move || nudger.nudge());
 
         // Animaux du lancement : ceux de l'essai s'il en demande, sinon le préféré.
         let mut starters: Vec<usize> = Vec::new();

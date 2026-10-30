@@ -210,6 +210,8 @@ impl Pet {
     /// est toujours là.
     fn carry_on(&mut self, dt: f32, tracker: &Tracker, id: SurfaceId) -> Option<Surface> {
         let surface = tracker.world().surface(id).copied()?;
+        // Déplacée d'un coup : il la suit tel quel.
+        self.pos.x += tracker.jumped(id).x;
         let platform = tracker.velocity(id);
         self.carry.y = platform.y;
         self.carry.x = approach(
@@ -638,6 +640,38 @@ mod tests {
             offset - start
         );
         assert!((pet.position().y - window.y).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_window_seen_moving_after_a_calm_spell_takes_its_pet_along() {
+        // Relevée toutes les 250 ms au calme, la fenêtre qu'on commence à
+        // tirer est vue d'un coup 120 pt plus loin : on ne sait pas comment
+        // elle est partie, l'animal la suit sans glisser ni décoller.
+        let mut window = Rect::new(300.0, 400.0, 600.0, 300.0);
+        let (mut flock, mut world, id) = on_window(window, "stand");
+        let start = pet(&flock, id).position().x - window.x;
+        window.x += 120.0;
+        poll(&mut world, Some(window));
+        // Puis relevée toutes les 33 ms, comme dans l'app quand une fenêtre
+        // qui porte un animal bouge : elle ne bouge plus.
+        drag(&mut flock, &mut world, &mut window, Vec2::ZERO, 0.5);
+        let carried = pet(&flock, id);
+        assert!(
+            matches!(carried.support(), Support::Ground { .. }),
+            "{:?}",
+            carried.support()
+        );
+        let offset = carried.position().x - window.x;
+        assert!((offset - start).abs() < 2.0, "{start} → {offset}");
+        // Montée d'un coup de même, un relevé en retard : il ne s'envole pas.
+        window.y -= 120.0;
+        poll(&mut world, Some(window));
+        let mut highest = f32::MAX;
+        for _ in 0..(0.5 / TICK) as usize {
+            drag(&mut flock, &mut world, &mut window, Vec2::ZERO, TICK);
+            highest = highest.min(pet(&flock, id).position().y);
+        }
+        assert!(highest > window.y - 8.0, "{highest} {}", window.y);
     }
 
     #[test]
