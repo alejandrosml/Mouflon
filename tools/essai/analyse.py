@@ -300,8 +300,38 @@ def read_marks(trial, path):
     return out
 
 
-def sample_top(path, count=30):
-    """Le haut des piles le plus vu par `sample` (« Sort by top of stack »)."""
+# Fonctions où un fil attend sans rien faire : elles remplissent le relevé de `sample`.
+IDLE = re.compile(r"mach_msg2?_trap|__workq_kernreturn|semaphore_\w*wait\w*_trap|__psynch_cvwait|"
+                  r"__semwait_signal|__ulock_wait|kevent|start_wqthread|__select|__sigsuspend")
+
+
+def readable(text):
+    """Les noms Rust abîmés (« v0 ») que `sample` ne démêle pas, rendus à
+    peu près lisibles : `_RNvNtCs…_7mouflon3app5frame` → `mouflon::app::frame`."""
+    def one(match):
+        symbol = re.sub(r"C[s][0-9A-Za-z]*_", "", match.group(0))
+        parts, i = [], 2
+        while i < len(symbol):
+            m = re.match(r"\d+", symbol[i:])
+            if not m:
+                i += 1
+                continue
+            n, start = int(m.group(0)), i + len(m.group(0))
+            if symbol[start:start + 1] == "_":
+                start += 1
+            word = symbol[start:start + n]
+            if len(word) == n and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", word):
+                parts.append(word)
+                i = start + n
+            else:
+                i = start
+        return "::".join(parts) or match.group(0)
+    return re.sub(r"_R[0-9A-Za-z_]+", one, text)
+
+
+def sample_top(path, count=25):
+    """Le haut des piles le plus vu par `sample` (« Sort by top of stack »),
+    sans les attentes."""
     if not os.path.exists(path):
         return []
     lines, inside = [], False
@@ -315,7 +345,8 @@ def sample_top(path, count=30):
                     if lines:
                         break
                     continue
-                lines.append(line.rstrip())
+                if not IDLE.search(line):
+                    lines.append(readable(line.rstrip()))
     return lines[:count]
 
 
@@ -608,7 +639,7 @@ def report_around(trial, hitches, folder):
             print(f"  {count:5d}  {text}")
     sample = sample_top(os.path.join(folder, "sample.txt"))
     if sample:
-        section("SAMPLE : HAUT DES PILES LE PLUS VU (tout l'essai, tous les fils) :")
+        section("SAMPLE : HAUT DES PILES LE PLUS VU, HORS ATTENTES (tout l'essai, tous les fils) :")
         for line in sample:
             print(f"  {line}")
 

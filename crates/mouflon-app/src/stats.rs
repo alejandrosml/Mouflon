@@ -772,23 +772,30 @@ impl Journal {
         let _ = self.sender.send(line);
     }
 
-    /// Ferme le journal et attend qu'il soit écrit en entier.
+    /// Ferme le journal et attend qu'il soit écrit en entier. D'autres fils
+    /// (diagnostics, relevé des fenêtres) gardent de quoi y écrire : le fil
+    /// du journal s'arrête sur une marque de fin, pas quand plus personne ne
+    /// peut écrire ; ce qu'ils envoient ensuite est perdu.
     fn finish(self) -> PathBuf {
         let Self {
             sender,
             writer,
             path,
         } = self;
-        drop(sender);
+        let _ = sender.send(END.to_owned());
         let _ = writer.join();
         path
     }
 }
 
+/// Marque de fin du journal (jamais dans une ligne : caractère de contrôle).
+const END: &str = "\u{4}";
+
 fn write_all(file: std::fs::File, lines: &Receiver<String>) {
     let mut out = std::io::BufWriter::new(file);
     loop {
         match lines.recv_timeout(Duration::from_millis(500)) {
+            Ok(line) if line == END => break,
             Ok(line) => {
                 let _ = writeln!(out, "{line}");
             }
@@ -935,6 +942,23 @@ mod tests {
         let report = stats.report();
         assert!(report.contains("images les plus lentes"), "{report}");
         assert!(report.contains("sons 900.0"), "{report}");
+    }
+
+    #[test]
+    fn finishing_does_not_wait_for_other_writers() {
+        let path = std::env::temp_dir().join(format!("mouflon-fin-{}.log", std::process::id()));
+        let mut stats = FrameStats::new(Instant::now()).with_journal_at(path.clone());
+        let other = stats.sender().expect("journal ouvert");
+        let _ = other.send("SP 1.0 cpu_pct 3".to_owned());
+        stats.finish();
+        // Un autre fil écrit encore : rien ne bloque, sa ligne est perdue.
+        let _ = other.send("SP 2.0 cpu_pct 4".to_owned());
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            text.contains("SP 1.0") && !text.contains("SP 2.0"),
+            "{text}"
+        );
     }
 
     #[test]
