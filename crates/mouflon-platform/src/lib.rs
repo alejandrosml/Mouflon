@@ -165,6 +165,30 @@ pub enum UiEvent {
     FormShown,
     /// ⌘Q pendant que la fenêtre des réglages est au premier plan.
     Quit,
+    /// « Ajouter » sur une carte de la galerie (son identifiant).
+    GalleryAdd(u32),
+}
+
+/// Une carte de la galerie des animaux ([`show_gallery`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GalleryCard {
+    /// Rendu par [`UiEvent::GalleryAdd`].
+    pub id: u32,
+    pub name: String,
+    /// Sa description et son auteur.
+    pub detail: String,
+    /// Le libellé du bouton (« Ajouter »).
+    pub button: String,
+}
+
+/// Une image de l'aperçu animé d'une carte : pixels RGBA prémultipliés, et
+/// combien de pixels par point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub scale: f64,
 }
 
 /// Un article de menu surgissant (le menu d'un animal, au clic droit).
@@ -303,9 +327,9 @@ pub use macos::{
     FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
     follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
     open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, request_accessibility, screens, set_login_item, set_ui_handler,
-    set_window_moves_handler, show_about, show_form, snapshot_form, update_form, user_activity,
-    warm_up_sounds, window_max_fps, windows,
+    prepare_pet_window, request_accessibility, screens, set_gallery_preview, set_login_item,
+    set_ui_handler, set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form,
+    snapshot_gallery, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 /// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
@@ -352,6 +376,19 @@ mod fallback {
 
     /// Pas de signal des fenêtres qui bougent ici : le relevé suffit.
     pub fn set_window_moves_handler(_handler: impl Fn() + 'static) {}
+
+    /// Pas de galerie ici : les animaux s'ajoutent par le menu.
+    #[must_use]
+    pub fn show_gallery(_title: &str, _cards: &[super::GalleryCard]) -> bool {
+        false
+    }
+
+    pub fn set_gallery_preview(_id: u32, _frames: &[super::GalleryImage]) {}
+
+    #[must_use]
+    pub fn snapshot_gallery(_path: &std::path::Path, _dark: bool) -> bool {
+        false
+    }
 
     #[must_use]
     pub fn follow_window_moves(_pids: &[i32]) -> usize {
@@ -511,9 +548,9 @@ pub use fallback::{
     FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
     follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
     open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, request_accessibility, screens, set_login_item, set_ui_handler,
-    set_window_moves_handler, show_about, show_form, snapshot_form, update_form, user_activity,
-    warm_up_sounds, window_max_fps, windows,
+    prepare_pet_window, request_accessibility, screens, set_gallery_preview, set_login_item,
+    set_ui_handler, set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form,
+    snapshot_gallery, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

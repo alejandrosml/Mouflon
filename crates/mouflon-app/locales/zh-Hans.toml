@@ -3,6 +3,7 @@
 # 菜单栏
 add_named = "添加{name}"
 add_pet = "添加其他宠物"
+gallery = "宠物画廊…"
 goodbye = "道别"
 goodbye_all = "全部"
 together = "一起玩"
@@ -46,6 +47,9 @@ open_system_settings = "打开系统设置"
 my_pets_section = "我的宠物"
 my_pets_help = "要安装宠物，请将它的文件夹拖到屏幕上的某只宠物上，或拷贝到宠物文件夹中。"
 open_pets_folder = "打开文件夹"
+gallery_title = "宠物画廊"
+gallery_add = "添加"
+gallery_by = "作者：{author}"
 
 # “关于”窗口
 description = "一个轻巧而美观的桌面伙伴管理器。"

@@ -66,6 +66,8 @@ pub enum UserEvent {
     /// Le dessin à sa nouvelle taille de cet animal (son numéro, le rang de
     /// la taille) est prêt (voir `App::set_pet_size`).
     PetSizeReady(u32, usize),
+    /// L'aperçu d'une espèce (son rang) pour la galerie est prêt.
+    GalleryPreview(u32, Vec<platform::GalleryImage>),
     /// Un article du menu d'un animal, un contrôle de la fenêtre des réglages.
     Ui(platform::UiEvent),
 }
@@ -1496,6 +1498,7 @@ impl App {
             Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
             Action::SetOpenAtLogin(on) => self.login = platform::set_login_item(on),
             Action::OpenSettings => self.open_settings(),
+            Action::OpenGallery => self.open_gallery(false),
             Action::RefreshSettings => self.login = platform::login_item(),
             Action::OpenPetsFolder => {
                 if let Some(paths) = &self.paths {
@@ -1629,13 +1632,18 @@ impl App {
     /// Une surprise à son heure : un coup de vent, ou une soucoupe (si un
     /// animal est là pour elle). Pas devant personne : elle attend son retour.
     fn surprise(&mut self, now: Instant, input: &Input) {
-        let Some(&(at, imposed)) = self.surprises.first() else {
+        let Some((next, &(at, imposed))) = self
+            .surprises
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (at, _))| *at)
+        else {
             return;
         };
         if now < at {
             return;
         }
-        self.surprises.remove(0);
+        self.surprises.remove(next);
         if imposed.is_none() && (input.away() || self.flock.pets().is_empty()) {
             // Personne pour la voir : un peu plus tard.
             self.surprises.push((now + Duration::from_secs(60), None));
@@ -1823,6 +1831,82 @@ impl App {
         }
     }
 
+    /// La galerie des animaux : une carte par espèce de la bibliothèque. Les
+    /// aperçus se dessinent sur un fil à part et arrivent un à un
+    /// (`UserEvent::GalleryPreview`) ; `now` : tout de suite, sur ce fil (la
+    /// vitrine de la CI).
+    fn open_gallery(&mut self, now: bool) {
+        let t = crate::i18n::texts();
+        let cards: Vec<platform::GalleryCard> = self
+            .library
+            .pets
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let meta = &entry.def.meta;
+                let mut detail = meta.description.clone().unwrap_or_default();
+                if let Some(author) = meta.author.as_deref().filter(|a| !a.is_empty()) {
+                    if !detail.is_empty() {
+                        detail.push('\n');
+                    }
+                    detail.push_str(&t.gallery_by.replace("{author}", author));
+                }
+                platform::GalleryCard {
+                    id: i as u32,
+                    name: meta.name.clone(),
+                    detail,
+                    button: t.gallery_add.clone(),
+                }
+            })
+            .collect();
+        if !platform::show_gallery(&t.gallery_title, &cards) {
+            return;
+        }
+        let entries: Vec<(u32, Entry)> = self
+            .library
+            .pets
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, e)| (i as u32, e))
+            .collect();
+        let previews = move |send: &dyn Fn(u32, Vec<platform::GalleryImage>)| {
+            for (index, entry) in &entries {
+                let Some(art) = entry.art() else {
+                    continue;
+                };
+                let frames = mouflon_render::thumbnail::preview(&entry.def, &art, 10, 10.0, 2.0)
+                    .into_iter()
+                    .map(|thumb| platform::GalleryImage {
+                        width: thumb.width,
+                        height: thumb.height,
+                        rgba: thumb.rgba,
+                        scale: 2.0,
+                    })
+                    .collect();
+                send(*index, frames);
+            }
+        };
+        if now {
+            previews(&|index, frames| platform::set_gallery_preview(index, &frames));
+            return;
+        }
+        let proxy = Arc::clone(&self.proxy);
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-galerie".into())
+            .spawn(move || {
+                platform::lower_thread_priority();
+                previews(&|index, frames| {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(UserEvent::GalleryPreview(index, frames));
+                    }
+                });
+            });
+        if let Err(e) = spawned {
+            log::warn!("aperçus de la galerie indisponibles : {e}");
+        }
+    }
+
     /// Le menu d'un animal, au clic droit (ou Contrôle-clic) sur lui.
     fn open_pet_menu(&mut self, window: WindowId) {
         if self.pointer.dragging.is_some() {
@@ -1909,6 +1993,16 @@ impl App {
             sounds: true,
             size: 1,
         };
+        // La galerie, avec ses aperçus.
+        self.open_gallery(true);
+        saved.push(platform::snapshot_gallery(
+            &showcase.dir.join(format!("galerie-{code}-clair.png")),
+            false,
+        ));
+        saved.push(platform::snapshot_gallery(
+            &showcase.dir.join(format!("galerie-{code}-sombre.png")),
+            true,
+        ));
         let menu = crate::menu::pet_menu("Lainou", state, t);
         let text = format!("{menu:#?}\n");
         let _ = std::fs::write(showcase.dir.join(format!("menu-animal-{code}.txt")), text);
@@ -2701,6 +2795,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::ArtReady(_) => "dessin prêt",
             UserEvent::ArtCompressed(_) => "images compressées",
             UserEvent::PetSizeReady(..) => "dessin à une autre taille prêt",
+            UserEvent::GalleryPreview(..) => "aperçu de la galerie prêt",
             UserEvent::Ui(_) => "menu d'un animal ou réglages",
         };
         if let Some(stats) = &mut self.stats {
@@ -2733,6 +2828,9 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
             UserEvent::ArtCompressed(id) => self.art_compressed(&id),
             UserEvent::PetSizeReady(pet, index) => self.pet_size_ready(pet, index),
+            UserEvent::GalleryPreview(index, frames) => {
+                platform::set_gallery_preview(index, &frames);
+            }
             UserEvent::Ui(platform::UiEvent::MenuClosed) => {
                 // L'animal du menu repart d'où il était.
                 self.flock.hold_still(None);
@@ -2743,6 +2841,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ui(event) => {
                 let action = match event {
                     platform::UiEvent::Menu(id) => self.pet_menu_action(id),
+                    // « Ajouter » sur une carte de la galerie : son espèce.
+                    platform::UiEvent::GalleryAdd(index) => Some(Action::Add(index as usize)),
                     other => crate::settings_window::action(other),
                 };
                 if let Some(action) = action {

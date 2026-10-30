@@ -3,6 +3,7 @@
 # Menüleiste
 add_named = "{name} hinzufügen"
 add_pet = "Anderes Tier hinzufügen"
+gallery = "Tiergalerie …"
 goodbye = "Verabschieden"
 goodbye_all = "Von allen"
 together = "Zusammen spielen"
@@ -46,6 +47,9 @@ open_system_settings = "Systemeinstellungen öffnen"
 my_pets_section = "Meine Tiere"
 my_pets_help = "Um eines zu installieren, zieh seinen Ordner auf ein Tier auf dem Bildschirm oder kopiere ihn in den Ordner der Tiere."
 open_pets_folder = "Ordner öffnen"
+gallery_title = "Tiergalerie"
+gallery_add = "Hinzufügen"
+gallery_by = "von {author}"
 
 # Fenster „Über“
 description = "Ein leichter und schöner Manager für Desktop-Begleiter."

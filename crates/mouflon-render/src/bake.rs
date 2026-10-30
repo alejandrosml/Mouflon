@@ -295,7 +295,7 @@ fn light_body(
     }
 }
 
-fn to_path(path: &BezPath) -> Option<tiny_skia::Path> {
+pub(crate) fn to_path(path: &BezPath) -> Option<tiny_skia::Path> {
     let mut builder = tiny_skia::PathBuilder::new();
     let f = |p: Point| (p.x as f32, p.y as f32);
     for el in path.elements() {
@@ -322,7 +322,7 @@ fn to_path(path: &BezPath) -> Option<tiny_skia::Path> {
     builder.finish()
 }
 
-fn to_transform(a: Affine) -> Transform {
+pub(crate) fn to_transform(a: Affine) -> Transform {
     let [sx, ky, kx, sy, tx, ty] = a.as_coeffs().map(|v| v as f32);
     Transform::from_row(sx, ky, kx, sy, tx, ty)
 }
@@ -334,7 +334,7 @@ fn to_color(c: Color) -> tiny_skia::Color {
 
 /// Le remplissage, ses dégradés placés par `brush` (du repère du dégradé
 /// vers celui du tracé).
-fn to_shader(paint: &Paint, brush: Affine) -> Option<Shader<'static>> {
+pub(crate) fn to_shader(paint: &Paint, brush: Affine) -> Option<Shader<'static>> {
     let stops = |stops: &[Stop]| -> Vec<GradientStop> {
         stops
             .iter()
@@ -380,7 +380,7 @@ fn to_shader(paint: &Paint, brush: Affine) -> Option<Shader<'static>> {
     }
 }
 
-fn to_stroke(style: &StrokeStyle) -> tiny_skia::Stroke {
+pub(crate) fn to_stroke(style: &StrokeStyle) -> tiny_skia::Stroke {
     tiny_skia::Stroke {
         width: style.width as f32,
         miter_limit: style.miter_limit as f32,

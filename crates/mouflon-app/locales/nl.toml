@@ -3,6 +3,7 @@
 # Menubalk
 add_named = "{name} toevoegen"
 add_pet = "Ander dier toevoegen"
+gallery = "Dierengalerij…"
 goodbye = "Gedag zeggen"
 goodbye_all = "Tegen iedereen"
 together = "Samen laten spelen"
@@ -46,6 +47,9 @@ open_system_settings = "Open Systeeminstellingen"
 my_pets_section = "Mijn dieren"
 my_pets_help = "Om er een te installeren, sleep je de map op een dier op het scherm of kopieer je die naar de map met dieren."
 open_pets_folder = "Open map"
+gallery_title = "Dierengalerij"
+gallery_add = "Voeg toe"
+gallery_by = "door {author}"
 
 # Venster ‘Over’
 description = "Een lichte en mooie beheerder van bureaubladmaatjes."

@@ -48,7 +48,7 @@ const SMALL_GAP: f64 = 6.0;
 /// Entre un texte et le bouton à sa droite.
 const BUTTON_GAP: f64 = 12.0;
 /// Arrondi des cadres.
-const CORNER: f64 = 10.0;
+pub(super) const CORNER: f64 = 10.0;
 
 define_class!(
     // SAFETY:
@@ -58,7 +58,7 @@ define_class!(
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "MouflonFormView"]
-    struct FlippedView;
+    pub(super) struct FlippedView;
 
     impl FlippedView {
         // SAFETY: même signature que `-[NSView isFlipped]`.
@@ -71,7 +71,7 @@ define_class!(
 );
 
 impl FlippedView {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+    pub(super) fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(MIN_WIDTH, 100.0));
         // SAFETY: `initWithFrame:` est l'initialiseur désigné de NSView.
@@ -129,13 +129,13 @@ thread_local! {
     static FORM: RefCell<Option<Built>> = const { RefCell::new(None) };
 }
 
-fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
+pub(super) fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
 }
 
 /// Place un contrôle d'après son contour visible (sans les marges que
 /// certains, comme les boutons, gardent autour de leur dessin).
-fn place(view: &NSView, x: f64, y: f64, w: f64, h: f64) {
+pub(super) fn place(view: &NSView, x: f64, y: f64, w: f64, h: f64) {
     let insets = view.alignmentRectInsets();
     // Repère de haut en bas : la marge du haut se retranche de y.
     view.setFrame(rect(
@@ -146,12 +146,12 @@ fn place(view: &NSView, x: f64, y: f64, w: f64, h: f64) {
     ));
 }
 
-fn label(text: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
+pub(super) fn label(text: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
     NSTextField::labelWithString(&NSString::from_str(text), mtm)
 }
 
 /// Texte sur plusieurs lignes, en petit et en gris s'il explique.
-fn wrapping(text: &str, small: bool, mtm: MainThreadMarker) -> Retained<NSTextField> {
+pub(super) fn wrapping(text: &str, small: bool, mtm: MainThreadMarker) -> Retained<NSTextField> {
     let field = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
     field.setSelectable(false);
     if small {
@@ -166,7 +166,7 @@ fn wrapping(text: &str, small: bool, mtm: MainThreadMarker) -> Retained<NSTextFi
 /// Hauteur d'un texte mis en page sur cette largeur : celle qu'il prendra
 /// vraiment (le même calcul qu'AppKit pour le dessiner, coupures du
 /// japonais et du chinois comprises).
-fn wrapped_height(field: &NSTextField, width: f64) -> f64 {
+pub(super) fn wrapped_height(field: &NSTextField, width: f64) -> f64 {
     field.setPreferredMaxLayoutWidth(width);
     field.intrinsicContentSize().height.max(0.0).ceil()
 }

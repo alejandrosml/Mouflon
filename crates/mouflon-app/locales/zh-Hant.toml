@@ -3,6 +3,7 @@
 # 選單列
 add_named = "加入{name}"
 add_pet = "加入其他寵物"
+gallery = "寵物畫廊⋯"
 goodbye = "道別"
 goodbye_all = "全部"
 together = "一起玩"
@@ -46,6 +47,9 @@ open_system_settings = "打開系統設定"
 my_pets_section = "我的寵物"
 my_pets_help = "若要安裝寵物，請將其檔案夾拖到螢幕上的寵物上，或拷貝到寵物檔案夾中。"
 open_pets_folder = "打開檔案夾"
+gallery_title = "寵物畫廊"
+gallery_add = "加入"
+gallery_by = "作者：{author}"
 
 # 「關於」視窗
 description = "輕巧又美觀的桌面夥伴管理程式。"

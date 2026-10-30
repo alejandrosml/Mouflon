@@ -75,6 +75,8 @@ pub struct Texts {
     pub add_named: String,
     /// Sous-menu des autres espèces (« Ajouter un autre animal »).
     pub add_pet: String,
+    /// Son premier article, qui ouvre la galerie des animaux.
+    pub gallery: String,
     /// Sous-menu « Dire au revoir », et son premier article (« À tous »).
     pub goodbye: String,
     pub goodbye_all: String,
@@ -126,6 +128,11 @@ pub struct Texts {
     pub my_pets_section: String,
     pub my_pets_help: String,
     pub open_pets_folder: String,
+    // Galerie des animaux : son titre, le bouton d'une carte, l'auteur
+    // (`{author}`).
+    pub gallery_title: String,
+    pub gallery_add: String,
+    pub gallery_by: String,
     // Fenêtre « À propos ».
     pub description: String,
     pub credits: String,
@@ -139,6 +146,7 @@ impl Texts {
         [
             &self.add_named,
             &self.add_pet,
+            &self.gallery,
             &self.goodbye,
             &self.goodbye_all,
             &self.together,
@@ -178,6 +186,9 @@ impl Texts {
             &self.my_pets_section,
             &self.my_pets_help,
             &self.open_pets_folder,
+            &self.gallery_title,
+            &self.gallery_add,
+            &self.gallery_by,
             &self.description,
             &self.credits,
             &self.license,
@@ -253,6 +264,11 @@ mod tests {
                 assert!(!text.trim().is_empty(), "{code} : texte vide");
             }
             assert!(texts.about.contains("Mouflon") && texts.quit.contains("Mouflon"));
+            assert!(texts.gallery_by.contains("{author}"), "{code}");
+            assert!(
+                texts.gallery.ends_with('…') || texts.gallery.ends_with('⋯'),
+                "{code} : la galerie s'ouvre dans une fenêtre"
+            );
             for named in [&texts.add_named, &texts.goodbye_named, &texts.size_named] {
                 assert!(
                     named.contains("{name}"),

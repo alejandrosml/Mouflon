@@ -3,6 +3,7 @@
 # Barra de menús
 add_named = "Añadir a {name}"
 add_pet = "Añadir otra mascota"
+gallery = "Galería de mascotas…"
 goodbye = "Despedirse"
 goodbye_all = "De todas"
 together = "Jugar juntas"
@@ -46,6 +47,9 @@ open_system_settings = "Abrir Ajustes del Sistema"
 my_pets_section = "Mis mascotas"
 my_pets_help = "Para instalar una, suelta su carpeta sobre una mascota en la pantalla o cópiala en la carpeta de mascotas."
 open_pets_folder = "Abrir la carpeta"
+gallery_title = "Galería de mascotas"
+gallery_add = "Añadir"
+gallery_by = "de {author}"
 
 # Ventana «Acerca de»
 description = "Un gestor de compañeros de escritorio, ligero y bonito."

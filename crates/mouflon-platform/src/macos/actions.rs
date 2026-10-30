@@ -10,7 +10,9 @@ use std::cell::{OnceCell, RefCell};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSButton, NSControlStateValueOn, NSMenuItem, NSSlider, NSWindowDelegate};
+use objc2_app_kit::{
+    NSButton, NSControlStateValueOn, NSMenuItem, NSSlider, NSWindow, NSWindowDelegate,
+};
 use objc2_foundation::NSNotification;
 
 use crate::UiEvent;
@@ -66,6 +68,18 @@ define_class!(
         fn window_did_become_key(&self, _notification: &NSNotification) {
             emit(UiEvent::FormShown);
         }
+
+        // SAFETY: `windowWillClose:` reçoit une NSNotification, dont l'objet
+        // est la fenêtre qui se ferme.
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, notification: &NSNotification) {
+            if let Some(window) = notification
+                .object()
+                .and_then(|object| object.downcast::<NSWindow>().ok())
+            {
+                super::gallery::closed(&window);
+            }
+        }
     }
 
     impl Actions {
@@ -94,6 +108,19 @@ define_class!(
         #[unsafe(method(press:))]
         fn press(&self, sender: &NSButton) {
             emit(UiEvent::Button(id_of(sender.tag())));
+        }
+
+        // SAFETY: action d'un bouton « Ajouter » de la galerie (des NSButton).
+        #[unsafe(method(gallery:))]
+        fn gallery(&self, sender: &NSButton) {
+            emit(UiEvent::GalleryAdd(id_of(sender.tag())));
+        }
+
+        // SAFETY: appelée par la minuterie de la galerie, avec elle-même
+        // (qu'on ne lit pas).
+        #[unsafe(method(galleryTick:))]
+        fn gallery_tick(&self, _timer: Option<&AnyObject>) {
+            super::gallery::tick();
         }
 
         // SAFETY: action de l'article ⌘Q ; l'expéditeur n'est pas lu.

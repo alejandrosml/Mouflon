@@ -136,6 +136,25 @@ fn main() -> Result<(), Error> {
         let count = render_physics(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
+    if mode == "galerie" {
+        // L'aperçu de la galerie, tel que l'app le dessine (sur le
+        // processeur, images cuites comprises).
+        let mut art = PetArt::load(&def)?;
+        art.baked = art.baked.take();
+        let frames = mouflon_render::thumbnail::preview(&def, &art, 8, 10.0, 2.0);
+        for (k, thumb) in frames.iter().enumerate() {
+            let size =
+                tiny_skia::IntSize::from_wh(thumb.width, thumb.height).ok_or("aperçu vide")?;
+            let pixmap =
+                tiny_skia::Pixmap::from_vec(thumb.rgba.clone(), size).ok_or("aperçu invalide")?;
+            pixmap.save_png(out_dir.join(format!("galerie_{k}.png")))?;
+        }
+        println!(
+            "{} images d'aperçu dans {}",
+            frames.len(),
+            out_dir.display()
+        );
+    }
     if mode == "surprises" {
         let frames = out_dir.join("frames");
         std::fs::create_dir_all(&frames)?;
@@ -465,19 +484,19 @@ fn render_surprises(
             for pet in flock.pets_mut() {
                 pet.force("repos");
             }
-            // Un des deux en l'air, pour voir le vent l'emporter.
-            if let Some(pet) = flock.get_mut(a) {
-                pet.grab(pet.position() - Vec2::new(0.0, 40.0), &world);
-                pet.drag_to(pet.position() - Vec2::new(0.0, 200.0));
-            }
+            flock.blow(1.0, 6.0);
         }
-        if at(2.2)
+        // Un des deux lâché de haut en plein vent, pour le voir dériver.
+        if at(2.6)
+            && let Some(pet) = flock.get_mut(a)
+        {
+            pet.grab(pet.position() - Vec2::new(0.0, 40.0), &world);
+            pet.drag_to(pet.position() - Vec2::new(0.0, 220.0));
+        }
+        if at(3.0)
             && let Some(pet) = flock.get_mut(a)
         {
             pet.release(&world);
-        }
-        if at(2.0) {
-            flock.blow(1.0, 5.0);
         }
         if at(8.5) {
             for pet in flock.pets_mut() {

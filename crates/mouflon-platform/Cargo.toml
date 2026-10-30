@@ -18,7 +18,7 @@ libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError", "NSProcessInfo", "NSDistributedNotificationCenter", "NSDate"] }
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError", "NSProcessInfo", "NSDistributedNotificationCenter", "NSDate", "NSTimer"] }
 objc2-app-kit = { workspace = true, features = [
     "libc",
     "NSScreen",
@@ -41,7 +41,10 @@ objc2-app-kit = { workspace = true, features = [
     "NSColor",
     "NSControl",
     "NSFont",
+    "NSImage",
     "NSImageRep",
+    "NSImageView",
+    "NSScrollView",
     "NSLayoutConstraint",
     "NSMenu",
     "NSMenuItem",

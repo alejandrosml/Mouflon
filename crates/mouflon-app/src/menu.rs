@@ -45,6 +45,8 @@ pub enum Action {
     /// Ouvrir Mouflon à l'ouverture de session.
     SetOpenAtLogin(bool),
     OpenSettings,
+    /// La galerie des animaux, avec leurs aperçus.
+    OpenGallery,
     /// La fenêtre des réglages revient au premier plan : ce qu'elle montre
     /// de l'état du système (autorisations) est relu.
     RefreshSettings,
@@ -204,6 +206,7 @@ mod native {
     pub struct TrayMenu {
         _tray: TrayIcon,
         add_favorite: MenuItem,
+        gallery: MenuId,
         add: Vec<(MenuItem, usize)>,
         goodbye_all: MenuItem,
         goodbye: Vec<(MenuItem, usize)>,
@@ -238,6 +241,10 @@ mod native {
             let add_favorite = MenuItem::new(&t.add_named, true, None);
             menu.append(&add_favorite)?;
             let add_menu = Submenu::new(&t.add_pet, true);
+            // D'abord la galerie, où chacun se voit bouger.
+            let gallery = MenuItem::new(&t.gallery, true, None);
+            add_menu.append(&gallery)?;
+            add_menu.append(&PredefinedMenuItem::separator())?;
             let mut add = Vec::new();
             for (i, name) in names.iter().enumerate() {
                 let item = MenuItem::new(name, true, None);
@@ -292,6 +299,7 @@ mod native {
             Ok(Self {
                 _tray: tray,
                 add_favorite,
+                gallery: gallery.id().clone(),
                 add,
                 goodbye_all,
                 goodbye,
@@ -337,6 +345,8 @@ mod native {
             }
             if id == self.add_favorite.id() {
                 Some(Action::AddDefault)
+            } else if id == &self.gallery {
+                Some(Action::OpenGallery)
             } else if id == self.goodbye_all.id() {
                 Some(Action::RemoveAll)
             } else if id == self.together.id() {

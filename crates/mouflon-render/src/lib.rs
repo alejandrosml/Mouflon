@@ -15,10 +15,12 @@ pub mod bc7;
 pub mod cache;
 pub mod display;
 pub mod paint;
+pub mod raster;
 pub mod rig;
 pub mod saucer;
 pub mod sprites;
 pub mod svg;
+pub mod thumbnail;
 pub mod vello_scene;
 
 pub use display::DisplayList;

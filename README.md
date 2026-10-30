@@ -85,7 +85,9 @@ state (a change made in one is seen at once in the others):
 - **The menu bar icon**, for what changes often: add pets (the same one as many
   times as you like: each kind shows how many are on screen when there are
   several), say goodbye to all of them or to one of a kind, get them to play
-  together, pause, mute them; *Settings…* (⌘,), *About Mouflon*, *Quit*.
+  together, pause, mute them; *Settings…* (⌘,), *About Mouflon*, *Quit*. The
+  *Pet Gallery…*, at the top of *Add another pet*, shows every pet walking,
+  with its description and an *Add* button.
 - **A right click on a pet** (or Control-click): say goodbye to that one, add
   another of its kind, change its own size (that pet only), mute, pause, open
   the settings. It waits under its menu; the others go on with their lives.
@@ -399,7 +401,9 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
   animaux (le même autant de fois qu'on veut : chaque espèce dit combien des
   siens sont à l'écran quand ils sont plusieurs), dire au revoir à tous ou à un
   seul d'une espèce, les faire jouer ensemble, mettre en pause, couper les
-  sons ; « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ».
+  sons ; « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ». La
+  « Galerie des animaux… », en tête de « Ajouter un autre animal », montre
+  chacun en train de marcher, avec sa description et un bouton « Ajouter ».
 - **Un clic droit sur un animal** (ou Contrôle-clic) : lui dire au revoir, en
   ajouter un autre de son espèce, changer sa taille à lui (cet animal
   seulement), couper les sons, mettre en pause, ouvrir les réglages. Il
