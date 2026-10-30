@@ -1,0 +1,151 @@
+# Le squelette d'Aquarelle : des morceaux peints (voir `morceaux/`, repeints
+# par `cargo run --release -p mouflon-peintre -- pets/aquarelle/morceaux`),
+# posés sur des os. Le format est décrit dans docs/squelette.md.
+#
+# Toutes les positions sont en pixels de la toile où les morceaux ont été
+# peints (1200 × 900), l'animal de profil, tourné vers la droite.
+
+size = [1200, 900]
+# Le point d'appui : le milieu des sabots, au sol.
+ground = [560, 820]
+
+# --- Les os, chaque parent avant ses enfants. `at` : l'articulation (le
+# point autour duquel l'os tourne) ; `role` : ce que le moteur en fait de
+# lui-même (marcher, regarder, cligner, respirer…).
+
+[[bone]]
+name = "racine"
+at = [560, 820]
+
+[[bone]]
+name = "corps"
+parent = "racine"
+at = [560, 560]
+role = "body"
+
+[[bone]]
+name = "queue"
+parent = "corps"
+at = [302, 552]
+role = "tail"
+
+[[bone]]
+name = "patte-arriere-loin"
+parent = "corps"
+at = [418, 650]
+role = "leg-back-far"
+
+[[bone]]
+name = "patte-avant-loin"
+parent = "corps"
+at = [706, 655]
+role = "leg-front-far"
+
+[[bone]]
+name = "patte-arriere-pres"
+parent = "corps"
+at = [452, 665]
+role = "leg-back-near"
+
+[[bone]]
+name = "patte-avant-pres"
+parent = "corps"
+at = [742, 668]
+role = "leg-front-near"
+
+# La tête tourne autour du cou, là où elle entre dans la toison.
+[[bone]]
+name = "tete"
+parent = "corps"
+at = [775, 505]
+role = "head"
+
+[[bone]]
+name = "oreille-loin"
+parent = "tete"
+at = [794, 440]
+role = "ear"
+
+[[bone]]
+name = "oreille-pres"
+parent = "tete"
+at = [806, 454]
+role = "ear"
+
+[[bone]]
+name = "oeil"
+parent = "tete"
+at = [878, 480]
+role = "eye"
+
+# --- Les morceaux, de l'arrière vers l'avant. Chacun fait la taille de la
+# toile (exportés tels quels) : Mouflon les recadre et les réduit.
+
+[[piece]]
+bone = "patte-arriere-loin"
+image = "morceaux/patte-arriere-loin.png"
+
+[[piece]]
+bone = "patte-avant-loin"
+image = "morceaux/patte-avant-loin.png"
+
+[[piece]]
+bone = "queue"
+image = "morceaux/queue.png"
+
+[[piece]]
+bone = "patte-arriere-pres"
+image = "morceaux/patte-arriere-pres.png"
+
+[[piece]]
+bone = "patte-avant-pres"
+image = "morceaux/patte-avant-pres.png"
+
+[[piece]]
+bone = "corps"
+image = "morceaux/corps.png"
+
+[[piece]]
+bone = "oreille-loin"
+image = "morceaux/oreille-loin.png"
+
+[[piece]]
+bone = "tete"
+image = "morceaux/tete.png"
+
+[[piece]]
+bone = "oreille-pres"
+image = "morceaux/oreille-pres.png"
+
+[[piece]]
+bone = "tete"
+image = "morceaux/toupet.png"
+
+# L'œil ouvert, et la paupière peinte qui le remplace quand il se ferme.
+[[piece]]
+bone = "oeil"
+image = "morceaux/oeil.png"
+eyes = "open"
+
+[[piece]]
+bone = "oeil"
+image = "morceaux/oeil-ferme.png"
+eyes = "closed"
+
+# --- Une animation à clés, en plus de ce que fait le moteur : au calme, de
+# temps en temps, une oreille frémit et la queue frétille. Les instants vont
+# de 0 à 1 (une boucle de `length` secondes), les angles en degrés (sens des
+# aiguilles d'une montre).
+
+[[clip]]
+name = "calme"
+length = 7.0
+
+[clip.bones.oreille-pres]
+rotate = [[0, 0], [0.42, 0], [0.45, 14], [0.48, -4], [0.52, 7], [0.57, 0]]
+
+[clip.bones.queue]
+rotate = [[0, 0], [0.78, 0], [0.8, 18], [0.82, -14], [0.84, 16], [0.86, -10], [0.9, 0]]
+
+[motions]
+idle = "calme"

@@ -787,7 +787,14 @@ mod tests {
     /// Lainou et Pelote, images compressées ou non.
     fn pets(compressed: bool) -> Vec<(Arc<mouflon_core::PetDef>, PetArt)> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets");
-        ["lainou", "pelote"]
+        // Aquarelle (des morceaux peints sur un squelette) n'a pas de
+        // planche à compresser.
+        let names: &[&str] = if compressed {
+            &["lainou", "pelote"]
+        } else {
+            &["lainou", "pelote", "aquarelle"]
+        };
+        names
             .iter()
             .map(|name| {
                 let def = Arc::new(load_pet(&root.join(name).join("pet.toml")).expect("pet.toml"));

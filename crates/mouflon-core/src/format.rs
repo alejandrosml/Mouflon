@@ -212,7 +212,7 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
 
     let mut physics = Physics::default();
     match &appearance {
-        Appearance::Rig { height, .. } => {
+        Appearance::Rig { height, .. } | Appearance::Skeleton { height, .. } => {
             physics.height = *height;
             physics.width = *height * 1.2;
         }
@@ -271,7 +271,7 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
 
     let scale = match &appearance {
         Appearance::Sprites(sheet) => sheet.scale,
-        Appearance::Rig { .. } => 1.0,
+        Appearance::Rig { .. } | Appearance::Skeleton { .. } => 1.0,
     };
     let sounds = load_sounds(&file.sounds, &resolve)?;
     let mut behaviors = Vec::with_capacity(file.behaviors.len());
@@ -420,12 +420,37 @@ fn parse_appearance(
     resolve: &impl Resources,
 ) -> Result<(Appearance, FrameSource), LoadError> {
     let strips = a.strips_left.is_some() || a.strips_right.is_some();
-    let kinds =
-        usize::from(a.rig.is_some()) + usize::from(a.sprites.is_some()) + usize::from(strips);
+    let kinds = usize::from(a.rig.is_some())
+        + usize::from(a.skeleton.is_some())
+        + usize::from(a.sprites.is_some())
+        + usize::from(strips);
     if kinds != 1 {
         return Err(format_error(
             "[appearance] doit contenir un seul de : `rig = \"fichier.svg\"`, \
-             `sprites = \"planche.png\"` ou `strips_left`/`strips_right` (bandes d'images)",
+             `skeleton = \"squelette.toml\"`, `sprites = \"planche.png\"` ou \
+             `strips_left`/`strips_right` (bandes d'images)",
+        ));
+    }
+    if let Some(file) = &a.skeleton {
+        let text = String::from_utf8(resolve.read(file)?)
+            .map_err(|_| format_error(format!("{file} n'est pas en UTF-8")))?;
+        // Les images se trouvent à partir du dossier du squelette.
+        let base = Path::new(file)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let skeleton = crate::skeleton::parse_skeleton(&text, |image| {
+            let path = base.join(image);
+            let name = path.to_str().ok_or("chemin illisible")?;
+            resolve.png(name).map_err(|e| e.to_string())
+        })
+        .map_err(|e| format_error(format!("{file} : {e}")))?;
+        return Ok((
+            Appearance::Skeleton {
+                skeleton: Arc::new(skeleton),
+                height: a.height.unwrap_or(64.0),
+            },
+            FrameSource::None,
         ));
     }
     if let Some(svg) = &a.rig {
@@ -901,6 +926,8 @@ struct DesktopPetToml {
 #[serde(deny_unknown_fields)]
 struct AppearanceToml {
     rig: Option<String>,
+    /// Squelette à morceaux d'images (voir `docs/squelette.md`).
+    skeleton: Option<String>,
     height: Option<f32>,
     sprites: Option<String>,
     tiles: Option<[u32; 2]>,

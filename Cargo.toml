@@ -7,6 +7,7 @@ members = [
     "crates/mouflon-app",
     "tools/mouflon-preview",
     "tools/mouflon-licenses",
+    "tools/mouflon-peintre",
 ]
 default-members = ["crates/mouflon-app"]
 

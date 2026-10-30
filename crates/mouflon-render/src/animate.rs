@@ -27,20 +27,20 @@ impl PoseTransforms {
     }
 }
 
-fn about(p: Point, t: Affine) -> Affine {
+pub(crate) fn about(p: Point, t: Affine) -> Affine {
     Affine::translate(p.to_vec2()) * t * Affine::translate(-p.to_vec2())
 }
 
-fn rotate_about(p: Point, angle: f64) -> Affine {
+pub(crate) fn rotate_about(p: Point, angle: f64) -> Affine {
     about(p, Affine::rotate(angle))
 }
 
-fn scale_about(p: Point, sx: f64, sy: f64) -> Affine {
+pub(crate) fn scale_about(p: Point, sx: f64, sy: f64) -> Affine {
     about(p, Affine::scale_non_uniform(sx, sy))
 }
 
 /// Lissage de 0 à 1 entre `a` et `b`.
-fn ease(a: f64, b: f64, x: f64) -> f64 {
+pub(crate) fn ease(a: f64, b: f64, x: f64) -> f64 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -50,11 +50,21 @@ fn ease(a: f64, b: f64, x: f64) -> f64 {
 /// cycle entre chaque pied) ; au galop, des bonds (les deux avant, puis les
 /// deux arrière).
 fn leg_offset(part: Part, run: f64) -> f64 {
-    let (walk, gallop) = match part {
-        Part::LegBackNear => (0.0, PI),
-        Part::LegFrontNear => (0.5 * PI, 0.0),
-        Part::LegBackFar => (PI, PI + 0.3),
-        _ => (1.5 * PI, 0.3),
+    leg_phase(
+        matches!(part, Part::LegFrontNear | Part::LegFrontFar),
+        matches!(part, Part::LegFrontNear | Part::LegBackNear),
+        run,
+    )
+}
+
+/// Comme [`leg_offset`], pour une patte de devant ou de derrière, du côté
+/// qu'on voit ou de l'autre.
+pub(crate) fn leg_phase(front: bool, near: bool, run: f64) -> f64 {
+    let (walk, gallop) = match (front, near) {
+        (false, true) => (0.0, PI),
+        (true, true) => (0.5 * PI, 0.0),
+        (false, false) => (PI, PI + 0.3),
+        (true, false) => (1.5 * PI, 0.3),
     };
     walk + (gallop - walk) * run
 }
@@ -64,7 +74,7 @@ fn leg_offset(part: Part, run: f64) -> f64 {
 /// vers l'arrière à vitesse constante (il ne glisse pas), puis retour vers
 /// l'avant, levée. Rend l'angle (positif : sabot vers l'arrière), la levée
 /// (0 à 1) et l'appui (0 à 1, pour garder le sabot au sol).
-fn stepping(cycle: f64, duty: f64, amplitude: f64) -> (f64, f64, f64) {
+pub(crate) fn stepping(cycle: f64, duty: f64, amplitude: f64) -> (f64, f64, f64) {
     let t = cycle.rem_euclid(2.0 * PI) / (2.0 * PI);
     if t < duty {
         let s = t / duty;
@@ -76,6 +86,38 @@ fn stepping(cycle: f64, duty: f64, amplitude: f64) -> (f64, f64, f64) {
         let e = s * s * (3.0 - 2.0 * s);
         (amplitude * (1.0 - 2.0 * e), (PI * s).sin(), 0.0)
     }
+}
+
+/// Le personnage entier, autour de son point d'appui `g` (repère du dessin,
+/// `h` : sa hauteur) : écrasement, inclinaison, balancement et étirement
+/// quand on le tient par `hold`, retournement, culbute. L'écrasement de
+/// l'atterrissage reste mesuré : les pattes s'écartent pour amortir le reste.
+pub(crate) fn root_transform(
+    s: &PoseSignals,
+    facing: f32,
+    g: Point,
+    h: f64,
+    hold: Point,
+) -> Affine {
+    let f = |v: f32| f64::from(v);
+    let (sleep, dangle, breath) = (f(s.sleep), f(s.dangle), f(s.breath));
+    let landing = f(s.squash).clamp(-0.15, 0.16);
+    let squash = landing + breath * (0.008 * (1.0 - sleep) + 0.022 * sleep);
+    let squash_t = scale_about(g, 1.0 + 0.55 * squash, 1.0 - squash);
+    let lean_pivot = Point::new(g.x, g.y - h * 0.45);
+    let lean_t = rotate_about(lean_pivot, f(s.lean) * 0.6);
+    let swing_t = rotate_about(hold, f(s.local_swing(facing)));
+    let dangle_t = scale_about(hold, 1.0 - 0.035 * dangle, 1.0 + 0.06 * dangle);
+    let fx = {
+        let v = f(facing).clamp(-1.0, 1.0);
+        // On ne passe jamais par une largeur nulle : le demi-tour reste lisible.
+        let sign = if v < 0.0 { -1.0 } else { 1.0 };
+        sign * (0.34 + 0.66 * v.abs())
+    };
+    let facing_t = about(Point::new(g.x, 0.0), Affine::scale_non_uniform(fx, 1.0));
+    // Culbute dans le repère de l'écran, autour du milieu du corps (après le retournement).
+    let roll_t = rotate_about(Point::new(g.x, g.y - h * 0.5), f(s.roll));
+    roll_t * facing_t * swing_t * dangle_t * lean_t * squash_t
 }
 
 /// Calcule la pose d'une image. `stride` : distance parcourue pendant un
@@ -100,26 +142,10 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     let breath = f(s.breath);
     let look = Vec2::new(f(s.look.x), f(s.look.y));
 
-    // --- Personnage entier. L'écrasement de l'atterrissage reste mesuré :
-    // les pattes s'écartent pour amortir le reste.
+    // --- Personnage entier.
     let landing = f(s.squash).clamp(-0.15, 0.16);
-    let squash = landing + breath * (0.008 * (1.0 - sleep) + 0.022 * sleep);
-    let squash_t = scale_about(g, 1.0 + 0.55 * squash, 1.0 - squash);
-    let lean_pivot = Point::new(g.x, g.y - h * 0.45);
-    let lean_t = rotate_about(lean_pivot, f(s.lean) * 0.6);
     let hold = Point::new(rig.pivot(Part::Body).x, rig.bounds.min_y() + h * 0.12);
-    let swing_t = rotate_about(hold, f(s.local_swing(facing)));
-    let dangle_t = scale_about(hold, 1.0 - 0.035 * dangle, 1.0 + 0.06 * dangle);
-    let fx = {
-        let v = f(facing).clamp(-1.0, 1.0);
-        // On ne passe jamais par une largeur nulle : le demi-tour reste lisible.
-        let sign = if v < 0.0 { -1.0 } else { 1.0 };
-        sign * (0.34 + 0.66 * v.abs())
-    };
-    let facing_t = about(Point::new(g.x, 0.0), Affine::scale_non_uniform(fx, 1.0));
-    // Culbute dans le repère de l'écran, autour du milieu du corps (après le retournement).
-    let roll_t = rotate_about(Point::new(g.x, g.y - h * 0.5), f(s.roll));
-    let root = roll_t * facing_t * swing_t * dangle_t * lean_t * squash_t;
+    let root = root_transform(s, facing, g, h, hold);
 
     // --- Corps couché : l'avant se plie d'abord (il s'agenouille), puis
     // l'arrière ; il se relève dans l'ordre inverse, l'arrière d'abord.

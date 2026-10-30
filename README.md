@@ -258,14 +258,18 @@ The folder accepts:
   and `pets/lainou`);
 - a redrawn desktopPet pet: its original behaviors with a finer sheet,
   described by a small `pet.toml` (see [docs/format.md](docs/format.md#redessiner-un-animal-desktoppet)
-  and `pets/pelote`).
+  and `pets/pelote`);
+- a painted pet: a dozen painted parts (Blender's Grease Pencil, Krita, an
+  AI image cut into pieces…) on a skeleton that the engine animates by
+  itself (see [docs/squelette.md](docs/squelette.md) and `pets/aquarelle`).
 
 A pet dropped in the folder appears in the menu without restarting the app.
 Even simpler: drag its file or folder from the Finder onto a pet on screen. It
 is installed, and the pet you dropped it on makes way for it.
 
-To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
-[docs/format.md](docs/format.md) (both in French).
+To draw your own character: [docs/rig.md](docs/rig.md) (vector) or
+[docs/squelette.md](docs/squelette.md) (painted parts on a skeleton); to tune
+its behaviors: [docs/format.md](docs/format.md) (all in French).
 
 ### Architecture
 
@@ -593,14 +597,19 @@ Le dossier accepte :
   `pets/lainou`) ;
 - un animal desktopPet redessiné : ses comportements d'origine avec une planche
   plus fine, décrite par un petit `pet.toml` (voir
-  [docs/format.md](docs/format.md#redessiner-un-animal-desktoppet) et `pets/pelote`).
+  [docs/format.md](docs/format.md#redessiner-un-animal-desktoppet) et `pets/pelote`) ;
+- un animal peint : une douzaine de morceaux peints (Grease Pencil dans
+  Blender, Krita, une image d'IA découpée…) posés sur un squelette que le
+  moteur anime de lui-même (voir [docs/squelette.md](docs/squelette.md) et
+  `pets/aquarelle`).
 
 Un animal déposé dans le dossier apparaît dans le menu sans relancer l'app.
 Plus simple encore : fais glisser son fichier ou son dossier depuis le Finder
 sur un animal à l'écran. Il est installé, et l'animal visé lui laisse sa place.
 
-Pour dessiner ton propre personnage : [docs/rig.md](docs/rig.md) ; pour régler
-ses comportements : [docs/format.md](docs/format.md).
+Pour dessiner ton propre personnage : [docs/rig.md](docs/rig.md) (en vecteurs)
+ou [docs/squelette.md](docs/squelette.md) (des morceaux peints sur un
+squelette) ; pour régler ses comportements : [docs/format.md](docs/format.md).
 
 ### Architecture
 

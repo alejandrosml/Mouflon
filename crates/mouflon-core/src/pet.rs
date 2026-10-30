@@ -29,6 +29,9 @@ const BLINK_TIME: f32 = 0.13;
 pub const SLOW_RATE: f32 = 60.0;
 /// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois celle du pas).
 pub const RUN_STRIDE: f32 = 1.2;
+/// L'horloge d'un animal (voir [`PoseSignals::clock`]) repart de zéro toutes
+/// les heures : elle garde sa précision.
+pub const CLOCK_LOOP: f32 = 3600.0;
 const MAX_PARTICLES: usize = 64;
 
 /// Une touche frappée il y a moins de ceci (secondes) : l'utilisateur tape.
@@ -214,6 +217,9 @@ pub struct PoseSignals {
     /// En l'air : de -1 (il tombe vite) à 1 (il monte vite), pour plier ou
     /// tendre les pattes.
     pub rise: f32,
+    /// Horloge propre à l'animal (secondes, en boucle sur [`CLOCK_LOOP`]) :
+    /// elle fait tourner les animations qui ne suivent pas ses pas.
+    pub clock: f32,
 }
 
 impl PoseSignals {
@@ -290,6 +296,8 @@ struct Anim {
     blink_left: f32,
     double_blink: bool,
     breath_phase: f32,
+    /// Horloge propre à l'animal (secondes, en boucle sur une heure).
+    clock: f32,
     look: Vec2,
     glance: Vec2,
     glance_timer: f32,
@@ -340,6 +348,8 @@ impl Anim {
             blink_left: 0.0,
             double_blink: false,
             breath_phase: rng.range(0.0, TAU),
+            // Sans tirage de plus, voir `with_clock`.
+            clock: 0.0,
             look: Vec2::new(0.3, 0.0),
             glance: Vec2::new(0.3, 0.0),
             glance_timer: 0.0,
@@ -350,6 +360,15 @@ impl Anim {
             roll_left: 0.0,
             roll_rate: 0.0,
         }
+        .with_clock()
+    }
+
+    /// L'horloge part d'un instant propre à chaque animal (de 0 à une
+    /// minute), tiré de sa respiration : pas de tirage au hasard de plus, les
+    /// animaux gardent exactement leurs tirages.
+    fn with_clock(mut self) -> Self {
+        self.clock = self.breath_phase / TAU * 60.0;
+        self
     }
 }
 
@@ -2097,6 +2116,7 @@ impl Pet {
 
         let period = lerp(3.6, 5.4, a.sleep);
         a.breath_phase = (a.breath_phase + TAU * dt / period).rem_euclid(TAU);
+        a.clock = (a.clock + dt).rem_euclid(CLOCK_LOOP);
 
         // Regard : le curseur s'il est proche, sinon des coups d'œil.
         let head = *pos + Vec2::new(*facing * p.width * 0.32, -p.height * 0.72);
@@ -2376,6 +2396,7 @@ impl Pet {
                 graze: a.graze,
                 nibble: (a.nibble_phase).sin(),
                 rise: a.rise,
+                clock: a.clock,
             },
             shadow: self.shadow,
             sprite_frame,

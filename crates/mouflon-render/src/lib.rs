@@ -19,6 +19,7 @@ pub mod props;
 pub mod raster;
 pub mod rig;
 pub mod saucer;
+pub mod skeleton;
 pub mod sprites;
 pub mod svg;
 pub mod thumbnail;

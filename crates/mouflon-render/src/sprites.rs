@@ -717,7 +717,7 @@ fn unpremultiply(acc: [f32; 4]) -> [u8; 4] {
 }
 
 /// Part de chaque pixel source dans chaque pixel réduit (filtre de surface).
-fn coverage(source: u32, target: u32) -> Vec<Vec<(usize, f32)>> {
+pub(crate) fn coverage(source: u32, target: u32) -> Vec<Vec<(usize, f32)>> {
     let ratio = source as f32 / target as f32;
     (0..target)
         .map(|o| {

@@ -24,6 +24,12 @@ pub enum Appearance {
     Rig { svg: Arc<[u8]>, height: f32 },
     /// Planche de sprites (format desktopPet).
     Sprites(SpriteSheet),
+    /// Morceaux d'images posés sur un squelette (voir [`crate::skeleton`]),
+    /// affiché à `height` points de haut.
+    Skeleton {
+        skeleton: Arc<crate::skeleton::Skeleton>,
+        height: f32,
+    },
 }
 
 /// Sens dans lequel les images d'une planche sont dessinées.
@@ -781,7 +787,7 @@ impl PetDef {
     pub fn sprites(&self) -> Option<&SpriteSheet> {
         match &self.appearance {
             Appearance::Sprites(sheet) => Some(sheet),
-            Appearance::Rig { .. } => None,
+            Appearance::Rig { .. } | Appearance::Skeleton { .. } => None,
         }
     }
 
@@ -830,7 +836,7 @@ impl PetDef {
             return def;
         }
         match &mut def.appearance {
-            Appearance::Rig { height, .. } => *height *= k,
+            Appearance::Rig { height, .. } | Appearance::Skeleton { height, .. } => *height *= k,
             Appearance::Sprites(sheet) => sheet.scale *= k,
         }
         def.unit *= k;

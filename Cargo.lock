@@ -1624,6 +1624,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mouflon-peintre"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "tiny-skia 0.12.0",
+]
+
+[[package]]
 name = "mouflon-platform"
 version = "0.1.0"
 dependencies = [

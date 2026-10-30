@@ -14,6 +14,7 @@ use crate::bake::BakedRig;
 use crate::cache;
 use crate::display::{Command, DisplayList, Paint, Stop, rgba};
 use crate::rig::{Item, Part, Rig, RigError};
+use crate::skeleton::{SkeletonArt, SkeletonArtError, paint_skeleton};
 use crate::sprites::{SpriteError, SpriteFrames};
 
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +23,8 @@ pub enum ArtError {
     Rig(#[from] RigError),
     #[error(transparent)]
     Sprites(#[from] SpriteError),
+    #[error(transparent)]
+    Skeleton(#[from] SkeletonArtError),
 }
 
 /// Apparence prête à dessiner.
@@ -29,6 +32,7 @@ pub enum ArtError {
 pub enum Look {
     Rig(Arc<Rig>),
     Sprites(Arc<SpriteFrames>),
+    Skeleton(Arc<SkeletonArt>),
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +98,23 @@ impl PetArt {
                     from_cache: false,
                 })
             }
+            Appearance::Skeleton { skeleton, height } => {
+                let art = SkeletonArt::load(Arc::clone(skeleton), *height)?;
+                let k = f64::from(*height) / art.bounds.height().max(1.0);
+                let width = (art.bounds.width() * k) as f32;
+                Ok(Self {
+                    width,
+                    height: *height,
+                    look: Look::Skeleton(Arc::new(art)),
+                    lighting: 0.0,
+                    body: (width * 0.46, *height * 1.02),
+                    drawn: Drawn::default(),
+                    baked: None,
+                    stride: def.stride(),
+                    sheet_key: None,
+                    from_cache: false,
+                })
+            }
             Appearance::Sprites(sheet) => {
                 let sheet_key = cache.and_then(|_| cache::key(sheet));
                 let kept = cache.zip(sheet_key).and_then(|(store, key)| {
@@ -140,6 +161,7 @@ impl PetArt {
     pub fn image_bytes(&self) -> usize {
         match &self.look {
             Look::Sprites(frames) => frames.byte_size(),
+            Look::Skeleton(art) => art.byte_size(),
             Look::Rig(_) => 0,
         }
     }
@@ -176,7 +198,7 @@ impl PetArt {
     pub fn reach(&self) -> Option<(f32, f32)> {
         match &self.look {
             Look::Sprites(frames) => frames.reach(),
-            Look::Rig(_) => None,
+            Look::Rig(_) | Look::Skeleton(_) => None,
         }
     }
 
@@ -243,6 +265,20 @@ pub fn paint_pet(
     match &art.look {
         Look::Rig(rig) => paint_rig(rig, art, view, world, out),
         Look::Sprites(frames) => paint_sprite(art, frames, view, world, out),
+        Look::Skeleton(skeleton) => {
+            // Points par pixel de la toile.
+            let k = f64::from(art.height) / skeleton.bounds.height().max(1.0);
+            let pose = skeleton.pose(&view.pose, view.facing, f64::from(art.stride) / k);
+            paint_skeleton(
+                skeleton,
+                &pose,
+                view.pose.blink,
+                world,
+                pt(view.ground),
+                k,
+                out,
+            );
+        }
     }
     if layered {
         out.pop_layer();
@@ -550,7 +586,7 @@ impl SpriteMotion {
         };
         let facings = match &art.look {
             Look::Sprites(frames) => frames.facings,
-            Look::Rig(_) => Facings::Right,
+            Look::Rig(_) | Look::Skeleton(_) => Facings::Right,
         };
         let mirror = match facings {
             // Les sprites desktopPet regardent vers la gauche.

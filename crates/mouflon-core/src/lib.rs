@@ -19,6 +19,7 @@ pub mod format;
 pub mod math;
 pub mod pet;
 pub mod physics;
+pub mod skeleton;
 pub mod surprise;
 pub mod world;
 
@@ -29,8 +30,12 @@ pub use def::{
 pub use format::{LoadError, Resources, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};
 pub use pet::{
-    AWAY_AFTER, Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView,
+    AWAY_AFTER, Activity, CLOCK_LOOP, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView,
     PoseSignals, RUN_STRIDE, SLOW_RATE, STARTLE_SPEED, Shadow, Support, TICK, TYPING_WINDOW,
+};
+pub use skeleton::{
+    Bone, BonePose, BoneRole, Clip, Key, Motions, Piece, Shown, Skeleton, SkeletonError, Track,
+    parse_skeleton,
 };
 pub use surprise::{BEAM_MAX, Gust, SAUCER_HEIGHT, SAUCER_WIDTH, Saucer, SaucerView};
 pub use world::{

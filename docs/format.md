@@ -16,6 +16,15 @@ rig = "mouton.svg"            # dessin vectoriel découpé en calques (voir rig.
 height = 64.0                 # hauteur affichée, en points
 ```
 
+Ou des morceaux d'images peints posés sur un squelette (voir
+[squelette.md](squelette.md) et `pets/aquarelle`) :
+
+```toml
+[appearance]
+skeleton = "squelette.toml"   # les os, les morceaux, les animations
+height = 58.0
+```
+
 Une planche de sprites façon desktopPet marche aussi :
 
 ```toml
