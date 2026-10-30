@@ -46,6 +46,9 @@ pub struct PetArt {
     /// Dessin vectoriel cuit en images (voir [`crate::bake`]) : le rendu
     /// direct le pose sans Vello. `None` : tracés dessinés tels quels.
     pub baked: Option<Arc<BakedRig>>,
+    /// Distance parcourue pendant un cycle de marche (points) : les pattes
+    /// d'un dessin vectoriel balaient juste ce qu'il faut pour ne pas glisser.
+    pub stride: f32,
 }
 
 /// Fenêtre d'un animal : taille en points et position du point d'appui.
@@ -73,6 +76,7 @@ impl PetArt {
                     body: (width * 0.46, *height * 1.02),
                     drawn: Drawn::default(),
                     baked,
+                    stride: def.stride(),
                 })
             }
             Appearance::Sprites(sheet) => {
@@ -86,6 +90,7 @@ impl PetArt {
                     body: (p.width * 0.46, p.height * 1.02),
                     drawn: sheet.drawn,
                     baked: None,
+                    stride: def.stride(),
                 })
             }
         }
@@ -225,8 +230,8 @@ fn paint_shadow(
 }
 
 fn paint_rig(rig: &Rig, art: &PetArt, view: &PetView<'_>, world: Affine, out: &mut DisplayList) {
-    let poses: PoseTransforms = pose(rig, &view.pose, view.facing);
     let k = f64::from(art.height) / rig.bounds.height().max(1.0);
+    let poses: PoseTransforms = pose(rig, &view.pose, view.facing, f64::from(art.stride) / k);
     let base = world
         * Affine::translate(pt(view.ground).to_vec2())
         * Affine::scale(k)

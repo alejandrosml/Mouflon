@@ -927,6 +927,7 @@ struct PhysicsToml {
     max_throw_speed: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
+    stride: Option<f32>,
 }
 
 impl PhysicsToml {
@@ -947,6 +948,7 @@ impl PhysicsToml {
         set(&mut p.max_throw_speed, self.max_throw_speed);
         set(&mut p.width, self.width);
         set(&mut p.height, self.height);
+        set(&mut p.stride, self.stride);
     }
 }
 
@@ -1169,6 +1171,7 @@ impl BehaviorToml {
             "sit" => Motion::Sit,
             "sleep" => Motion::Sleep,
             "look" => Motion::Look,
+            "graze" => Motion::Graze,
             "jump" => {
                 let [vx, vy] = self.jump.unwrap_or([120.0, 520.0]);
                 Motion::Jump { vx, vy }
@@ -1179,7 +1182,7 @@ impl BehaviorToml {
             other => {
                 return Err(format_error(format!(
                     "comportement « {} » : mouvement inconnu « {other} » \
-                     (stand, walk, run, turn, sit, sleep, look, jump, fall, land, held)",
+                     (stand, walk, run, turn, sit, sleep, look, graze, jump, fall, land, held)",
                     self.name
                 )));
             }

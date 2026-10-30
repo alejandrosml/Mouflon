@@ -21,6 +21,8 @@ mod script;
 pub const TICK: f32 = 1.0 / 120.0;
 
 const BLINK_TIME: f32 = 0.13;
+/// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois celle du pas).
+pub const RUN_STRIDE: f32 = 1.2;
 const MAX_PARTICLES: usize = 64;
 
 /// Ce que l'animal perçoit de l'extérieur à chaque pas.
@@ -157,6 +159,13 @@ pub struct PoseSignals {
     /// Culbute (radians, repère de l'écran, sens horaire) : l'animal heurté
     /// roule sur lui-même autour du milieu de son corps.
     pub roll: f32,
+    /// Broute (0–1) : la tête descend jusqu'au sol.
+    pub graze: f32,
+    /// Coups de dents en broutant (-1 à 1).
+    pub nibble: f32,
+    /// En l'air : de -1 (il tombe vite) à 1 (il monte vite), pour plier ou
+    /// tendre les pattes.
+    pub rise: f32,
 }
 
 impl PoseSignals {
@@ -243,6 +252,13 @@ struct Anim {
     roll: f32,
     roll_left: f32,
     roll_rate: f32,
+    graze: f32,
+    nibble_phase: f32,
+    rise: f32,
+    /// Prochain frémissement d'oreille, prochain coup de queue (secondes).
+    ear_timer: f32,
+    tail: Spring,
+    tail_timer: f32,
 }
 
 impl Anim {
@@ -260,6 +276,14 @@ impl Anim {
             lean: Spring::new(2.2, 0.55),
             ear: Spring::new(2.4, 0.22),
             swing: Spring::new(1.3, 0.18),
+            graze: 0.0,
+            nibble_phase: 0.0,
+            rise: 0.0,
+            // Sans tirage au hasard : les animaux en images, qui n'en ont pas
+            // l'usage, gardent exactement leurs tirages.
+            ear_timer: 3.5,
+            tail: Spring::new(3.2, 0.2),
+            tail_timer: 5.0,
             tail_phase: rng.range(0.0, TAU),
             blink: 0.0,
             blink_timer: rng.range(1.0, 4.0),
@@ -1587,7 +1611,8 @@ impl Pet {
 
         // Démarche calée sur la distance parcourue : les pattes ne glissent pas.
         let speed = if grounded { vel.x.abs() } else { 0.0 };
-        let stride = p.height * 0.9;
+        // Au galop, la foulée s'allonge (des bonds plutôt que des pas pressés).
+        let stride = self.def.stride() * (1.0 + RUN_STRIDE * a.run);
         a.gait_phase = (a.gait_phase + speed / stride * TAU * dt).rem_euclid(TAU);
         a.walk = damp(
             a.walk,
@@ -1615,6 +1640,18 @@ impl Pet {
         a.sleep = damp(a.sleep, weight(Pose::Sleep), 2.0, dt);
         a.dangle = damp(a.dangle, weight(Pose::Dangle), 9.0, dt);
         a.air = damp(a.air, weight(Pose::Air), 12.0, dt);
+        a.graze = damp(a.graze, weight(Pose::Graze), 2.6, dt);
+        if a.graze > 0.02 {
+            // Deux coups de dents par seconde, un peu irréguliers.
+            let rate = TAU * (1.9 + 0.5 * (a.nibble_phase * 0.37).sin());
+            a.nibble_phase = (a.nibble_phase + rate * dt).rem_euclid(TAU * 8.0);
+        }
+        let rise = if pose == Pose::Air {
+            (-vel.y / (0.3 * p.terminal_velocity)).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        a.rise = damp(a.rise, rise, 12.0, dt);
 
         a.squash.target = if pose == Pose::Air && !drawn.squash {
             -(vel.y.abs() / p.terminal_velocity).min(1.0) * 0.08
@@ -1637,7 +1674,25 @@ impl Pet {
         } else {
             0.0
         } - a.sleep * 0.25;
+        // Au calme, une oreille frémit de temps en temps et la queue bat un
+        // coup (les dessins vectoriels seulement : les images ont les leurs).
+        if grounded && a.sleep < 0.5 && !sprites {
+            a.ear_timer -= dt;
+            if a.ear_timer <= 0.0 {
+                let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                a.ear.kick(side * rng.range(2.5, 4.5));
+                a.ear_timer = rng.range(2.5, 8.0);
+            }
+            a.tail_timer -= dt;
+            if a.tail_timer <= 0.0 {
+                let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                a.tail.kick(side * rng.range(5.0, 8.0));
+                a.tail_timer = rng.range(2.0, 9.0) / (1.0 + a.walk);
+            }
+        }
         a.ear.step(dt);
+        a.tail.target = 0.0;
+        a.tail.step(dt);
 
         // Balancement dans le repère de l'écran : tiré vers la droite, le corps
         // reste en arrière, à gauche (rotation positive, y vers le bas).
@@ -1931,12 +1986,15 @@ impl Pet {
                 squash: a.squash.value,
                 lean: a.lean.value,
                 ear: a.ear.value,
-                tail: a.tail_phase.sin() * (0.12 + a.walk * 0.1),
+                tail: a.tail.value + a.tail_phase.sin() * (0.03 + a.walk * 0.07),
                 blink: a.blink,
                 breath: a.breath_phase.sin(),
                 look: a.look,
                 swing: a.swing.value,
                 roll: a.roll,
+                graze: a.graze,
+                nibble: (a.nibble_phase).sin(),
+                rise: a.rise,
             },
             shadow: self.shadow,
             sprite_frame,

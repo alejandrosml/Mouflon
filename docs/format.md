@@ -36,7 +36,13 @@ terminal_velocity = 1700.0
 bounce = 0.22                 # rebond à l'atterrissage
 hard_landing_speed = 1150.0   # au-delà : réflexe land_hard
 width = 64.0                  # largeur utilisée pour les bords et les murs
+stride = 29.0                 # distance d'un cycle de marche (défaut : 0,9 × la hauteur)
 ```
+
+Pour un dessin vectoriel, `stride` règle la cadence des pas : les pattes
+balaient juste ce qu'il faut pour que les sabots ne glissent pas, et une
+foulée d'environ 1,6 fois la longueur des pattes donne un pas naturel. Au
+galop, la foulée s'allonge d'elle-même.
 
 ## Comportements
 
@@ -60,9 +66,10 @@ on_meet = "surprise"          # en rencontrant un autre animal (sinon : réflexe
 on_window_side = "turn"       # le côté d'une fenêtre barre le chemin (sinon : réflexe window_side)
 ```
 
-Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit`, `sleep`,
-`look` (regarde autour de lui), `jump` (avec `jump = [vers l'avant, vers le haut]`
-en pt/s), `fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur).
+Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit` (couché pour
+un dessin vectoriel), `sleep`, `look` (regarde autour de lui), `graze` (broute,
+la tête au sol), `jump` (avec `jump = [vers l'avant, vers le haut]` en pt/s),
+`fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur).
 
 Les poids sont relatifs : `weight = 4` contre `weight = 1` donne quatre
 chances sur cinq. Une transition dont la condition est fausse est ignorée.

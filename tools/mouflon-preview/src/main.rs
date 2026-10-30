@@ -987,7 +987,7 @@ fn paint_cursor(list: &mut DisplayList, c: Vec2, grabbing: bool) {
 fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
     let cell_w = 420.0_f32;
     let cell_h = 380.0_f32;
-    let (cols, rows) = (3u32, 2u32);
+    let (cols, rows) = (3u32, 3u32);
     let zoom = 3.4_f64;
     let width = (cell_w * cols as f32) as u32;
     let height = (cell_h * rows as f32) as u32;
@@ -1086,6 +1086,7 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
         (
             PoseSignals {
                 air: 1.0,
+                rise: 0.9,
                 squash: -0.07,
                 lean: 0.22,
                 ear: -0.55,
@@ -1120,6 +1121,42 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             1.0,
             Some(0.0),
             bubbles.to_vec(),
+        ),
+        // Couché, éveillé.
+        (
+            PoseSignals {
+                sit: 1.0,
+                breath: 0.3,
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
+        ),
+        // Broute.
+        (
+            PoseSignals {
+                graze: 1.0,
+                nibble: 0.6,
+                look: Vec2::new(0.2, 0.3),
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
+        ),
+        // Galop, puis descente d'un saut (pattes tendues vers le sol).
+        (
+            PoseSignals {
+                run: 1.0,
+                walk: 1.0,
+                gait_phase: TAU * 0.35,
+                lean: 0.08,
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
         ),
     ];
 

@@ -238,6 +238,10 @@ pub struct Physics {
     /// Boîte de l'animal : largeur et hauteur en points.
     pub width: f32,
     pub height: f32,
+    /// Distance parcourue pendant un cycle de marche (points) ; 0 : 0,9 fois
+    /// la hauteur. Pour qu'un dessin vectoriel ne glisse pas, environ 1,6 fois
+    /// la longueur de ses pattes.
+    pub stride: f32,
 }
 
 impl Default for Physics {
@@ -254,6 +258,7 @@ impl Default for Physics {
             max_throw_speed: 2600.0,
             width: 76.0,
             height: 64.0,
+            stride: 0.0,
         }
     }
 }
@@ -274,6 +279,8 @@ pub enum Motion {
     Sleep,
     /// Regarde autour de lui (ou le curseur).
     Look,
+    /// Broute : la tête au sol, qui grignote.
+    Graze,
     /// Saut : vitesse horizontale vers l'avant et verticale vers le haut.
     Jump {
         vx: f32,
@@ -333,6 +340,7 @@ impl Motion {
     pub fn pose(&self) -> Pose {
         match self {
             Self::Stand | Self::Turn | Self::Look => Pose::Stand,
+            Self::Graze => Pose::Graze,
             Self::Walk { .. } => Pose::Walk,
             Self::Run { .. } => Pose::Run,
             Self::Sit => Pose::Sit,
@@ -353,6 +361,7 @@ pub enum Pose {
     Run,
     Sit,
     Sleep,
+    Graze,
     Air,
     Land,
     Dangle,
@@ -774,6 +783,17 @@ impl PetDef {
         self.by_name.get(name).copied()
     }
 
+    /// Distance parcourue pendant un cycle de marche (points) : celle du
+    /// fichier, ou 0,9 fois la hauteur. Au galop, la foulée s'allonge.
+    #[must_use]
+    pub fn stride(&self) -> f32 {
+        if self.physics.stride > 0.0 {
+            self.physics.stride
+        } else {
+            self.physics.height * 0.9
+        }
+    }
+
     /// Le même animal, `k` fois plus grand : dessin, corps, vitesses et
     /// pesanteur suivent, pour que tout bouge comme à sa taille d'origine,
     /// en plus grand. Les comportements gardent leur rang.
@@ -800,6 +820,7 @@ impl PetDef {
             &mut p.max_throw_speed,
             &mut p.width,
             &mut p.height,
+            &mut p.stride,
         ] {
             *length *= k;
         }
