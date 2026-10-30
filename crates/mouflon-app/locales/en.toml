@@ -1,27 +1,47 @@
 # English: Mouflon's interface, and the language used when macOS asks for one
-# Mouflon does not speak yet. Menu items follow the macOS style (Title Case).
+# Mouflon does not speak yet. Menu items and buttons follow the macOS style
+# (Title Case); checkboxes and explanations use sentence case.
 
-add_pet = "Add a Pet"
+# Menu bar
 add_named = "Add {name}"
+add_pet = "Add Another Pet"
 goodbye = "Say Goodbye"
 goodbye_all = "To Everyone"
-together = "All Together"
+together = "Play Together"
 pause = "Pause"
+resume = "Resume"
 sounds = "Sounds"
-frontmost_only = "Walk Only on the Frontmost App"
-collisions = "Collisions Between Pets"
-walk_under_dock = "Walk Under the Dock"
-dock_info = "Why Accessibility?"
-dock_info_text = "Mouflon needs the Accessibility permission only to know exactly where the Dock is; it reads and controls nothing else, and this option is entirely optional."
-settings = "Settings"
+settings = "Settings…"
+about = "About Mouflon"
+quit = "Quit Mouflon"
+
+# A pet's menu (right click)
+goodbye_named = "Say Goodbye to {name}"
 size = "Size"
 size_small = "Small"
 size_normal = "Normal"
 size_large = "Large"
 size_huge = "Very Large"
-open_pets_folder = "Open the Pets Folder"
-about = "About Mouflon"
-quit = "Quit Mouflon"
+
+# Settings window
+settings_title = "Mouflon Settings"
+pets_section = "Pets"
+pet_sounds = "Pet sounds"
+walks_section = "Where They Walk"
+collisions = "Collisions between pets"
+collisions_help = "Two pets that run into each other tumble backwards."
+frontmost_only = "Only on the frontmost app"
+frontmost_only_help = "The other apps' windows, often hidden behind, are no longer ledges for them."
+walk_under_dock = "Walk under the Dock"
+walk_under_dock_help = "They go all the way down the screen, behind the Dock. Asks for the Accessibility permission, only to know exactly where the Dock is: Mouflon reads and controls nothing else."
+accessibility_waiting = "Mouflon is waiting for the Accessibility permission."
+startup_section = "Startup"
+open_at_login = "Open Mouflon at login"
+login_waiting = "Waiting for your approval in System Settings."
+open_system_settings = "Open System Settings"
+my_pets_section = "My Pets"
+my_pets_help = "To install one, drop its folder on a pet on screen, or copy it into the pets folder."
+open_pets_folder = "Open Folder"
 
 # About window
 description = "A light and beautiful desktop companion manager."

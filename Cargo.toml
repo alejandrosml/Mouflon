@@ -59,6 +59,7 @@ objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"
 objc2-application-services = { version = "0.3", default-features = false }
 objc2-quartz-core = { version = "0.3", default-features = false }
+objc2-service-management = { version = "0.3", default-features = false }
 raw-window-handle = "0.6"
 libc = "0.2.191"
 

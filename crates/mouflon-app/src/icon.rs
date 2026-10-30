@@ -1,5 +1,5 @@
-//! Icônes dessinées par le code : celle de la barre des menus et le « ⓘ » du
-//! menu (images « modèles » : macOS les teinte lui-même en clair ou en sombre).
+//! L'icône de la barre des menus, dessinée par le code (image « modèle » :
+//! macOS la teinte lui-même en clair ou en sombre).
 
 /// Image RGBA noire de `size`×`size` pixels, opaque là où `inside` (en
 /// coordonnées normalisées 0–1) est vrai, avec des bords adoucis
@@ -24,21 +24,6 @@ fn rasterize(size: u32, inside: impl Fn(f32, f32) -> bool) -> Vec<u8> {
         }
     }
     rgba
-}
-
-/// « ⓘ » : un i dans un cercle, comme le symbole d'information de macOS.
-#[must_use]
-#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-pub fn info_icon(size: u32) -> Vec<u8> {
-    rasterize(size, |px, py| {
-        let (dx, dy) = (px - 0.5, py - 0.5);
-        let r = (dx * dx + dy * dy).sqrt();
-        let ring = (0.325..=0.40).contains(&r);
-        let (ex, ey) = (px - 0.5, py - 0.315);
-        let dot = ex * ex + ey * ey <= 0.055 * 0.055;
-        let stem = (0.5 - 0.045..=0.5 + 0.045).contains(&px) && (0.42..=0.70).contains(&py);
-        ring || dot || stem
-    })
 }
 
 /// Petite silhouette d'animal en RGBA, `size`×`size` pixels.
@@ -67,23 +52,9 @@ pub fn tray_icon(size: u32) -> Vec<u8> {
 mod tests {
     #[test]
     fn icon_has_ink_and_transparency() {
-        for icon in [super::tray_icon(36), super::info_icon(36)] {
-            let alphas: Vec<u8> = icon.chunks(4).map(|p| p[3]).collect();
-            assert!(alphas.contains(&255));
-            assert!(alphas.contains(&0));
-        }
-    }
-
-    #[test]
-    fn the_info_icon_is_an_i_in_a_circle() {
-        let size = 36;
-        let icon = super::info_icon(size);
-        let alpha = |x: u32, y: u32| icon[((y * size + x) * 4 + 3) as usize];
-        // Le centre de l'image est dans la barre du i, le bord du cercle est
-        // encré, l'espace entre les deux est vide, les coins aussi.
-        assert_eq!(alpha(17, 20), 255);
-        assert!(alpha(18, 4) > 128, "haut du cercle");
-        assert_eq!(alpha(10, 18), 0);
-        assert_eq!(alpha(1, 1), 0);
+        let icon = super::tray_icon(36);
+        let alphas: Vec<u8> = icon.chunks(4).map(|p| p[3]).collect();
+        assert!(alphas.contains(&255));
+        assert!(alphas.contains(&0));
     }
 }

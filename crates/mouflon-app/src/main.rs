@@ -13,6 +13,7 @@ mod library;
 mod menu;
 mod quick;
 mod settings;
+mod settings_window;
 mod stats;
 mod watch;
 

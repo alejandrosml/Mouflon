@@ -1,12 +1,20 @@
 //! Implémentation macOS.
 
+mod actions;
 mod clock;
+mod form;
+mod login;
+mod popup;
 mod sound;
 mod ui;
 
+pub use actions::set_ui_handler;
 pub use clock::FrameClock;
+pub use form::{show_form, snapshot_form, update_form};
+pub use login::{login_item, open_login_items_settings, set_login_item};
+pub use popup::pop_up_menu;
 pub use sound::{play_sound, warm_up_sounds};
-pub use ui::{close_note, show_about, show_note};
+pub use ui::show_about;
 
 use std::ptr::NonNull;
 
@@ -15,8 +23,8 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2_app_kit::{
-    NSEvent, NSPanel, NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSWorkspace,
+    NSEvent, NSEventModifierFlags, NSPanel, NSRunningApplication, NSScreen, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_application_services::{
     AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions, AXUIElement, AXValue, AXValueType,
@@ -178,6 +186,22 @@ pub fn frontmost_pid() -> Option<i32> {
 pub fn open_folder(path: &std::path::Path) -> bool {
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
     NSWorkspace::sharedWorkspace().openURL(&url)
+}
+
+/// La touche Contrôle est-elle enfoncée ? Sur Mac, Contrôle-clic vaut
+/// clic droit.
+#[must_use]
+pub fn control_key_down() -> bool {
+    NSEvent::modifierFlags_class().contains(NSEventModifierFlags::Control)
+}
+
+/// Ouvre Réglages Système à la liste des apps autorisées à utiliser
+/// l'Accessibilité, où l'utilisateur peut cocher Mouflon.
+pub fn open_accessibility_settings() -> bool {
+    NSURL::URLWithString(ns_string!(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    ))
+    .is_some_and(|url| NSWorkspace::sharedWorkspace().openURL(&url))
 }
 
 /// Position du curseur dans le repère commun.

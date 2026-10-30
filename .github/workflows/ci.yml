@@ -98,6 +98,28 @@ jobs:
             target/aarch64-apple-darwin/profilage/mouflon > profil-sortie.log 2>&1
           wait
 
+      # Vitrine : la fenêtre des réglages en images, en plusieurs langues
+      # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
+      # sombre — et le texte du menu d'un animal (`vitrine/`). Rien n'y est
+      # changé ; un échec ici ne fait pas échouer la construction.
+      - name: Vitrine des réglages
+        continue-on-error: true
+        run: |
+          for langue in fr en de ja ru; do
+            MOUFLON_VITRINE=vitrine MOUFLON_LANGUE=$langue RUST_LOG=warn,mouflon=info,mouflon_platform=info \
+              perl -e 'alarm 90; exec @ARGV' \
+              dist/Mouflon.app/Contents/MacOS/mouflon > vitrine-$langue.log 2>&1 || true
+          done
+          ls -la vitrine
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: vitrine
+          path: |
+            vitrine/
+            vitrine-*.log
+
       - uses: actions/upload-artifact@v5
         if: always()
         with:

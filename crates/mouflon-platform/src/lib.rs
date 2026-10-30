@@ -145,14 +145,130 @@ pub struct About<'a> {
     pub lines: &'a [AboutLine<'a>],
 }
 
-/// Icône de Mouflon dans la barre des menus, où une bulle d'explication
-/// peut s'accrocher (voir [`show_note`]).
-#[cfg(target_os = "macos")]
-pub type StatusItem = objc2_app_kit::NSStatusItem;
-/// Pas d'icône où accrocher une bulle sur ce système.
-#[cfg(not(target_os = "macos"))]
-#[derive(Debug)]
-pub enum StatusItem {}
+/// Ce que l'utilisateur fait dans les fenêtres et les menus propres à
+/// Mouflon (réglages, menu d'un animal). L'app les reçoit par
+/// [`set_ui_handler`] ; les identifiants sont ceux qu'elle a donnés.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiEvent {
+    /// Article choisi dans un menu surgissant ([`pop_up_menu`]).
+    Menu(u32),
+    /// Case des réglages cochée (`true`) ou décochée.
+    Check(u32, bool),
+    /// Cran choisi sur un curseur des réglages.
+    Step(u32, usize),
+    /// Bouton des réglages.
+    Button(u32),
+    /// La fenêtre des réglages passe au premier plan : ce qu'elle montre de
+    /// l'état du système (autorisations…) est à relire, il a pu changer.
+    FormShown,
+    /// ⌘Q pendant que la fenêtre des réglages est au premier plan.
+    Quit,
+}
+
+/// Un article de menu surgissant (le menu d'un animal, au clic droit).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PopupItem {
+    /// Titre de section, qu'on ne choisit pas (le nom de l'animal).
+    Header(String),
+    /// Article à choisir, coché ou non.
+    Item {
+        id: u32,
+        label: String,
+        checked: bool,
+        enabled: bool,
+    },
+    /// Sous-menu.
+    Submenu {
+        label: String,
+        items: Vec<PopupItem>,
+    },
+    Separator,
+}
+
+/// La fenêtre des réglages : des sections de lignes, de haut en bas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Form {
+    pub title: String,
+    pub sections: Vec<FormSection>,
+}
+
+/// Une section : un titre, puis ses lignes dans un cadre.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormSection {
+    pub title: String,
+    pub rows: Vec<FormRow>,
+}
+
+/// Une ligne des réglages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormRow {
+    /// Case à cocher, avec une explication dessous et, au besoin, un
+    /// complément qui n'apparaît que quand l'app le demande.
+    Check {
+        id: u32,
+        label: String,
+        help: Option<String>,
+        extra: Option<FormExtra>,
+    },
+    /// Curseur à crans : un libellé au-dessus, le nom de chaque cran dessous.
+    Steps {
+        id: u32,
+        label: String,
+        steps: Vec<String>,
+    },
+    /// Un texte, et un bouton à sa droite.
+    Text {
+        text: String,
+        button: Option<FormButton>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormButton {
+    pub id: u32,
+    pub label: String,
+}
+
+/// Complément d'une case : une remarque et un bouton, montrés ou cachés
+/// ensemble ([`FormValue::Shown`], avec l'identifiant du bouton).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormExtra {
+    pub note: String,
+    pub button: FormButton,
+}
+
+/// Ce que la fenêtre des réglages montre : l'app les donne à chaque
+/// changement, d'où qu'il vienne.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormValue {
+    Check(u32, bool),
+    Step(u32, usize),
+    /// Montre ou cache un complément (identifiant de son bouton).
+    Shown(u32, bool),
+}
+
+/// Mouflon s'ouvre-t-il à l'ouverture de session ? C'est le système qui le
+/// sait : il le garde, et l'utilisateur peut le changer de son côté
+/// (Réglages Système → Général → Ouverture).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginItem {
+    /// Pas réglable d'ici : macOS 12 ou plus ancien, ou Mouflon lancé hors
+    /// de son app (`Mouflon.app`).
+    Unavailable,
+    Off,
+    On,
+    /// Demandé, mais en attente de l'accord de l'utilisateur dans Réglages
+    /// Système.
+    NeedsApproval,
+}
+
+impl LoginItem {
+    /// La case « Ouvrir à l'ouverture de session » est-elle cochée ?
+    #[must_use]
+    pub fn is_requested(self) -> bool {
+        matches!(self, Self::On | Self::NeedsApproval)
+    }
+}
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -164,16 +280,20 @@ pub use usage::{ProcessUsage, process_usage};
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
-    keep_pet_window, open_folder, play_sound, preferred_languages, prepare_pet_window,
-    request_accessibility, screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
+    FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
+    frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
+    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
+    request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
+    snapshot_form, update_form, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(not(target_os = "macos"))]
 mod fallback {
     //! Repli pour les systèmes pas encore pris en charge : aucun rebord de
     //! fenêtre, l'animal marche sur le bas de l'écran.
-    use super::{About, AboutLine, OsScreen, OsWindow, StatusItem};
+    use super::{
+        About, AboutLine, Form, FormValue, LoginItem, OsScreen, OsWindow, PopupItem, UiEvent,
+    };
 
     #[must_use]
     pub fn screens() -> Vec<OsScreen> {
@@ -255,12 +375,44 @@ mod fallback {
         }
     }
 
-    /// Pas de bulle ici : l'explication va au journal.
-    pub fn show_note(_anchor: Option<&StatusItem>, title: &str, text: &str) {
-        log::info!("{title} : {text}");
+    /// Pas encore de fenêtres ni de menus surgissants à Mouflon ici : rien
+    /// ne viendra par là.
+    pub fn set_ui_handler(_handler: impl Fn(UiEvent) + 'static) {}
+
+    pub fn pop_up_menu(_items: &[PopupItem]) {}
+
+    /// Pas de fenêtre des réglages ici : `false`, à l'app de proposer
+    /// autre chose (le fichier des réglages).
+    pub fn show_form(_form: &Form, _values: &[FormValue]) -> bool {
+        false
     }
 
-    pub fn close_note() {}
+    pub fn update_form(_values: &[FormValue]) {}
+
+    pub fn snapshot_form(_path: &std::path::Path, _dark: bool) -> bool {
+        false
+    }
+
+    /// Le clic droit suffit ici.
+    #[must_use]
+    pub fn control_key_down() -> bool {
+        false
+    }
+
+    pub fn open_accessibility_settings() -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn login_item() -> LoginItem {
+        LoginItem::Unavailable
+    }
+
+    pub fn set_login_item(_on: bool) -> LoginItem {
+        LoginItem::Unavailable
+    }
+
+    pub fn open_login_items_settings() {}
 
     /// Pas d'horloge d'écran ici : l'app se rythme avec une minuterie.
     #[derive(Debug)]
@@ -313,9 +465,11 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    FrameClock, accessibility_trusted, close_note, cursor_position, dock_frame, frontmost_pid,
-    keep_pet_window, open_folder, play_sound, preferred_languages, prepare_pet_window,
-    request_accessibility, screens, show_about, show_note, warm_up_sounds, window_max_fps, windows,
+    FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
+    frontmost_pid, keep_pet_window, login_item, open_accessibility_settings, open_folder,
+    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
+    request_accessibility, screens, set_login_item, set_ui_handler, show_about, show_form,
+    snapshot_form, update_form, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

@@ -22,8 +22,9 @@ use winit::window::{Theme, Window, WindowId, WindowLevel};
 
 use crate::gpu::{Gpu, Job, PetSurface};
 use crate::library::{Entry, Library};
-use crate::menu::Action;
+use crate::menu::{Action, PetChoice, PetMenuState};
 use crate::settings::{Paths, Settings};
+use crate::settings_window::Shown;
 use crate::watch::{Snapshot, Watcher};
 
 /// Relevé des écrans (le reste se relève sur un fil à part).
@@ -59,6 +60,8 @@ pub enum UserEvent {
     ArtReady(String),
     /// Les images de cet animal sont compressées (voir `App::compress_later`).
     ArtCompressed(String),
+    /// Un article du menu d'un animal, un contrôle de la fenêtre des réglages.
+    Ui(platform::UiEvent),
 }
 
 /// Ce qu'un essai fait de lui-même à mi-parcours, pour passer aussi par un
@@ -106,6 +109,9 @@ struct Pointer {
     dragging: Option<u32>,
     /// Dernière position connue par les événements (si le système ne fournit pas la position globale).
     cursor: Option<Vec2>,
+    /// Un Contrôle-clic a ouvert le menu d'un animal : le bouton relâché
+    /// ensuite n'est pas un « coucou ».
+    context: bool,
 }
 
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -184,6 +190,24 @@ pub struct App {
     menu_generation: Option<u64>,
     /// Génération du troupeau pour laquelle les fenêtres sont à jour.
     windows_generation: Option<u64>,
+    /// Ouverture à l'ouverture de session, telle que le système l'a dite à
+    /// la dernière ouverture des réglages (c'est lui qui la garde).
+    login: platform::LoginItem,
+    /// L'animal dont le menu (clic droit) a été ouvert en dernier, et le
+    /// rang de son espèce dans la bibliothèque.
+    menu_pet: Option<(u32, Option<usize>)>,
+    /// Vitrine de la CI (`MOUFLON_VITRINE`) : images de la fenêtre des réglages.
+    showcase: Option<Showcase>,
+}
+
+/// La vitrine de la CI : à l'heure dite, la fenêtre des réglages s'ouvre,
+/// puis son image est enregistrée (claire, puis avec ses remarques, claire
+/// et sombre), avec le texte des menus ; l'app quitte ensuite.
+#[derive(Debug)]
+struct Showcase {
+    dir: std::path::PathBuf,
+    at: Instant,
+    opened: bool,
 }
 
 fn to_rect(r: platform::OsRect) -> Rect {
@@ -323,6 +347,9 @@ impl App {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu_generation: None,
             windows_generation: None,
+            login: platform::LoginItem::Unavailable,
+            menu_pet: None,
+            showcase: None,
         }
     }
 
@@ -474,6 +501,11 @@ impl App {
     fn apply_snapshot(&mut self, event_loop: &ActiveEventLoop, snapshot: Snapshot, now: Instant) {
         let dock = snapshot.dock.filter(|_| self.settings.walk_under_dock);
         if dock != self.dock_frame {
+            // Le Dock se lit (ou plus) : l'autorisation d'Accessibilité a pu
+            // changer, la fenêtre des réglages le montre.
+            if dock.is_some() != self.dock_frame.is_some() {
+                platform::update_form(&crate::settings_window::values(&self.shown()));
+            }
             self.dock_frame = dock;
             self.refresh_screens(event_loop);
         }
@@ -914,14 +946,7 @@ impl App {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.menu = None;
-            match crate::menu::TrayMenu::new(
-                &self.library,
-                self.settings.sounds,
-                self.settings.frontmost_only,
-                self.settings.collisions,
-                self.settings.walk_under_dock,
-                self.settings.size_index(),
-            ) {
+            match crate::menu::TrayMenu::new(&self.library, self.settings.sounds) {
                 Ok(menu) => {
                     menu.set_paused(self.paused);
                     self.menu = Some(menu);
@@ -1175,10 +1200,6 @@ impl App {
             "taille des animaux : × {size} ({} à l'écran)",
             self.flock.pets().len()
         );
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if let Some(menu) = &self.menu {
-            menu.set_size(index);
-        }
     }
 
     fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
@@ -1196,100 +1217,28 @@ impl App {
             }
             Action::Add(index) => {
                 self.spawn(event_loop, index);
-                // Le dernier animal choisi devient celui du lancement et du premier article.
-                if let Some(entry) = self.library.pets.get(index)
-                    && self.settings.default_pet.as_deref() != Some(entry.def.meta.id.as_str())
-                {
-                    self.settings.default_pet = Some(entry.def.meta.id.clone());
-                    if let Some(paths) = &self.paths {
-                        self.settings.save(&paths.settings);
-                    }
-                }
+                self.make_favorite(index);
             }
             Action::RemoveOne(index) => self.goodbye_one(index),
             Action::RemoveAll => self.remove_all(),
+            Action::Goodbye(id) => self.goodbye_pet(id),
             Action::Together => {
                 let input = self.input();
                 let count = self.flock.together(&self.world, &input);
                 log::info!("tous ensemble : {count} animal(aux)");
             }
-            Action::ToggleWalkUnderDock => {
-                self.settings.walk_under_dock = !self.settings.walk_under_dock;
-                if let Some(paths) = &self.paths {
-                    self.settings.save(&paths.settings);
-                }
-                // Lire le Dock demande l'autorisation d'Accessibilité : macOS
-                // propose de l'accorder si Mouflon ne l'a pas encore.
-                if self.settings.walk_under_dock && !platform::request_accessibility() {
-                    log::info!(
-                        "Marcher sous le Dock : en attente de l'autorisation d'Accessibilité"
-                    );
-                }
-                self.dock_logged = false;
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    menu.set_walk_under_dock(self.settings.walk_under_dock);
-                }
-                // Le fil de relevé lit le Dock tout de suite (ou cesse de le lire).
-                if let Some(watcher) = &self.watcher {
-                    watcher.set_dock(self.settings.walk_under_dock);
-                }
-                if !self.settings.walk_under_dock {
-                    self.dock_frame = None;
-                }
-                self.refresh_screens(event_loop);
-                self.refresh_windows(Instant::now());
-            }
+            Action::SetPaused(paused) => self.set_paused(paused),
+            Action::SetSounds(on) => self.set_sounds(on),
             Action::SetSize(index) => {
                 self.set_size(index);
                 self.sync_windows(event_loop);
             }
-            Action::ToggleSounds => {
-                self.settings.sounds = !self.settings.sounds;
-                if let Some(paths) = &self.paths {
-                    self.settings.save(&paths.settings);
-                }
-                if self.settings.sounds {
-                    self.warm_up_sounds();
-                }
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    menu.set_sounds(self.settings.sounds);
-                }
-            }
-            Action::TogglePause => {
-                self.paused = !self.paused;
-                // Au réveil, les animaux repartent d'où ils étaient, sans
-                // rattraper le temps de la pause.
-                self.last_tick = Instant::now();
-                self.shown_at = None;
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    menu.set_paused(self.paused);
-                }
-            }
-            Action::ToggleFrontmostOnly => {
-                self.settings.frontmost_only = !self.settings.frontmost_only;
-                if let Some(paths) = &self.paths {
-                    self.settings.save(&paths.settings);
-                }
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    menu.set_frontmost_only(self.settings.frontmost_only);
-                }
-                self.refresh_windows(Instant::now());
-            }
-            Action::ToggleCollisions => {
-                self.settings.collisions = !self.settings.collisions;
-                self.flock.set_collisions(self.settings.collisions);
-                if let Some(paths) = &self.paths {
-                    self.settings.save(&paths.settings);
-                }
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    menu.set_collisions(self.settings.collisions);
-                }
-            }
+            Action::SetCollisions(on) => self.set_collisions(on),
+            Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
+            Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
+            Action::SetOpenAtLogin(on) => self.login = platform::set_login_item(on),
+            Action::OpenSettings => self.open_settings(),
+            Action::RefreshSettings => self.login = platform::login_item(),
             Action::OpenPetsFolder => {
                 if let Some(paths) = &self.paths {
                     let _ = std::fs::create_dir_all(&paths.pets);
@@ -1298,17 +1247,245 @@ impl App {
                     }
                 }
             }
-            Action::DockInfo =>
-            {
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                if let Some(menu) = &self.menu {
-                    let t = crate::i18n::texts();
-                    menu.show_note(&t.walk_under_dock, &t.dock_info_text);
+            Action::OpenAccessibilitySettings => {
+                if !platform::open_accessibility_settings() {
+                    log::warn!("impossible d'ouvrir les réglages d'Accessibilité");
                 }
             }
+            Action::OpenLoginItemsSettings => platform::open_login_items_settings(),
             Action::About => show_about(),
             Action::Quit => event_loop.exit(),
         }
+        // La barre des menus et la fenêtre des réglages montrent l'état
+        // qui en résulte, d'où que vienne le changement.
+        self.publish();
+    }
+
+    /// Montre l'état de l'app partout où il se voit : la barre des menus
+    /// (pause, sons, animaux à l'écran) et la fenêtre des réglages. Le menu
+    /// d'un animal, lui, est refait à chaque clic droit.
+    fn publish(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            if let Some(menu) = &self.menu {
+                menu.set_paused(self.paused);
+                menu.set_sounds(self.settings.sounds);
+            }
+            // Le préféré a pu changer sans qu'un animal arrive encore.
+            self.menu_generation = None;
+        }
+        self.sync_menu();
+        platform::update_form(&crate::settings_window::values(&self.shown()));
+    }
+
+    /// Ce que la fenêtre des réglages montre de l'état de l'app et du système.
+    fn shown(&self) -> Shown {
+        Shown {
+            size: self.settings.size_index(),
+            sounds: self.settings.sounds,
+            collisions: self.settings.collisions,
+            frontmost_only: self.settings.frontmost_only,
+            walk_under_dock: self.settings.walk_under_dock,
+            trusted: platform::accessibility_trusted(),
+            login: self.login,
+        }
+    }
+
+    fn save_settings(&self) {
+        if let Some(paths) = &self.paths {
+            self.settings.save(&paths.settings);
+        }
+    }
+
+    /// Le dernier animal choisi devient celui du lancement et du premier
+    /// article du menu.
+    fn make_favorite(&mut self, index: usize) {
+        if let Some(entry) = self.library.pets.get(index)
+            && self.settings.default_pet.as_deref() != Some(entry.def.meta.id.as_str())
+        {
+            self.settings.default_pet = Some(entry.def.meta.id.clone());
+            self.save_settings();
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+        self.paused = paused;
+        // Au réveil, les animaux repartent d'où ils étaient, sans rattraper
+        // le temps de la pause.
+        self.last_tick = Instant::now();
+        self.shown_at = None;
+    }
+
+    fn set_sounds(&mut self, on: bool) {
+        if self.settings.sounds == on {
+            return;
+        }
+        self.settings.sounds = on;
+        self.save_settings();
+        if on {
+            self.warm_up_sounds();
+        }
+    }
+
+    fn set_collisions(&mut self, on: bool) {
+        if self.settings.collisions == on {
+            return;
+        }
+        self.settings.collisions = on;
+        self.flock.set_collisions(on);
+        self.save_settings();
+    }
+
+    fn set_frontmost_only(&mut self, on: bool) {
+        if self.settings.frontmost_only == on {
+            return;
+        }
+        self.settings.frontmost_only = on;
+        self.save_settings();
+        self.refresh_windows(Instant::now());
+    }
+
+    fn set_walk_under_dock(&mut self, event_loop: &ActiveEventLoop, on: bool) {
+        if self.settings.walk_under_dock == on {
+            return;
+        }
+        self.settings.walk_under_dock = on;
+        self.save_settings();
+        // Lire le Dock demande l'autorisation d'Accessibilité : macOS
+        // propose de l'accorder si Mouflon ne l'a pas encore.
+        if on && !platform::request_accessibility() {
+            log::info!("Marcher sous le Dock : en attente de l'autorisation d'Accessibilité");
+        }
+        self.dock_logged = false;
+        // Le fil de relevé lit le Dock tout de suite (ou cesse de le lire).
+        if let Some(watcher) = &self.watcher {
+            watcher.set_dock(on);
+        }
+        if !on {
+            self.dock_frame = None;
+        }
+        self.refresh_screens(event_loop);
+        self.refresh_windows(Instant::now());
+    }
+
+    /// Cet animal-là dit au revoir (le menu de son clic droit).
+    fn goodbye_pet(&mut self, id: u32) {
+        let input = self.input();
+        if self.flock.leave(id, &self.world, &input) && self.pointer.dragging == Some(id) {
+            self.pointer = Pointer::default();
+        }
+    }
+
+    /// Ouvre la fenêtre des réglages, avec ce que le système dit de
+    /// l'ouverture de session à cet instant.
+    fn open_settings(&mut self) {
+        self.login = platform::login_item();
+        let form = crate::settings_window::form(crate::i18n::texts(), self.login);
+        let values = crate::settings_window::values(&self.shown());
+        if !platform::show_form(&form, &values)
+            && let Some(paths) = &self.paths
+        {
+            // Pas de fenêtre des réglages sur ce système : le fichier, à
+            // modifier à la main (il est lu au lancement).
+            self.settings.save(&paths.settings);
+            platform::open_folder(&paths.settings);
+        }
+    }
+
+    /// Le menu d'un animal, au clic droit (ou Contrôle-clic) sur lui.
+    fn open_pet_menu(&mut self, window: WindowId) {
+        if self.pointer.dragging.is_some() {
+            return;
+        }
+        let Some(id) = self.pet_of(window) else {
+            return;
+        };
+        let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
+            return;
+        };
+        // Les personnages secondaires et ceux qui partent n'en ont pas.
+        if pet.is_child() || pet.is_leaving() {
+            return;
+        }
+        let name = pet.def().meta.name.clone();
+        let species = self
+            .library
+            .pets
+            .iter()
+            .position(|e| e.def.meta.id == pet.def().meta.id);
+        let state = PetMenuState {
+            paused: self.paused,
+            sounds: self.settings.sounds,
+            size: self.settings.size_index(),
+        };
+        let items = crate::menu::pet_menu(&name, state, crate::i18n::texts());
+        self.menu_pet = Some((id, species));
+        // Le clic n'est pas un « coucou », ni le début d'un glisser.
+        self.pointer.pressed = None;
+        self.pointer.window = None;
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!("menu de n° {id}"));
+        }
+        // Les animaux attendent qu'on ait choisi, puis repartent d'où ils étaient.
+        platform::pop_up_menu(&items);
+        self.last_tick = Instant::now();
+        self.shown_at = None;
+        self.next_frame = None;
+    }
+
+    /// Ce que fait l'article choisi dans le menu d'un animal.
+    fn pet_menu_action(&self, id: u32) -> Option<Action> {
+        let (pet, species) = self.menu_pet?;
+        PetChoice::from_id(id)?.action(pet, species)
+    }
+
+    /// La vitrine de la CI, à son heure (voir [`Showcase`]).
+    fn showcase(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        let Some(showcase) = self.showcase.as_mut() else {
+            return;
+        };
+        if now < showcase.at {
+            return;
+        }
+        if !showcase.opened {
+            showcase.opened = true;
+            showcase.at = now + Duration::from_secs(1);
+            self.open_settings();
+            return;
+        }
+        let Some(showcase) = self.showcase.take() else {
+            return;
+        };
+        let t = crate::i18n::texts();
+        let code = crate::i18n::code();
+        let _ = std::fs::create_dir_all(&showcase.dir);
+        let image = |name: &str| showcase.dir.join(format!("reglages-{code}-{name}.png"));
+        let mut saved = vec![platform::snapshot_form(&image("clair"), false)];
+        // Avec ses remarques (autorisation et accord en attente), et la
+        // section « Démarrage » même si le système ne la permet pas ici.
+        let full = Shown {
+            walk_under_dock: true,
+            trusted: false,
+            login: platform::LoginItem::NeedsApproval,
+            ..self.shown()
+        };
+        let form = crate::settings_window::form(t, platform::LoginItem::Off);
+        platform::show_form(&form, &crate::settings_window::values(&full));
+        saved.push(platform::snapshot_form(&image("remarques-clair"), false));
+        saved.push(platform::snapshot_form(&image("remarques-sombre"), true));
+        let state = PetMenuState {
+            paused: false,
+            sounds: true,
+            size: 1,
+        };
+        let menu = crate::menu::pet_menu("Lainou", state, t);
+        let text = format!("{menu:#?}\n");
+        let _ = std::fs::write(showcase.dir.join(format!("menu-animal-{code}.txt")), text);
+        log::info!("vitrine : images enregistrées {saved:?}");
+        event_loop.exit();
     }
 
     fn pet_of(&self, window: WindowId) -> Option<u32> {
@@ -1539,6 +1716,9 @@ impl App {
         }
 
         self.schedule(event_loop, now, settling);
+        if !settling {
+            self.showcase(event_loop, now);
+        }
 
         let textures = self.gpu.as_ref().map_or((0, 0), Gpu::texture_usage);
         if let Some(stats) = &mut self.stats {
@@ -1765,6 +1945,23 @@ impl ApplicationHandler<UserEvent> for App {
         // que le fil principal crée le menu et met le GPU en route.
         let species = self.decode_ahead(&starters);
 
+        // Le menu d'un animal et la fenêtre des réglages : leurs événements
+        // arrivent par la boucle, comme ceux de la barre des menus.
+        let proxy = Arc::clone(&self.proxy);
+        platform::set_ui_handler(move |event| {
+            if let Ok(proxy) = proxy.lock() {
+                let _ = proxy.send_event(UserEvent::Ui(event));
+            }
+        });
+        // Vitrine de la CI : la fenêtre des réglages s'ouvre après l'arrivée
+        // des animaux.
+        if let Some(dir) = crate::stats::showcase() {
+            self.showcase = Some(Showcase {
+                dir,
+                at: begun + Duration::from_secs(3),
+                opened: false,
+            });
+        }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             let proxy = Arc::clone(&self.proxy);
@@ -1773,14 +1970,7 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = proxy.send_event(UserEvent::Menu(event));
                 }
             }));
-            match crate::menu::TrayMenu::new(
-                &self.library,
-                self.settings.sounds,
-                self.settings.frontmost_only,
-                self.settings.collisions,
-                self.settings.walk_under_dock,
-                self.settings.size_index(),
-            ) {
+            match crate::menu::TrayMenu::new(&self.library, self.settings.sounds) {
                 Ok(menu) => self.menu = Some(menu),
                 Err(e) => log::error!("impossible de créer le menu : {e}"),
             }
@@ -1905,6 +2095,15 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
             UserEvent::ArtCompressed(id) => self.art_compressed(&id),
+            UserEvent::Ui(event) => {
+                let action = match event {
+                    platform::UiEvent::Menu(id) => self.pet_menu_action(id),
+                    other => crate::settings_window::action(other),
+                };
+                if let Some(action) = action {
+                    self.handle_action(event_loop, action);
+                }
+            }
         }
     }
 
@@ -1915,11 +2114,22 @@ impl ApplicationHandler<UserEvent> for App {
         event: WindowEvent,
     ) {
         match event {
+            // Clic droit : le menu de l'animal.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => self.open_pet_menu(window_id),
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
             } => match state {
+                // Contrôle-clic : le menu de l'animal aussi, comme partout sur Mac.
+                ElementState::Pressed if platform::control_key_down() => {
+                    self.pointer.context = true;
+                    self.open_pet_menu(window_id);
+                }
                 ElementState::Pressed => {
                     self.pointer.window = Some(window_id);
                     self.pointer.pressed = self.cursor();
@@ -1931,6 +2141,8 @@ impl ApplicationHandler<UserEvent> for App {
                         ));
                     }
                 }
+                // Le bouton relâché après un Contrôle-clic : déjà traité.
+                ElementState::Released if std::mem::take(&mut self.pointer.context) => {}
                 ElementState::Released => {
                     self.next_frame = None;
                     if let Some(stats) = &self.stats {

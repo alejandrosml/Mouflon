@@ -18,7 +18,7 @@ libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving"] }
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError"] }
 objc2-app-kit = { workspace = true, features = [
     "libc",
     "NSScreen",
@@ -30,22 +30,25 @@ objc2-app-kit = { workspace = true, features = [
     "NSResponder",
     "NSGraphics",
     "NSPanel",
-    # Fenêtre « À propos » et bulle d'explication.
+    # Fenêtres « À propos » et des réglages, menu d'un animal.
     "NSApplication",
-    "NSAlert",
+    "NSAppearance",
     "NSAttributedString",
+    "NSBitmapImageRep",
+    "NSBox",
     "NSButton",
     "NSCell",
     "NSColor",
     "NSControl",
     "NSFont",
+    "NSImageRep",
+    "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
     "NSParagraphStyle",
-    "NSPopover",
-    "NSStatusBarButton",
-    "NSStatusItem",
+    "NSSlider",
     "NSText",
     "NSTextField",
-    "NSViewController",
     # Sons des animaux.
     "NSSound",
     # Horloge de l'écran (CADisplayLink).
@@ -54,6 +57,8 @@ objc2-app-kit = { workspace = true, features = [
 objc2-quartz-core = { workspace = true, features = ["std", "objc2-core-foundation", "CADisplayLink", "CAFrameRateRange", "CALayer"] }
 objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes"] }
+# Ouvrir Mouflon à l'ouverture de session (macOS 13 et plus).
+objc2-service-management = { workspace = true, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 # Accessibilité : la place exacte du Dock (avec l'autorisation de l'utilisateur).
 objc2-application-services = { workspace = true, features = ["std", "libc", "HIServices", "AXError", "AXUIElement", "AXValue"] }
 

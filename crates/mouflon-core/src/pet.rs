@@ -2321,6 +2321,21 @@ impl Flock {
         Some(pet.id())
     }
 
+    /// Cet animal-là (son numéro) dit au revoir, s'il ne part pas déjà et
+    /// n'est pas un personnage secondaire. Renvoie `true` s'il s'en va.
+    pub fn leave(&mut self, id: u32, world: &World, input: &Input) -> bool {
+        let Some(pet) = self
+            .pets
+            .iter_mut()
+            .find(|p| p.id() == id && !p.is_child() && !p.is_leaving() && !p.is_finished())
+        else {
+            return false;
+        };
+        pet.leave(world, input);
+        self.generation += 1;
+        true
+    }
+
     /// Tous ensemble : chaque animal libre joue son comportement `together`.
     /// Renvoie le nombre d'animaux qui le jouent.
     pub fn together(&mut self, world: &World, input: &Input) -> usize {
@@ -3339,6 +3354,26 @@ mod tests {
         advance(&mut flock, &world, 1.5);
         let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
         assert_eq!(ids, vec![other]);
+    }
+
+    #[test]
+    fn the_pet_chosen_with_a_right_click_says_goodbye_alone() {
+        let world = world();
+        let mut flock = Flock::new();
+        let first = flock.spawn(def(), 1, &world, None);
+        let latest = flock.spawn(def(), 2, &world, None);
+        put(&mut flock, &world, first, 300.0, 1.0, "stand");
+        put(&mut flock, &world, latest, 900.0, 1.0, "stand");
+        let input = Input::default();
+        let generation = flock.generation();
+        // Le premier, pas le dernier arrivé de son espèce.
+        assert!(flock.leave(first, &world, &input));
+        assert!(flock.generation() > generation, "le menu le saura");
+        assert!(!flock.leave(first, &world, &input), "il part déjà");
+        assert!(!flock.leave(99, &world, &input), "inconnu");
+        advance(&mut flock, &world, 1.5);
+        let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
+        assert_eq!(ids, vec![latest]);
     }
 
     #[test]

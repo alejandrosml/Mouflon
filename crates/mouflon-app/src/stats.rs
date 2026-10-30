@@ -25,6 +25,14 @@ pub fn trial() -> Option<Duration> {
     (seconds.is_finite() && seconds > 0.0).then(|| Duration::from_secs_f64(seconds))
 }
 
+/// Vitrine de la CI (`MOUFLON_VITRINE=dossier`) : la fenêtre des réglages
+/// s'ouvre, son image est enregistrée dans ce dossier, puis l'app quitte.
+#[must_use]
+pub fn showcase() -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("MOUFLON_VITRINE")?;
+    (!dir.is_empty()).then(|| std::path::PathBuf::from(dir))
+}
+
 /// Animaux du lancement demandés pour l'essai (identifiants).
 #[must_use]
 pub fn trial_pets() -> Vec<String> {
