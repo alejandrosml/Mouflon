@@ -251,18 +251,18 @@ fn decode_pages(
         .collect()
 }
 
+/// Décode une planche et découpe ses cases, une rangée de cases à la fois :
+/// seule une bande de la hauteur d'une case est en mémoire. Une grande
+/// planche desktopPet (2880 × 6480 pixels) occupait 75 Mo une fois décodée
+/// entière ; une bande en occupe moins de 3, et elle est encore dans le
+/// cache du processeur quand on la découpe.
 fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, SpriteError> {
-    let (width, height, mut rgba) = decode_png_rgba(&page.png.bytes()?)?;
-    if let Some([kr, kg, kb]) = sheet.key_color {
-        for px in rgba.as_chunks_mut::<4>().0 {
-            if px[0] == kr && px[1] == kg && px[2] == kb {
-                *px = [0, 0, 0, 0];
-            }
-        }
-    }
     if page.tiles_x == 0 || page.tiles_y == 0 {
         return Err(SpriteError::Invalid("nombre de cases nul".into()));
     }
+    let bytes = page.png.bytes()?;
+    let mut rows = PngRows::open(&bytes)?;
+    let (width, height) = (rows.width, rows.height);
     let (tile_w, tile_h) = (width / page.tiles_x, height / page.tiles_y);
     if tile_w == 0 || tile_h == 0 {
         return Err(SpriteError::Invalid(format!(
@@ -270,27 +270,36 @@ fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, Sp
             page.tiles_x, page.tiles_y
         )));
     }
-    let image = Image {
-        rgba: &rgba,
-        width: width as usize,
-    };
     // Filtres de réduction : les mêmes pour toutes les cases de la planche.
     let reduction = reduced_size(tile_w, tile_h, sheet.scale).map(|(w, h)| Reduction {
         columns: coverage(tile_w, w),
         rows: coverage(tile_h, h),
         texel: tile_w as f32 / w as f32,
     });
+    let texel = reduction.as_ref().map_or(1.0, |r| r.texel);
     let mut scratch = Scratch::default();
+    let mut band = Vec::new();
     let mut frames = Vec::with_capacity((page.tiles_x * page.tiles_y) as usize);
-    for ty in 0..page.tiles_y {
+    for _ in 0..page.tiles_y {
+        rows.read_band(tile_h as usize, &mut band)?;
+        if let Some([kr, kg, kb]) = sheet.key_color {
+            for px in band.as_chunks_mut::<4>().0 {
+                if px[0] == kr && px[1] == kg && px[2] == kb {
+                    *px = [0, 0, 0, 0];
+                }
+            }
+        }
+        let image = Image {
+            rgba: &band,
+            width: width as usize,
+        };
         for tx in 0..page.tiles_x {
             let tile = Area {
                 x0: (tx * tile_w) as usize,
-                y0: (ty * tile_h) as usize,
+                y0: 0,
                 x1: ((tx + 1) * tile_w) as usize,
-                y1: ((ty + 1) * tile_h) as usize,
+                y1: tile_h as usize,
             };
-            let texel = reduction.as_ref().map_or(1.0, |r| r.texel);
             // Seuls les pixels visibles de la case comptent : on réduit et on
             // rogne le rectangle qui les contient, pas toute la case.
             let frame = match image.visible(tile) {
@@ -307,6 +316,101 @@ fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, Sp
         tile: (tile_w, tile_h),
         frames,
     })
+}
+
+/// Les lignes d'un PNG en RGBA 8 bits, lues bande par bande.
+struct PngRows<'a> {
+    reader: png::Reader<Cursor<&'a [u8]>>,
+    width: u32,
+    height: u32,
+    color: png::ColorType,
+    /// Un PNG entrelacé ne se lit pas ligne à ligne : il est décodé entier
+    /// (avec le numéro de la prochaine ligne à rendre).
+    whole: Option<(Vec<u8>, usize)>,
+    /// Une ligne dans les couleurs du PNG, avant passage en RGBA.
+    line: Vec<u8>,
+}
+
+impl<'a> PngRows<'a> {
+    fn open(bytes: &'a [u8]) -> Result<Self, SpriteError> {
+        let mut decoder = png::Decoder::new(Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::normalize_to_color8());
+        let mut reader = decoder.read_info()?;
+        let (width, height) = (reader.info().width, reader.info().height);
+        let (color, _) = reader.output_color_type();
+        let whole = if reader.info().interlaced {
+            Some((frame_rgba(&mut reader)?.2, 0))
+        } else {
+            None
+        };
+        let line = vec![
+            0;
+            reader
+                .output_line_size(width)
+                .ok_or_else(|| SpriteError::Invalid("image trop grande".into()))?
+        ];
+        Ok(Self {
+            reader,
+            width,
+            height,
+            color,
+            whole,
+            line,
+        })
+    }
+
+    /// Les `count` lignes suivantes, en RGBA, à la place du contenu de `band`.
+    fn read_band(&mut self, count: usize, band: &mut Vec<u8>) -> Result<(), SpriteError> {
+        let stride = self.width as usize * 4;
+        band.clear();
+        if let Some((rgba, next)) = &mut self.whole {
+            let start = *next * stride;
+            band.extend_from_slice(&rgba[start..start + count * stride]);
+            *next += count;
+            return Ok(());
+        }
+        let truncated = || SpriteError::Invalid("image tronquée".into());
+        band.resize(count * stride, 0);
+        for row in band.chunks_exact_mut(stride) {
+            // En RGBA, la ligne s'écrit droit dans la bande.
+            if self.color == png::ColorType::Rgba {
+                self.reader.read_row(row)?.ok_or_else(truncated)?;
+            } else {
+                self.reader
+                    .read_row(&mut self.line)?
+                    .ok_or_else(truncated)?;
+                expand_to_rgba(&self.line, self.color, row)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Pixels `src` aux couleurs `color` (8 bits) passés en RGBA dans `dst`.
+fn expand_to_rgba(src: &[u8], color: png::ColorType, dst: &mut [u8]) -> Result<(), SpriteError> {
+    let out = dst.as_chunks_mut::<4>().0;
+    match color {
+        png::ColorType::Rgba => dst.copy_from_slice(&src[..dst.len()]),
+        png::ColorType::Rgb => {
+            for (d, &[r, g, b]) in out.iter_mut().zip(src.as_chunks::<3>().0) {
+                *d = [r, g, b, 255];
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for (d, &[g, a]) in out.iter_mut().zip(src.as_chunks::<2>().0) {
+                *d = [g, g, g, a];
+            }
+        }
+        png::ColorType::Grayscale => {
+            for (d, &g) in out.iter_mut().zip(src) {
+                *d = [g, g, g, 255];
+            }
+        }
+        png::ColorType::Indexed => {
+            return Err(SpriteError::Invalid("palette non développée".into()));
+        }
+    }
+    Ok(())
 }
 
 /// Taille des images réduites d'avance, ou rien si la planche n'est pas plus
@@ -600,36 +704,24 @@ fn resample(rgba: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Vec
 pub fn decode_png_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), SpriteError> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let mut reader = decoder.read_info()?;
+    frame_rgba(&mut decoder.read_info()?)
+}
+
+/// L'image entière d'un PNG ouvert, en RGBA 8 bits : largeur, hauteur, pixels.
+fn frame_rgba(reader: &mut png::Reader<Cursor<&[u8]>>) -> Result<(u32, u32, Vec<u8>), SpriteError> {
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| SpriteError::Invalid("image trop grande".into()))?;
     let mut buf = vec![0; size];
     let info = reader.next_frame(&mut buf)?;
     let pixels = info.width as usize * info.height as usize;
-    let rgba = match info.color_type {
-        // Déjà en RGBA : le tampon sert tel quel, sans copie.
-        png::ColorType::Rgba => {
-            buf.truncate(pixels * 4);
-            buf
-        }
-        png::ColorType::Rgb => buf[..pixels * 3]
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 255])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf[..pixels * 2]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .flat_map(|&[g, a]| [g, g, g, a])
-            .collect(),
-        png::ColorType::Grayscale => buf[..pixels].iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::Indexed => {
-            return Err(SpriteError::Invalid("palette non développée".into()));
-        }
-    };
+    // Déjà en RGBA : le tampon sert tel quel, sans copie.
+    if info.color_type == png::ColorType::Rgba {
+        buf.truncate(pixels * 4);
+        return Ok((info.width, info.height, buf));
+    }
+    let mut rgba = vec![0; pixels * 4];
+    expand_to_rgba(&buf, info.color_type, &mut rgba)?;
     Ok((info.width, info.height, rgba))
 }
 
@@ -667,6 +759,91 @@ mod tests {
             height,
             rgba: Blob::from(rgba),
         })
+    }
+
+    /// Une planche encodée autrement qu'en RGBA (couleurs seules, gris).
+    fn png_as(
+        color: png::ColorType,
+        width: u32,
+        height: u32,
+        pixel: impl Fn(u32, u32) -> [u8; 4],
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b, a] = pixel(x, y);
+                match color {
+                    png::ColorType::Rgb => data.extend_from_slice(&[r, g, b]),
+                    png::ColorType::GrayscaleAlpha => data.extend_from_slice(&[r, a]),
+                    _ => data.extend_from_slice(&[r, g, b, a]),
+                }
+            }
+        }
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(color);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .and_then(|mut writer| writer.write_image_data(&data))
+            .expect("PNG");
+        out
+    }
+
+    /// Images d'une planche de 3 × 4 cases de 4 × 5 pixels.
+    fn sliced(png: Vec<u8>) -> Vec<(u32, u32, Vec<u8>, f32, f32)> {
+        let frames = SpriteFrames::decode(&SpriteSheet::single(PngData::from(png), 3, 4))
+            .expect("planche lisible");
+        frames
+            .frames
+            .iter()
+            .map(|f| {
+                let b = &f.bitmap;
+                (b.width, b.height, b.rgba.data().to_vec(), f.x, f.y)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_png_layout_gives_the_same_frames() {
+        // Celle d'où vient `testdata/planche-entrelacee.png` (même planche,
+        // enregistrée entrelacée par ImageMagick).
+        let pixel = |x: u32, y: u32| {
+            let alpha = if (x + y).is_multiple_of(5) { 0 } else { 255 };
+            [
+                (x * 20 % 256) as u8,
+                (y * 30 % 256) as u8,
+                ((x + y) * 7 % 256) as u8,
+                alpha,
+            ]
+        };
+        let expected = sliced(png(12, 20, pixel));
+        assert_eq!(expected.len(), 12);
+        // Chaque rangée de cases vient de ses propres lignes (le vert suit y).
+        assert_ne!(expected[0].2, expected[3].2);
+        assert_eq!(
+            sliced(include_bytes!("testdata/planche-entrelacee.png").to_vec()),
+            expected,
+            "entrelacée"
+        );
+        let opaque = |x, y| {
+            let [r, g, b, _] = pixel(x, y);
+            [r, g, b, 255]
+        };
+        assert_eq!(
+            sliced(png_as(png::ColorType::Rgb, 12, 20, opaque)),
+            sliced(png(12, 20, opaque)),
+            "sans alpha"
+        );
+        let grey = |x, y| {
+            let [r, _, _, a] = pixel(x, y);
+            [r, r, r, a]
+        };
+        assert_eq!(
+            sliced(png_as(png::ColorType::GrayscaleAlpha, 12, 20, grey)),
+            sliced(png(12, 20, grey)),
+            "gris"
+        );
     }
 
     #[test]
