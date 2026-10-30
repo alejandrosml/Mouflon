@@ -2953,7 +2953,9 @@ impl ApplicationHandler<UserEvent> for App {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
             // À la moitié, puis aux trois quarts, le dernier arrivé d'une
-            // espèce s'en va (sa fenêtre se ferme) et un autre arrive.
+            // espèce s'en va (sa fenêtre se ferme) et un autre arrive : de la
+            // même espèce la première fois, la seconde fois Aquarelle (des
+            // morceaux peints sur un squelette), pour passer aussi par elle.
             let start = Instant::now();
             let mut kinds: Vec<usize> = Vec::new();
             for &i in &starters {
@@ -2961,12 +2963,22 @@ impl ApplicationHandler<UserEvent> for App {
                     kinds.push(i);
                 }
             }
+            let painted = self
+                .library
+                .pets
+                .iter()
+                .position(|e| e.def.meta.id == "aquarelle");
             for (k, at) in [duration / 2, duration * 3 / 4].into_iter().enumerate() {
                 if let Some(&kind) = kinds.get(k % kinds.len().max(1)) {
+                    let arrives = if k == 1 {
+                        painted.unwrap_or(kind)
+                    } else {
+                        kind
+                    };
                     self.trial_steps
                         .push((start + at, TrialStep::Goodbye(kind)));
                     self.trial_steps
-                        .push((start + at + Duration::from_secs(5), TrialStep::Add(kind)));
+                        .push((start + at + Duration::from_secs(5), TrialStep::Add(arrives)));
                 }
             }
             // Les surprises passent aussi : un coup de vent au premier tiers,
