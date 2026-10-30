@@ -18,13 +18,26 @@ pub mod expr;
 pub mod format;
 pub mod math;
 pub mod pet;
+pub mod physics;
+pub mod skeleton;
+pub mod surprise;
 pub mod world;
 
-pub use def::{Appearance, Drawn, Facings, PetDef, Pose, Rules, SpritePage, SpriteSheet};
-pub use format::{LoadError, load_pet, parse_pet_toml};
+pub use def::{
+    Appearance, Drawn, Facings, Inbetweens, PetDef, PngData, Pose, Rules, Sound, SoundCue,
+    SpritePage, SpriteSheet,
+};
+pub use format::{LoadError, Resources, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};
 pub use pet::{
-    Activity, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals, Shadow,
-    Support, TICK,
+    AWAY_AFTER, Activity, CLOCK_LOOP, Flock, Input, Particle, ParticleKind, Pet, PetEvent, PetView,
+    PoseSignals, RUN_STRIDE, SLOW_RATE, STARTLE_SPEED, Shadow, Support, TICK, TYPING_WINDOW,
 };
-pub use world::{LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World};
+pub use skeleton::{
+    Bone, BonePose, BoneRole, Clip, Key, Motions, Piece, Shown, Skeleton, SkeletonError, Track,
+    parse_skeleton,
+};
+pub use surprise::{BEAM_MAX, Gust, SAUCER_HEIGHT, SAUCER_WIDTH, Saucer, SaucerView};
+pub use world::{
+    DOCK_ID, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World, exact_dock,
+};

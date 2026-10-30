@@ -1,13 +1,46 @@
 //! Traduction de la liste d'affichage en scène Vello (rendu GPU).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use vello::Scene;
-use vello::kurbo::{Cap, Join, Stroke};
+use vello::kurbo::{Cap, Circle, Join, Stroke};
 use vello::peniko::{
-    BlendMode, Brush, Color, ColorStop, Compose, Gradient, ImageAlphaType, ImageBrush, ImageData,
-    ImageFormat, ImageQuality,
+    BlendMode, Blob, Brush, Color, ColorStop, Compose, Gradient, ImageAlphaType, ImageBrush,
+    ImageData, ImageFormat, ImageQuality,
 };
 
-use crate::display::{Command, DisplayList, LineCap, LineJoin, Paint, Stop};
+use crate::display::{Bitmap, Command, DisplayList, LineCap, LineJoin, Paint, Pixels, Stop};
+
+/// Images compressées décompressées pour Vello, gardées au plus.
+const DECODED_KEPT: usize = 64;
+
+thread_local! {
+    /// Copie RGBA des images compressées déjà passées par Vello, par
+    /// identifiant de leurs blocs.
+    static DECODED: RefCell<HashMap<u64, Blob<u8>>> = RefCell::new(HashMap::new());
+}
+
+/// Pixels RGBA d'une image pour Vello, qui ne lit pas le BC7 : une image
+/// compressée est décompressée une fois, et la même copie (même identifiant)
+/// resert ensuite, pour que Vello ne la téléverse pas à chaque image.
+fn rgba_blob(bitmap: &Bitmap) -> Blob<u8> {
+    match &bitmap.pixels {
+        Pixels::Rgba(blob) => blob.clone(),
+        Pixels::Bc7(blocks) => DECODED.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if let Some(blob) = cache.get(&blocks.id()) {
+                return blob.clone();
+            }
+            if cache.len() >= DECODED_KEPT {
+                cache.clear();
+            }
+            let blob = Blob::from(bitmap.to_rgba().into_owned());
+            cache.insert(blocks.id(), blob.clone());
+            blob
+        }),
+    }
+}
 
 fn stops(list: &[Stop]) -> Vec<ColorStop> {
     list.iter()
@@ -93,7 +126,7 @@ pub fn encode(list: &DisplayList, scene: &mut Scene) {
                 smooth,
             } => {
                 let data = ImageData {
-                    data: bitmap.rgba.clone(),
+                    data: rgba_blob(bitmap),
                     format: ImageFormat::Rgba8,
                     alpha_type: ImageAlphaType::Alpha,
                     width: bitmap.width,
@@ -109,6 +142,20 @@ pub fn encode(list: &DisplayList, scene: &mut Scene) {
                         .with_quality(quality)
                         .with_alpha(*alpha),
                     *transform,
+                );
+            }
+            Command::Disc {
+                center,
+                radius,
+                paint,
+                transform,
+            } => {
+                scene.fill(
+                    vello::peniko::Fill::NonZero,
+                    *transform,
+                    &brush(paint),
+                    None,
+                    &Circle::new(*center, *radius),
                 );
             }
             Command::PushLayer {

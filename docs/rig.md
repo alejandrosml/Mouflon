@@ -1,9 +1,12 @@
 # Dessiner un personnage pour Mouflon
 
 Un personnage Mouflon est un **dessin SVG découpé en calques nommés**. Le
-moteur anime ces calques lui-même (démarche, écrasement à l'atterrissage,
-regard, respiration, clignements, oreilles qui suivent le mouvement) : tu
-dessines une seule pose de profil, il fait le reste.
+moteur anime ces calques lui-même : marche au pas (un pied après l'autre, les
+sabots posés sans glisser) et galop par bonds, couché (l'avant se plie
+d'abord, il se relève par l'arrière), sommeil, broutage la tête au sol,
+sauts les pattes repliées, atterrissage, regard, respiration, clignements,
+oreilles qui frémissent et queue qui bat de temps en temps. Tu dessines une
+seule pose de profil, il fait le reste.
 
 Le vectoriel n'a pas de résolution : dessine à la taille qui te convient, le
 moteur le met à l'échelle (`height` dans `pet.toml`) et il reste net sur
@@ -27,13 +30,13 @@ Toutes sont facultatives.
 | `id` du groupe | Ce que le moteur en fait | Pivot attendu |
 |---|---|---|
 | `body` | écrasement, respiration, rebond de la marche, éclairage dynamique | bas du corps |
-| `head` | regard, inclinaison, tête qui tombe en dormant | cou |
-| `ear-near`, `ear-far` | battent en tombant, rebondissent à l'atterrissage | base de l'oreille |
+| `head` | regard, hochement au pas, tête basse en dormant, au sol pour brouter | cou |
+| `ear-near`, `ear-far` | battent en tombant, frémissent, tombent en dormant | base de l'oreille |
 | `eyes` (dans `head`) | clignements, yeux fermés en dormant | centre des yeux |
 | `pupils` (dans `eyes`) | suivent le curseur | — |
-| `tail` | balancement | base de la queue |
-| `leg-front-near`, `leg-back-near` | cycle de marche et de course, pattes repliées assis | hanche ou épaule |
-| `leg-front-far`, `leg-back-far` | idem, en opposition de phase | hanche ou épaule |
+| `tail` | balancement, coups de queue | base de la queue |
+| `leg-front-near`, `leg-back-near` | pas, galop, sauts, pattes repliées couché | hanche ou épaule |
+| `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
 
 `near` = côté visible (devant le corps), `far` = côté caché (derrière le corps).
 
@@ -88,7 +91,8 @@ même fichier, avec leurs durées et leurs enchaînements pondérés.
 cargo run -p mouflon-preview --release -- mouton/pet.toml apercu poses
 ```
 
-produit `apercu/poses.png` : debout, marche, atterrissage, saut, tenu, sommeil.
+produit `apercu/poses.png` : debout, marche, atterrissage, saut, tenu,
+sommeil, couché, broute, galop.
 Avec `video` à la place de `poses`, tu obtiens les images d'une petite scène
 de bureau à 60 i/s (à assembler avec ffmpeg).
 

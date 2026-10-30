@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{Input, LANDING_REACH, Pet, PetEvent, Support};
 use crate::def::{Motion, Rules, Transition};
-use crate::math::Vec2;
+use crate::math::{Vec2, approach};
 use crate::world::{Surface, SurfaceKind, World};
 
 /// Sous cet écart avec le sol, l'animal s'y pose au lieu de tomber (desktopPet : 3 pixels).
@@ -136,7 +136,7 @@ impl Pet {
             } else {
                 if support.is_some() {
                     // Il descend du rebord : il le traverse.
-                    self.detach();
+                    self.detach_by_script();
                     support = None;
                 }
                 if let Some(w) = self.ledge_crossed(world, dy)
@@ -147,7 +147,7 @@ impl Pet {
             }
         } else if dy < 0.0 {
             if support.is_some() {
-                self.detach();
+                self.detach_by_script();
                 support = None;
             }
             let head = self.pos.y - p.height;
@@ -189,6 +189,9 @@ impl Pet {
         }
 
         self.pos += Vec2::new(dx, dy);
+        if let Some(s) = support {
+            self.glide(dt, world, &s);
+        }
 
         // Son centre a dépassé le bout de la surface : il quitte un rebord ;
         // au sol, il passe sur l'écran voisin (et en descend s'il est plus bas).
@@ -213,6 +216,14 @@ impl Pet {
                 }
             }
         }
+    }
+
+    /// Son animation le fait quitter le sol (il grimpe, saute, descend du
+    /// rebord) : elle continue de le mener, il ne tombe pas sous la
+    /// pesanteur comme un animal que plus rien ne porte.
+    fn detach_by_script(&mut self) {
+        self.detach();
+        self.free_fall = false;
     }
 
     /// Arrêté contre un bord en allant dans le sens `dir` : il se retourne
@@ -259,7 +270,35 @@ impl Pet {
     /// Arrivée sur une surface en descendant : la réaction vient de `on_land`
     /// (le sol et les fenêtres peuvent avoir des suites différentes). Renvoie
     /// `true` si l'animal a changé d'animation.
-    fn land_script(&mut self, surface: &Surface, speed: f32, world: &World, input: &Input) -> bool {
+    /// L'élan d'un atterrissage s'épuise sur le sol : il glisse un peu, sans
+    /// quitter l'écran ni le rebord où il s'est posé.
+    fn glide(&mut self, dt: f32, world: &World, surface: &Surface) {
+        if self.slide == 0.0 {
+            return;
+        }
+        let half = self.def.physics.width * 0.5;
+        let arena = world.arena();
+        let (mut lo, mut hi) = (arena.left() + half, arena.right() - half);
+        if surface.kind == SurfaceKind::Window {
+            (lo, hi) = (lo.max(surface.x0), hi.min(surface.x1));
+        }
+        let x = self.pos.x + self.slide * dt;
+        let held = x.clamp(lo.min(self.pos.x), hi.max(self.pos.x));
+        self.pos.x = held;
+        self.slide = if held == x {
+            approach(self.slide, 0.0, self.def.physics.ground_friction * dt)
+        } else {
+            0.0
+        };
+    }
+
+    pub(super) fn land_script(
+        &mut self,
+        surface: &Surface,
+        speed: f32,
+        world: &World,
+        input: &Input,
+    ) -> bool {
         let before = (self.support, self.ground_ref, self.walking_off);
         // Les conditions « sur le sol » ou « sur une fenêtre » portent sur la surface d'arrivée.
         self.set_ground(surface);
@@ -306,6 +345,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK).round() as usize {
             pet.step(TICK, world, &input);
@@ -541,6 +581,7 @@ mod tests {
                 &Input {
                     cursor: None,
                     local_hour: 15.0,
+                    ..Input::default()
                 },
             );
             max_pets = max_pets.max(flock.pets().len());

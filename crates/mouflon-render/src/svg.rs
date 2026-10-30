@@ -246,6 +246,21 @@ impl Writer {
                     matrix(*transform)
                 );
             }
+            Command::Disc {
+                center,
+                radius,
+                paint,
+                transform,
+            } => {
+                let (fill, opacity) = self.paint(paint, None);
+                let _ = write!(
+                    self.body,
+                    r#"<circle cx="{:.4}" cy="{:.4}" r="{radius:.4}" transform="{}" fill="{fill}" fill-opacity="{opacity:.4}"/>"#,
+                    center.x,
+                    center.y,
+                    matrix(*transform)
+                );
+            }
             Command::PushLayer {
                 clip,
                 transform,

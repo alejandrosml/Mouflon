@@ -11,15 +11,25 @@ mod i18n;
 mod icon;
 mod library;
 mod menu;
+mod quick;
 mod settings;
+mod settings_window;
+mod stats;
+mod watch;
 
 use winit::event_loop::EventLoop;
+
+/// L'allocateur du système, qui compte les allocations pendant les essais
+/// (une lecture atomique par allocation le reste du temps).
+#[global_allocator]
+static ALLOCATOR: mouflon_platform::CountingAlloc = mouflon_platform::CountingAlloc;
 
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("warn,mouflon=info,mouflon_core=info,mouflon_render=info"),
     )
+    .format_timestamp_millis()
     .init();
 
     let paths = settings::Paths::new();
@@ -27,8 +37,13 @@ fn main() {
         .as_ref()
         .map(|p| settings::Settings::load(&p.settings))
         .unwrap_or_default();
+    // Les images prêtes se projettent en mémoire depuis le disque.
+    let images = paths.as_ref().map(|p| {
+        mouflon_render::cache::Store::new(&p.images).opened_with(mouflon_platform::map_file)
+    });
     let mut library = library::Library::load(
         paths.as_ref().map(|p| p.pets.as_path()),
+        images,
         settings.size_factor(),
     );
     // `mouflon chemin/vers/animal…` : charge ces animaux en plus et lance le
@@ -67,4 +82,12 @@ fn main() {
     if let Err(e) = event_loop.run_app(&mut app) {
         log::error!("{e}");
     }
+    app.shutdown();
+    // On sort sans détruire les fenêtres des animaux une à une : ce sont des
+    // panneaux dont la classe a changé après leur création, et AppKit, en
+    // les libérant, échoue à défaire certaines de ses observations internes
+    // (NSRangeException, l'app « quitte de manière imprévue »). Elles sont
+    // toutes gardées (`keep_pet_window`) ; le système reprend tout à la
+    // sortie du processus.
+    std::process::exit(0);
 }

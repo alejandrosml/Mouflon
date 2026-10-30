@@ -28,7 +28,8 @@ use roxmltree::{Document, Node};
 
 use crate::def::{
     Appearance, Behavior, ChildSpawn, Condition, Duration, Motion, PetDef, PetMeta, Physics,
-    Reflexes, Rules, Script, SpawnPoint, SpriteClip, SpriteSheet, Transition, png_size,
+    Reflexes, Rules, Script, Sound, SoundCue, SpawnPoint, SpriteClip, SpriteSheet, Transition,
+    png_size,
 };
 use crate::expr::Expr;
 use crate::format::LoadError;
@@ -358,14 +359,19 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         .filter(|(w, h)| *w > 0 && *h > 0);
 
     let mut sheet = match overrides.sprites {
-        Some(sheet) => SpriteSheet { skins, ..sheet },
+        // Les images intermédiaires valent pour une seule variante de couleur.
+        Some(sheet) => SpriteSheet {
+            skins,
+            inbetweens: sheet.inbetweens.filter(|_| skins <= 1),
+            ..sheet
+        },
         None => SpriteSheet {
             key_color: text(image, "transparency").as_deref().and_then(key_color),
             skins,
             ..SpriteSheet::single(
-                Arc::from(original.ok_or_else(|| {
-                    LoadError::Xml("l'image <png> est absente ou illisible".into())
-                })?),
+                original
+                    .ok_or_else(|| LoadError::Xml("l'image <png> est absente ou illisible".into()))?
+                    .into(),
                 tiles_x,
                 tiles_y,
             )
@@ -389,9 +395,10 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
     }
     // Taille affichée par rapport à la planche d'origine : les déplacements suivent.
     let k = original_tile.map_or(1.0, |(w, _)| width / w as f32);
+    // Les expressions du fichier parlent en pixels de ses images d'origine.
     let reference = Reference {
-        image_w: f64::from(width),
-        image_h: f64::from(height),
+        image_w: f64::from(width / k),
+        image_h: f64::from(height / k),
     };
 
     // Animations.
@@ -622,7 +629,26 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
                 opacity_end: a.end.opacity,
             }),
             children: own_children,
+            sounds: Vec::new(),
+            // `sleep1a`, `sleep2a`… : il dort ; la suite (`sleep1b`) le réveille.
+            sleeping: names[i].contains("sleep"),
         });
+    }
+
+    // Une animation de sommeil qui ne vient qu'après une autre (`sleep1b`
+    // après `sleep1a`) est son réveil : l'animal n'y dort plus.
+    let waking: Vec<usize> = (0..behaviors.len())
+        .filter(|&i| behaviors[i].sleeping)
+        .filter(|&i| {
+            let mut from = behaviors
+                .iter()
+                .filter(|b| b.next.iter().any(|t| t.to == i))
+                .peekable();
+            from.peek().is_some() && from.all(|b| b.sleeping)
+        })
+        .collect();
+    for i in waking {
+        behaviors[i].sleeping = false;
     }
 
     // Animations réservées ; desktopPet se rabat sur l'animation 1.
@@ -660,6 +686,15 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         window_side: Vec::new(),
         leave: reserved("kill"),
         together: reserved("sync"),
+        startle: Vec::new(),
+        // L'utilisateur parti, il s'endort : la première animation de sommeil.
+        sleepy: named("sleep1a")
+            .or_else(|| raws.iter().position(|r| r.name.contains("sleep")))
+            .map(one)
+            .unwrap_or_default(),
+        // Réveillé : la suite de son sommeil (`sleep1a` → `sleep1b`).
+        wake: Vec::new(),
+        wind: Vec::new(),
     };
     // L'animation `toss` de desktopPet fait déjà tourner l'animal sur lui-même.
     sheet.drawn.roll = named("toss").is_some();
@@ -711,6 +746,36 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
     )?;
     def.set_spawns(spawns)?;
     def.rules = Rules::DesktopPet;
+    def.unit = k;
+
+    // Sons (MP3) : chacun joué au début de son animation, selon sa probabilité (%).
+    let mut sounds = Vec::new();
+    if let Some(list) = element(root, "sounds") {
+        for node in elements(list, "sound") {
+            let Some(&behavior) = node
+                .attribute("animationid")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .and_then(|id| index.get(&id))
+            else {
+                continue;
+            };
+            let Some(mp3) = text(node, "base64").and_then(|t| decode_base64(&t).ok()) else {
+                continue;
+            };
+            let chance = number::<f32>(node, "probability").unwrap_or(100.0);
+            def.behaviors[behavior].sounds.push(SoundCue {
+                sound: sounds.len(),
+                chance: (chance / 100.0).clamp(0.0, 1.0),
+                frame: None,
+            });
+            sounds.push(Sound {
+                name: def.behaviors[behavior].name.clone(),
+                clips: vec![Arc::from(mp3)],
+                volume: 1.0,
+            });
+        }
+    }
+    def.set_sounds(sounds)?;
     Ok(def)
 }
 
@@ -865,6 +930,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reads_the_sounds_of_its_animations() {
+        let mp3 = base64::engine::general_purpose::STANDARD.encode(b"ID3 bee");
+        let xml = sample().replace(
+            "  <childs>",
+            &format!(
+                "  <sounds><sound animationid=\"8\"><probability>40</probability><loop>0</loop>\
+                 <base64>{mp3}</base64></sound></sounds>\n  <childs>"
+            ),
+        );
+        let def = import(&xml).unwrap();
+        assert_eq!(def.sounds.len(), 1);
+        assert_eq!(&*def.sounds[0].clips[0], b"ID3 bee");
+        let eat = behavior(&def, "eat");
+        assert_eq!(eat.sounds.len(), 1);
+        assert!((eat.sounds[0].chance - 0.4).abs() < 1e-6);
+        assert_eq!(eat.sounds[0].frame, None);
+        assert!(behavior(&def, "drag").sounds.is_empty());
+    }
+
+    #[test]
     fn only_rules_follow_desktoppet() {
         assert!(Only::None.matches(Only::Window));
         assert!(Only::HorizontalPlus.matches(Only::Taskbar));
@@ -883,7 +968,7 @@ pub(crate) mod tests {
         // Planche quatre fois plus fine, affichée à 50 % : tout est deux fois plus grand.
         let sprites = SpriteSheet {
             scale: 0.5,
-            ..SpriteSheet::single(Arc::from(png_header(32, 16)), 2, 1)
+            ..SpriteSheet::single(png_header(32, 16).into(), 2, 1)
         };
         let overrides = Overrides {
             meta: None,
@@ -900,6 +985,111 @@ pub(crate) mod tests {
             behavior(&def, "fall soft").clip.as_ref().unwrap().offset_y,
             2.0
         );
+    }
+
+    /// La scène du bain d'eSheep : le mouton arrive en diagonale du bord
+    /// droit de l'écran et plonge dans une baignoire posée au sol (un
+    /// personnage secondaire). Le nombre de pas de chaque partie est calculé
+    /// d'après la taille de l'écran et des images du fichier (40 pixels).
+    fn bath() -> String {
+        let png = base64::engine::general_purpose::STANDARD.encode(png_header(80, 40));
+        let still = |id: u32, name: &str, extra: &str| {
+            format!(
+                r#"<animation id="{id}"><name>{name}</name>
+      <start><x>0</x><y>0</y><interval>100</interval></start><end><x>0</x><y>0</y><interval>100</interval></end>
+      {extra}
+    </animation>"#
+            )
+        };
+        let animations = [
+            still(1, "stand", r#"<sequence repeat="20" repeatfrom="0"><frame>0</frame><next probability="100">1</next></sequence>"#),
+            still(7, "drag", r#"<sequence repeat="0" repeatfrom="0"><frame>0</frame><next probability="100">1</next></sequence>"#),
+            r#"<animation id="5"><name>fall</name>
+      <start><x>0</x><y>1</y><interval>100</interval></start><end><x>0</x><y>10</y><interval>40</interval></end>
+      <sequence repeat="20" repeatfrom="0"><frame>1</frame><next probability="100">5</next></sequence>
+      <border><next probability="100">1</next></border>
+    </animation>"#.to_owned(),
+            r#"<animation id="21"><name>batha</name>
+      <start><x>-2</x><y>2</y><interval>30</interval></start><end><x>-2</x><y>2</y><interval>30</interval></end>
+      <sequence repeatfrom="0" repeat="(areaH/2+(randS*areaH/2)/120-imageH-68)/2"><frame>0</frame><next probability="100" only="none">22</next></sequence>
+    </animation>"#.to_owned(),
+            r#"<animation id="22"><name>bathb</name>
+      <start><x>-2</x><y>2</y><interval>30</interval></start><end><x>-2</x><y>2</y><interval>32</interval></end>
+      <sequence repeatfrom="0" repeat="10"><frame>0</frame><frame>0</frame><frame>0</frame><frame>0</frame><frame>1</frame><next probability="100" only="none">47</next></sequence>
+      <border><next probability="100" only="none">47</next></border>
+    </animation>"#.to_owned(),
+            still(47, "bathc", r#"<sequence repeat="0" repeatfrom="0"><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><next probability="100">1</next></sequence>"#),
+            r#"<animation id="23"><name>bathw</name>
+      <start><x>0</x><y>0</y><interval>30</interval></start><end><x>0</x><y>0</y><interval>30</interval></end>
+      <sequence repeatfrom="0" repeat="(areaH/2+(randS*areaH/2)/120-imageH-10)/2"><frame>1</frame><next probability="100" only="none">24</next></sequence>
+    </animation>"#.to_owned(),
+            r#"<animation id="24"><name>bathz</name>
+      <start><x>0</x><y>0</y><interval>30</interval></start><end><x>0</x><y>0</y><interval>50</interval></end>
+      <sequence repeatfrom="20" repeat="5"><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame><frame>1</frame></sequence>
+    </animation>"#.to_owned(),
+        ]
+        .join("\n    ");
+        format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<animations xmlns="https://esheep.petrucci.ch/">
+  <header><author>Test</author><title>Bath</title><petname>Bath</petname><version>1</version><info>-</info></header>
+  <image><tilesx>2</tilesx><tilesy>1</tilesy><png><![CDATA[{png}]]></png><transparency>Magenta</transparency></image>
+  <spawns>
+    <spawn id="1" probability="100"><x>screenW+10</x><y>areaH/2-(randS*areaH/2)/120-imageH</y><next probability="0">21</next></spawn>
+  </spawns>
+  <animations>
+    {animations}
+  </animations>
+  <childs>
+    <child animationid="21"><x>screenW+10-areaH/2-(randS*areaH/2)/120</x><y>areaH-imageH</y><next>23</next></child>
+  </childs>
+</animations>"#
+        )
+    }
+
+    #[test]
+    fn the_sheep_dives_into_the_tub_at_any_size() {
+        use crate::math::Rect;
+        use crate::pet::{Flock, Input, Pet, TICK};
+        use crate::world::{Screen, World};
+        let world = World::new(vec![Screen {
+            frame: Rect::new(0.0, 0.0, 1440.0, 900.0),
+            usable: Rect::new(0.0, 25.0, 1440.0, 810.0),
+            scale: 2.0,
+        }]);
+        // Les cases font 40 pixels : la scène est réglée pour cette taille.
+        // Affichée deux ou trois fois plus grande, elle doit rester juste.
+        for (size, seed) in [(1.0f32, 3), (2.0, 5), (2.0, 11), (3.0, 7)] {
+            let def = Arc::new(import(&bath()).unwrap().scaled(size));
+            let mut flock = Flock::new();
+            flock.spawn(def, seed, &world, None);
+            let mut tub: Option<f32> = None;
+            let mut landed = None;
+            for _ in 0..(60.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+                let pets = flock.pets();
+                if let Some(child) = pets.iter().find(|p| p.is_child()) {
+                    tub = Some(child.position().x);
+                }
+                let sheep = pets.iter().find(|p| !p.is_child()).unwrap();
+                if sheep.behavior_name() == "bathc" {
+                    landed = Some((sheep.position(), pets.iter().any(Pet::is_child)));
+                    break;
+                }
+            }
+            let (sheep, tub_there) =
+                landed.unwrap_or_else(|| panic!("taille {size} : pas de bain"));
+            let tub = tub.expect("une baignoire");
+            assert!(
+                (sheep.x - tub).abs() <= 3.0 * size,
+                "taille {size} : mouton en {}, baignoire en {tub}",
+                sheep.x
+            );
+            assert!(
+                tub_there,
+                "taille {size} : la baignoire est partie avant le plongeon"
+            );
+        }
     }
 
     #[test]

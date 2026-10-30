@@ -3,14 +3,18 @@
 use std::sync::Arc;
 
 use mouflon_core::{
-    Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Support, Vec2 as CoreVec2,
+    Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Shadow, Support,
+    Vec2 as CoreVec2,
 };
-use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
+use vello::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use vello::peniko::{Color, Extend, Fill, Mix};
 
 use crate::animate::{PoseTransforms, pose};
+use crate::bake::BakedRig;
+use crate::cache;
 use crate::display::{Command, DisplayList, Paint, Stop, rgba};
 use crate::rig::{Item, Part, Rig, RigError};
+use crate::skeleton::{SkeletonArt, SkeletonArtError, paint_skeleton};
 use crate::sprites::{SpriteError, SpriteFrames};
 
 #[derive(Debug, thiserror::Error)]
@@ -19,6 +23,8 @@ pub enum ArtError {
     Rig(#[from] RigError),
     #[error(transparent)]
     Sprites(#[from] SpriteError),
+    #[error(transparent)]
+    Skeleton(#[from] SkeletonArtError),
 }
 
 /// Apparence prête à dessiner.
@@ -26,6 +32,7 @@ pub enum ArtError {
 pub enum Look {
     Rig(Arc<Rig>),
     Sprites(Arc<SpriteFrames>),
+    Skeleton(Arc<SkeletonArt>),
 }
 
 #[derive(Clone, Debug)]
@@ -39,10 +46,20 @@ pub struct PetArt {
     /// Corps de l'animal, en points : demi-largeur et hauteur au-dessus du
     /// point d'appui (le curseur l'attrape là, les clics passent ailleurs).
     pub body: (f32, f32),
-    /// Point de prise par rapport au point d'appui, tourné vers la gauche.
-    pub hold: Option<CoreVec2>,
     /// Effets déjà dessinés dans les images.
     pub drawn: Drawn,
+    /// Dessin vectoriel cuit en images (voir [`crate::bake`]) : le rendu
+    /// direct le pose sans Vello. `None` : tracés dessinés tels quels.
+    pub baked: Option<Arc<BakedRig>>,
+    /// Distance parcourue pendant un cycle de marche (points) : les pattes
+    /// d'un dessin vectoriel balaient juste ce qu'il faut pour ne pas glisser.
+    pub stride: f32,
+    /// Clé des planches au moment où elles ont été lues (voir
+    /// [`cache::key`]) : les images gardées sur le disque portent celle des
+    /// planches dont elles viennent, même si un fichier change entre-temps.
+    sheet_key: Option<u64>,
+    /// Images reprises telles quelles du disque.
+    from_cache: bool,
 }
 
 /// Fenêtre d'un animal : taille en points et position du point d'appui.
@@ -55,23 +72,60 @@ pub struct Canvas {
 
 impl PetArt {
     pub fn load(def: &PetDef) -> Result<Self, ArtError> {
+        Self::load_cached(def, None)
+    }
+
+    /// Comme [`Self::load`], en reprenant d'abord les images déjà prêtes
+    /// gardées dans `cache` (voir [`crate::cache`]).
+    pub fn load_cached(def: &PetDef, cache: Option<&cache::Store>) -> Result<Self, ArtError> {
         match &def.appearance {
             Appearance::Rig { svg, height } => {
                 let rig = Rig::parse(svg)?;
                 let k = f64::from(*height) / rig.bounds.height().max(1.0);
                 let width = (rig.bounds.width() * k) as f32;
+                let lighting = 0.6;
+                let baked = BakedRig::bake(&rig, k, lighting).map(Arc::new);
                 Ok(Self {
                     width,
                     height: *height,
                     look: Look::Rig(Arc::new(rig)),
-                    lighting: 0.6,
+                    lighting,
                     body: (width * 0.46, *height * 1.02),
-                    hold: None,
                     drawn: Drawn::default(),
+                    baked,
+                    stride: def.stride(),
+                    sheet_key: None,
+                    from_cache: false,
+                })
+            }
+            Appearance::Skeleton { skeleton, height } => {
+                let art = SkeletonArt::load(Arc::clone(skeleton), *height)?;
+                let k = f64::from(*height) / art.bounds.height().max(1.0);
+                let width = (art.bounds.width() * k) as f32;
+                Ok(Self {
+                    width,
+                    height: *height,
+                    look: Look::Skeleton(Arc::new(art)),
+                    lighting: 0.0,
+                    body: (width * 0.46, *height * 1.02),
+                    drawn: Drawn::default(),
+                    baked: None,
+                    stride: def.stride(),
+                    sheet_key: None,
+                    from_cache: false,
                 })
             }
             Appearance::Sprites(sheet) => {
-                let frames = SpriteFrames::decode(sheet)?;
+                let sheet_key = cache.and_then(|_| cache::key(sheet));
+                let kept = cache.zip(sheet_key).and_then(|(store, key)| {
+                    let path = cache::path(&store.dir, &def.meta.id, sheet);
+                    cache::load(store, &path, key, sheet)
+                });
+                let from_cache = kept.is_some();
+                let frames = match kept {
+                    Some(frames) => frames,
+                    None => SpriteFrames::decode(sheet)?,
+                };
                 let p = def.physics;
                 Ok(Self {
                     width: frames.tile_width as f32 * sheet.scale,
@@ -79,10 +133,72 @@ impl PetArt {
                     look: Look::Sprites(Arc::new(frames)),
                     lighting: 0.0,
                     body: (p.width * 0.46, p.height * 1.02),
-                    hold: p.hold,
                     drawn: sheet.drawn,
+                    baked: None,
+                    stride: def.stride(),
+                    sheet_key,
+                    from_cache,
                 })
             }
+        }
+    }
+
+    /// Images reprises telles quelles du disque (voir [`crate::cache`]).
+    #[must_use]
+    pub fn from_cache(&self) -> bool {
+        self.from_cache
+    }
+
+    /// Des images restent-elles à compresser (voir
+    /// [`SpriteFrames::compressible`]) ?
+    #[must_use]
+    pub fn compressible(&self) -> bool {
+        matches!(&self.look, Look::Sprites(frames) if frames.compressible())
+    }
+
+    /// Octets qu'occupent les images d'un animal en images.
+    #[must_use]
+    pub fn image_bytes(&self) -> usize {
+        match &self.look {
+            Look::Sprites(frames) => frames.byte_size(),
+            Look::Skeleton(art) => art.byte_size(),
+            Look::Rig(_) => 0,
+        }
+    }
+
+    /// Le même dessin, images compressées en BC7 sur `threads` fils (voir
+    /// [`SpriteFrames::compressed`]) ; `None` s'il n'y a rien à compresser.
+    #[must_use]
+    pub fn compressed(&self, threads: usize, setup: &(dyn Fn() + Sync)) -> Option<Self> {
+        let Look::Sprites(frames) = &self.look else {
+            return None;
+        };
+        if !frames.compressible() {
+            return None;
+        }
+        Some(Self {
+            look: Look::Sprites(Arc::new(frames.compressed(threads, setup))),
+            ..self.clone()
+        })
+    }
+
+    /// Garde les images dans `cache` pour les prochains lancements.
+    pub fn keep(&self, def: &PetDef, cache: &cache::Store) -> std::io::Result<()> {
+        let (Look::Sprites(frames), Appearance::Sprites(sheet), Some(key)) =
+            (&self.look, &def.appearance, self.sheet_key)
+        else {
+            return Ok(());
+        };
+        cache::save(&cache::path(&cache.dir, &def.meta.id, sheet), key, frames)
+    }
+
+    /// Place du dessin devant et derrière son point d'appui (points), pour
+    /// un animal en images ; un dessin vectoriel suit sa largeur physique.
+    #[must_use]
+    pub fn reach(&self) -> Option<(f32, f32)> {
+        match &self.look {
+            Look::Sprites(frames) => frames.reach(),
+            Look::Rig(_) | Look::Skeleton(_) => None,
         }
     }
 
@@ -149,11 +265,37 @@ pub fn paint_pet(
     match &art.look {
         Look::Rig(rig) => paint_rig(rig, art, view, world, out),
         Look::Sprites(frames) => paint_sprite(art, frames, view, world, out),
+        Look::Skeleton(skeleton) => {
+            // Points par pixel de la toile.
+            let k = f64::from(art.height) / skeleton.bounds.height().max(1.0);
+            let pose = skeleton.pose(&view.pose, view.facing, f64::from(art.stride) / k);
+            paint_skeleton(
+                skeleton,
+                &pose,
+                view.pose.blink,
+                world,
+                pt(view.ground),
+                k,
+                out,
+            );
+        }
     }
     if layered {
         out.pop_layer();
     }
     paint_particles(view.particles, world, style, out);
+}
+
+/// L'ombre que Mouflon dessine sous l'animal, s'il en dessine une, avec sa
+/// force : 1 au sol, de moins en moins en l'air, rien au-delà de 288 points.
+fn drawn_shadow(art: &PetArt, view: &PetView<'_>) -> Option<(Shadow, f32)> {
+    let shadow = view.shadow?;
+    // Les images dessinent déjà leur ombre au sol : la nôtre ne sert qu'en l'air.
+    if art.drawn.shadow && matches!(view.support, Support::Ground { .. }) {
+        return None;
+    }
+    let near = (1.0 - (shadow.distance.max(0.0) / 320.0).min(1.0)).powi(2);
+    (near >= 0.01).then_some((shadow, near))
 }
 
 fn paint_shadow(
@@ -163,15 +305,9 @@ fn paint_shadow(
     style: &Style,
     out: &mut DisplayList,
 ) {
-    let Some(shadow) = view.shadow else { return };
-    // Les images dessinent déjà leur ombre au sol : la nôtre ne sert qu'en l'air.
-    if art.drawn.shadow && matches!(view.support, Support::Ground { .. }) {
+    let Some((shadow, near)) = drawn_shadow(art, view) else {
         return;
-    }
-    let near = (1.0 - (shadow.distance.max(0.0) / 320.0).min(1.0)).powi(2);
-    if near < 0.01 {
-        return;
-    }
+    };
     let strength = if style.dark { 0.42 } else { 0.27 } * view.opacity.clamp(0.0, 1.0);
     let body_width = art.body.0 / 0.46;
     let w = f64::from(body_width * (0.5 + 0.36 * near) * (1.0 + 0.2 * view.pose.squash.max(0.0)));
@@ -204,8 +340,8 @@ fn paint_shadow(
 }
 
 fn paint_rig(rig: &Rig, art: &PetArt, view: &PetView<'_>, world: Affine, out: &mut DisplayList) {
-    let poses: PoseTransforms = pose(rig, &view.pose, view.facing);
     let k = f64::from(art.height) / rig.bounds.height().max(1.0);
+    let poses: PoseTransforms = pose(rig, &view.pose, view.facing, f64::from(art.stride) / k);
     let base = world
         * Affine::translate(pt(view.ground).to_vec2())
         * Affine::scale(k)
@@ -214,15 +350,35 @@ fn paint_rig(rig: &Rig, art: &PetArt, view: &PetView<'_>, world: Affine, out: &m
     let canvas = out.bounds().to_path(0.1);
     let mut stack: Vec<Affine> = vec![base];
     let mut parts: Vec<Part> = Vec::new();
-    for item in &rig.items {
+    let baked = art.baked.as_deref();
+    for (index, item) in rig.items.iter().enumerate() {
         let top = *stack.last().unwrap_or(&base);
+        // Cuit : chaque suite de tracés d'une partie est une image posée d'un coup.
+        if let Some(baked) = baked
+            && matches!(item, Item::Fill { .. } | Item::Stroke { .. })
+        {
+            if let Some(piece) = baked.piece(index) {
+                // Retourné (déterminant négatif), le corps a son reflet de l'autre côté.
+                let bitmap = match &piece.mirrored {
+                    Some(mirrored) if top.determinant() < 0.0 => mirrored,
+                    _ => &piece.bitmap,
+                };
+                out.push(Command::Image {
+                    bitmap: bitmap.clone(),
+                    transform: top * piece.placement,
+                    alpha: 1.0,
+                    smooth: true,
+                });
+            }
+            continue;
+        }
         match item {
             Item::BeginPart(part) => {
                 stack.push(top * poses.part(*part));
                 parts.push(*part);
             }
             Item::EndPart => {
-                if parts.pop() == Some(Part::Body) && art.lighting > 0.0 {
+                if parts.pop() == Some(Part::Body) && art.lighting > 0.0 && baked.is_none() {
                     paint_lighting(rig, art, top, out);
                 }
                 stack.pop();
@@ -376,19 +532,20 @@ fn paint_sprite(
     }
     // En mouvement : écrasement depuis les pattes, balancement sous la main qui
     // le tient, inclinaison en vol, culbute, demi-tour qui pivote.
-    let facing = f64::from(view.facing.clamp(-1.0, 1.0)).signum();
-    let pivot = match (view.support, art.hold) {
-        (Support::Held, Some(hold)) => {
-            Point::new(g.x - f64::from(hold.x) * facing, g.y + f64::from(hold.y))
-        }
+    // Tenu, il se balance autour du point où le curseur le tient ; il roule
+    // (culbute, physique réaliste) autour du milieu de son corps.
+    let middle = Point::new(g.x, g.y - f64::from(art.body.1 / 1.02) * 0.5 + offset);
+    let pivot = match (view.support, view.grip) {
+        (Support::Held, Some(grip)) => pt(grip),
         (Support::Held, None) => {
             Point::new(g.x, g.y - f64::from(frames.tile_height) * s * 0.95 + offset)
         }
-        _ => Point::new(g.x, g.y - f64::from(art.body.1 / 1.02) * 0.5 + offset),
+        _ => middle,
     };
     let sx = motion.mirror.signum() * motion.mirror.abs().max(0.12) * (1.0 + 0.5 * motion.squash);
     let sy = 1.0 - motion.squash;
     let transform = world
+        * Affine::rotate_about(motion.roll, middle)
         * Affine::rotate_about(motion.angle, pivot)
         * Affine::translate((g.x, g.y + offset))
         * Affine::scale_non_uniform(sx, sy)
@@ -410,8 +567,11 @@ pub struct SpriteMotion {
     pub mirror: f64,
     /// > 0 : écrasé ; < 0 : étiré.
     pub squash: f64,
-    /// Rotation dans le repère de l'écran (radians, sens horaire).
+    /// Inclinaison et balancement dans le repère de l'écran (radians, sens
+    /// horaire), autour de la main qui le tient ou du milieu du corps.
     pub angle: f64,
+    /// Culbute, autour du milieu du corps.
+    pub roll: f64,
 }
 
 impl SpriteMotion {
@@ -423,10 +583,10 @@ impl SpriteMotion {
             Support::Held => f64::from(view.pose.swing) * 0.9,
             Support::Air => lean * 0.8,
             Support::Ground { .. } => lean * 0.3,
-        } + f64::from(view.pose.roll);
+        };
         let facings = match &art.look {
             Look::Sprites(frames) => frames.facings,
-            Look::Rig(_) => Facings::Right,
+            Look::Rig(_) | Look::Skeleton(_) => Facings::Right,
         };
         let mirror = match facings {
             // Les sprites desktopPet regardent vers la gauche.
@@ -444,14 +604,77 @@ impl SpriteMotion {
                 f64::from(view.pose.squash)
             },
             angle,
+            roll: f64::from(view.pose.roll),
         }
     }
 
-    /// Image au repos : on la dessine nette, au pixel près, et inutile de la
-    /// redessiner tant qu'elle ne change pas.
+    /// Image au repos : on la dessine nette, au pixel près.
     #[must_use]
     pub fn is_rest(&self) -> bool {
-        self.squash.abs() < 0.004 && self.angle.abs() < 0.003 && self.mirror.abs() > 0.999
+        self.squash.abs() < 0.004
+            && self.angle.abs() < 0.003
+            && self.roll.abs() < 0.003
+            && self.mirror.abs() > 0.999
+    }
+
+    /// Le mouvement au millième près : deux mouvements de même clé se
+    /// dessinent à moins d'un cinquième de pixel l'un de l'autre, même pour
+    /// une image de 320 pixels. Au repos, l'image se pose au pixel près quel
+    /// que soit ce qui reste du mouvement : une seule clé.
+    #[must_use]
+    pub fn key(&self) -> [i32; 4] {
+        let thousandths = |v: f64| (v * 1000.0).round() as i32;
+        if self.is_rest() {
+            return [thousandths(self.mirror.signum()), 0, 0, 0];
+        }
+        [
+            thousandths(self.mirror),
+            thousandths(self.squash),
+            thousandths(self.angle),
+            thousandths(self.roll),
+        ]
+    }
+}
+
+/// Ce qui change, à l'œil, l'image d'un animal en sprites. Son déplacement
+/// passe par la position de sa fenêtre : on ne le redessine que quand cette
+/// clé change, quelques fois par seconde au lieu de 120.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpriteKey {
+    frame: Option<u32>,
+    /// Décalage vertical de l'image, au quart de point.
+    offset: i32,
+    opacity: u8,
+    mirrored: bool,
+    /// L'ombre, tant qu'elle se voit : sa distance à l'animal au demi-point
+    /// (elle reste au sol quand la fenêtre bouge), son écrasement au millième.
+    shadow: Option<[i32; 2]>,
+    /// Le mouvement ajouté par Mouflon : une inclinaison qui ne change pas
+    /// (au plafond, contre un mur) ne fait rien redessiner.
+    motion: [i32; 4],
+}
+
+impl SpriteKey {
+    /// La clé de l'image de `view`, ou rien quand l'animal se redessine à
+    /// chaque image (dessin vectoriel, particules).
+    #[must_use]
+    pub fn of(art: &PetArt, view: &PetView<'_>) -> Option<Self> {
+        if !matches!(art.look, Look::Sprites(_)) || !view.particles.is_empty() {
+            return None;
+        }
+        Some(Self {
+            frame: view.sprite_frame,
+            offset: (view.sprite_offset_y * 4.0).round() as i32,
+            opacity: (view.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
+            mirrored: view.facing > 0.0,
+            shadow: drawn_shadow(art, view).map(|(shadow, _)| {
+                [
+                    (shadow.distance * 2.0).round() as i32,
+                    (view.pose.squash.max(0.0) * 1000.0).round() as i32,
+                ]
+            }),
+            motion: SpriteMotion::of(view, art).key(),
+        })
     }
 }
 
@@ -485,7 +708,7 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                     ],
                     extend: Extend::Pad,
                 };
-                out.fill(Circle::new(center, r).to_path(0.05), world, paint);
+                out.disc(center, r, world, paint);
             }
             ParticleKind::Bubble => {
                 let fade = smooth(0.0, 0.12, t) * (1.0 - smooth(0.72, 1.0, t));
@@ -495,8 +718,9 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                 } else {
                     rgba(120, 150, 210, 1.0)
                 };
-                out.fill(
-                    Circle::new(center, r).to_path(0.05),
+                out.disc(
+                    center,
+                    r,
                     world,
                     Paint::Radial {
                         start: center + (r * 0.25, r * 0.3),
@@ -521,11 +745,29 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                     },
                 );
                 let spark = center + (-r * 0.35, -r * 0.38);
-                out.fill(
-                    Circle::new(spark, r * 0.22).to_path(0.05),
+                out.disc(
+                    spark,
+                    r * 0.22,
                     world,
                     Paint::Solid(Color::WHITE.with_alpha(0.85 * fade as f32)),
                 );
+            }
+            ParticleKind::Leaf => {
+                // Une petite feuille d'automne qui tournoie.
+                let fade = smooth(0.0, 0.1, t) * (1.0 - smooth(0.75, 1.0, t));
+                let s = f64::from(p.size);
+                let turn = f64::from(p.phase) + t * 9.0;
+                // Cuite une fois pour toutes : le rendu direct la pose.
+                let Some(leaf) = crate::props::leaf((p.phase * 7.0) as usize) else {
+                    continue;
+                };
+                // Vue de profil une fois sur deux : elle s'aplatit en tournant.
+                let flat = 0.35 + 0.65 * (turn * 1.3).cos().abs();
+                let at = world
+                    * Affine::translate(center.to_vec2())
+                    * Affine::rotate(turn)
+                    * Affine::scale_non_uniform(s, s * flat);
+                out.push(leaf.draw(at, 0.9 * fade as f32));
             }
         }
     }

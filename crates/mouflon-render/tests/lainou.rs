@@ -27,17 +27,20 @@ fn lainou_loads_and_paints_both_ways() {
     let Look::Sprites(frames) = &art.look else {
         panic!("Lainou est fait d'images")
     };
-    // 245 images par sens, 256 px réduits à 192 (96 points sur un écran Retina).
-    assert_eq!(frames.frames.len(), 490);
+    // 245 images par sens, 256 px réduits à 192 (96 points sur un écran
+    // Retina), puis autant d'images intermédiaires, et deux de plus après
+    // chacune des quatre images de la chute (rapide).
+    assert_eq!(frames.frames.len(), 2 * 245 + 2 * (245 + 4 * 2));
     assert_eq!((art.width, art.height), (96.0, 96.0));
-    let bytes: usize = frames
-        .frames
-        .iter()
-        .map(|f| f.bitmap.rgba.data().len())
-        .sum();
+    let bytes: usize = frames.frames.iter().map(|f| f.bitmap.byte_size()).sum();
     eprintln!("{:.1} Mo d'images en mémoire", bytes as f64 / 1e6);
-    assert!(bytes < 40_000_000, "{bytes} octets");
+    assert!(bytes < 56_000_000, "{bytes} octets");
     assert!(frames.frames.iter().all(|f| f.bitmap.width <= 192));
+    // Ses sons : bêlements d'agneau, clochette, broutage, atterrissage.
+    let names: Vec<&str> = def.sounds.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["bele", "broute", "clochette", "pose"]);
+    let course = &def.behaviors[def.behavior_index("course").expect("course")];
+    assert_eq!(def.sounds[course.sounds[0].sound].name, "clochette");
 
     let world = world();
     let mut pet = Pet::spawn(0, Arc::clone(&def), 5, &world, Some(600.0));
@@ -86,26 +89,26 @@ fn lainou_loads_and_paints_both_ways() {
         );
     }
 
-    // Tenu par le curseur : la laine du dos sous le curseur, l'ombre de
-    // Mouflon au sol.
+    // Tenu par le curseur : pris par le dos et emporté plus haut, il reste
+    // pris au même endroit, avec l'ombre de Mouflon au sol.
+    let caught = pet.position() + Vec2::new(12.0, -40.0);
+    pet.grab(caught, &world);
     let cursor = Vec2::new(640.0, 600.0);
-    pet.grab(cursor, &world);
     for _ in 0..(3.0 / TICK) as usize {
         pet.drag_to(cursor);
         pet.step(TICK, &world, &input);
     }
     let view = pet.view(1.0);
-    let hold = def.physics.hold.expect("point de prise");
-    let held = view.ground + Vec2::new(-hold.x * view.facing, hold.y);
+    let held = view.ground + Vec2::new(12.0, -40.0);
     assert!(
-        (held - cursor).length() < 1.0,
-        "{:?} {:?} {} {:?} {}",
+        (held - cursor).length() < 1e-3,
+        "{:?} {:?} {:?} {}",
         view.ground,
         held,
-        view.facing,
         view.support,
         view.behavior
     );
+    assert_eq!(view.grip, Some(cursor));
     let canvas = art.canvas();
     let origin = view.ground - canvas.anchor;
     let mut list = DisplayList::new((canvas.width * 2.0) as u32, (canvas.height * 2.0) as u32);

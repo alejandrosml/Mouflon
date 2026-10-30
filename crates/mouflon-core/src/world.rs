@@ -101,6 +101,13 @@ pub struct World {
     walls: Vec<Wall>,
     arena: Rect,
     bounds: Rect,
+    /// Fenêtres et réglages d'où viennent les rebords et les côtés actuels
+    /// (`None` : à recalculer au prochain relevé).
+    windows: Vec<WindowRect>,
+    options: Option<LedgeOptions>,
+    /// Relevés des fenêtres reçus, même identiques au précédent : la
+    /// physique réaliste sait ainsi qu'une fenêtre n'a pas bougé.
+    polls: u64,
 }
 
 impl World {
@@ -127,6 +134,8 @@ impl World {
             .reduce(|a, b| a.union(&b))
             .unwrap_or_default();
         self.surfaces.retain(|s| s.kind != SurfaceKind::Floor);
+        // Les rebords dépendent des zones utiles : à refaire au prochain relevé.
+        self.options = None;
         for (i, screen) in self.screens.iter().enumerate() {
             self.surfaces.push(Surface {
                 id: FLOOR_ID_BIT | i as u64,
@@ -139,18 +148,77 @@ impl World {
     }
 
     /// Remplace les rebords et les côtés des fenêtres à partir de la liste
-    /// fournie par le système.
+    /// fournie par le système. Le relevé revient plusieurs fois par seconde,
+    /// le plus souvent à l'identique : rien n'est alors recalculé.
     pub fn set_windows(&mut self, windows: &[WindowRect], options: LedgeOptions) {
+        self.polls += 1;
+        if self.options == Some(options) && self.windows == windows {
+            return;
+        }
         let ledges = visible_ledges(windows, &self.screens, options);
         self.surfaces.retain(|s| s.kind == SurfaceKind::Floor);
         self.surfaces.extend(ledges);
         self.walls = visible_walls(windows);
+        self.windows.clear();
+        self.windows.extend_from_slice(windows);
+        self.options = Some(options);
     }
 
     /// Côtés visibles des fenêtres.
     #[must_use]
     pub fn walls(&self) -> &[Wall] {
         &self.walls
+    }
+
+    /// Les fenêtres du dernier relevé, au premier plan d'abord.
+    #[must_use]
+    pub fn windows(&self) -> &[WindowRect] {
+        &self.windows
+    }
+
+    /// Nombre de relevés des fenêtres reçus jusqu'ici.
+    #[must_use]
+    pub fn polls(&self) -> u64 {
+        self.polls
+    }
+
+    /// Devient une copie de `other`, en gardant la mémoire déjà allouée
+    /// (la physique réaliste en refait une à chaque pas).
+    pub(crate) fn copy_from(&mut self, other: &World) {
+        self.screens.clone_from(&other.screens);
+        self.surfaces.clone_from(&other.surfaces);
+        self.walls.clone_from(&other.walls);
+        self.windows.clone_from(&other.windows);
+        self.arena = other.arena;
+        self.bounds = other.bounds;
+        self.options = other.options;
+        self.polls = other.polls;
+    }
+
+    /// Déplace les rebords et les côtés de chaque fenêtre de ce que dit
+    /// `offset` (identifiant de la fenêtre → décalage, ou rien).
+    pub(crate) fn shift_windows(&mut self, offset: impl Fn(u64) -> Option<Vec2>) {
+        for surface in &mut self.surfaces {
+            if surface.kind == SurfaceKind::Window
+                && let Some(d) = offset(surface.id >> 8)
+            {
+                surface.x0 += d.x;
+                surface.x1 += d.x;
+                surface.y += d.y;
+            }
+        }
+        for wall in &mut self.walls {
+            if let Some(d) = offset(wall.window) {
+                wall.x += d.x;
+                wall.y0 += d.y;
+                wall.y1 += d.y;
+            }
+        }
+    }
+
+    /// Ajoute une surface (le dos d'un animal, en physique réaliste).
+    pub(crate) fn push_surface(&mut self, surface: Surface) {
+        self.surfaces.push(surface);
     }
 
     /// Premier côté de fenêtre que franchit l'avant d'un animal qui va de
@@ -320,6 +388,34 @@ pub fn visible_ledges(
     out
 }
 
+/// Identifiant du Dock quand il est traité comme une fenêtre (voir [`exact_dock`]).
+pub const DOCK_ID: u64 = 1 << 40;
+
+/// Le Dock tel qu'il est. Quand il est en bas d'un écran (la zone utile de
+/// cet écran s'arrête au-dessus de lui) et moins large que l'écran, le sol
+/// de cet écran descend jusqu'en bas, de part et d'autre du Dock, et le
+/// Dock devient une fenêtre posée devant les autres : on marche dessus, on
+/// tombe de ses bouts, on bute contre ses côtés. Renvoie cette fenêtre, à
+/// placer en tête de la liste des fenêtres ; rien pour un Dock sur le côté,
+/// masqué automatiquement ou sur toute la largeur.
+pub fn exact_dock(screens: &mut [Screen], dock: Rect) -> Option<WindowRect> {
+    let center = dock.center();
+    let screen = screens.iter_mut().find(|s| s.frame.contains(center))?;
+    let strip = screen.frame.bottom() - screen.usable.bottom();
+    // Dock en bas : une bande réservée sous la zone utile, où il se trouve.
+    let at_bottom = strip > 1.0
+        && dock.top() >= screen.usable.bottom() - dock.h * 0.5
+        && dock.bottom() <= screen.frame.bottom() + 1.0;
+    if !at_bottom || dock.w >= screen.frame.w - 1.0 {
+        return None;
+    }
+    screen.usable.h = screen.frame.bottom() - screen.usable.top();
+    Some(WindowRect {
+        id: DOCK_ID,
+        frame: dock,
+    })
+}
+
 /// Calcule les parties visibles des côtés de chaque fenêtre : une fenêtre
 /// placée devant cache la partie d'un côté qu'elle recouvre.
 #[must_use]
@@ -390,6 +486,41 @@ mod tests {
         let floor = world.floor_under(100.0).unwrap();
         assert_eq!(floor.y, 825.0);
         assert_eq!(floor.kind, SurfaceKind::Floor);
+    }
+
+    #[test]
+    fn ledges_follow_the_windows_and_the_screens() {
+        let window = WindowRect {
+            id: 7,
+            frame: Rect::new(100.0, 300.0, 400.0, 300.0),
+        };
+        let mut world = World::new(vec![screen()]);
+        let ledge = |world: &World| {
+            world
+                .surfaces()
+                .iter()
+                .find(|s| s.kind == SurfaceKind::Window)
+                .map(|s| (s.x0, s.x1, s.y))
+        };
+        world.set_windows(&[window], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((100.0, 500.0, 300.0)));
+        // Le même relevé : rien ne change.
+        world.set_windows(&[window], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((100.0, 500.0, 300.0)));
+        // La fenêtre bouge : le rebord suit.
+        let moved = WindowRect {
+            frame: Rect::new(150.0, 320.0, 400.0, 300.0),
+            ..window
+        };
+        world.set_windows(&[moved], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((150.0, 550.0, 320.0)));
+        // Un écran plus étroit : le même relevé redonne un rebord coupé au bord.
+        let mut narrow = screen();
+        narrow.frame.w = 400.0;
+        narrow.usable.w = 400.0;
+        world.set_screens(vec![narrow]);
+        world.set_windows(&[moved], LedgeOptions::default());
+        assert_eq!(ledge(&world), Some((150.0, 400.0, 320.0)));
     }
 
     #[test]
@@ -477,6 +608,52 @@ mod tests {
         assert!(world.wall_crossed(498.0, 501.0, 500.0, 560.0).is_none());
         // Pas encore arrivé au côté.
         assert!(world.wall_crossed(480.0, 483.0, 765.0, 825.0).is_none());
+    }
+
+    #[test]
+    fn the_exact_dock_lowers_the_floor_and_becomes_a_ledge() {
+        let mut screens = vec![screen()];
+        let dock = Rect::new(420.0, 832.0, 600.0, 64.0);
+        let window = exact_dock(&mut screens, dock).unwrap();
+        assert_eq!(window.id, DOCK_ID);
+        assert_eq!(
+            screens[0].usable.bottom(),
+            900.0,
+            "le sol descend en bas de l'écran"
+        );
+        let mut world = World::new(screens);
+        world.set_windows(&[window], LedgeOptions::default());
+        assert_eq!(world.floor_under(100.0).unwrap().y, 900.0);
+        let top = world
+            .surfaces()
+            .iter()
+            .find(|s| s.kind == SurfaceKind::Window)
+            .unwrap();
+        assert_eq!((top.x0, top.x1, top.y), (420.0, 1020.0, 832.0));
+        // On bute contre ses côtés en marchant en bas de l'écran.
+        assert!(world.wall_crossed(418.0, 421.0, 840.0, 900.0).is_some());
+    }
+
+    #[test]
+    fn a_dock_on_the_side_hidden_or_full_width_changes_nothing() {
+        // Sur le côté gauche : la zone utile commence à sa droite.
+        let mut side = vec![Screen {
+            frame: Rect::new(0.0, 0.0, 1440.0, 900.0),
+            usable: Rect::new(70.0, 25.0, 1370.0, 875.0),
+            scale: 2.0,
+        }];
+        assert!(exact_dock(&mut side, Rect::new(0.0, 200.0, 66.0, 500.0)).is_none());
+        assert_eq!(side[0].usable.bottom(), 900.0);
+        // Masqué automatiquement : pas de bande réservée en bas.
+        let mut hidden = vec![Screen {
+            usable: Rect::new(0.0, 25.0, 1440.0, 875.0),
+            ..screen()
+        }];
+        assert!(exact_dock(&mut hidden, Rect::new(420.0, 832.0, 600.0, 64.0)).is_none());
+        // Toute la largeur : rien à gagner.
+        let mut wide = vec![screen()];
+        assert!(exact_dock(&mut wide, Rect::new(0.0, 830.0, 1440.0, 70.0)).is_none());
+        assert_eq!(wide[0].usable.bottom(), 825.0);
     }
 
     #[test]

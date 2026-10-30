@@ -69,23 +69,134 @@ fn locale_of(tag: &str) -> Option<&'static str> {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub struct Texts {
+    // Barre des menus.
+    /// « Ajouter Lainou » : `{name}` est remplacé par le nom de l'animal
+    /// (le préféré dans la barre des menus, celui du clic droit sinon).
+    pub add_named: String,
+    /// Sous-menu des autres espèces (« Ajouter un autre animal »).
     pub add_pet: String,
-    pub add_menu: String,
-    pub remove_all: String,
+    /// Son premier article, qui ouvre la galerie des animaux.
+    pub gallery: String,
+    /// Sous-menu « Dire au revoir », et son premier article (« À tous »).
+    pub goodbye: String,
+    pub goodbye_all: String,
     pub together: String,
+    /// « Mettre en pause », et « Reprendre » pendant la pause.
     pub pause: String,
-    pub frontmost_only: String,
-    pub collisions: String,
+    pub resume: String,
+    pub sounds: String,
+    /// « Réglages… » : ouvre la fenêtre des réglages.
+    pub settings: String,
+    pub about: String,
+    pub quit: String,
+    // Menu d'un animal (clic droit).
+    /// « Dire au revoir à Lainou » : `{name}` est le nom de l'animal.
+    pub goodbye_named: String,
+    /// « Taille de Lainou » : la taille de cet animal seulement.
+    pub size_named: String,
     pub size: String,
     pub size_small: String,
     pub size_normal: String,
     pub size_large: String,
     pub size_huge: String,
+    // Fenêtre des réglages.
+    pub settings_title: String,
+    pub pets_section: String,
+    /// Sous le curseur de taille : il règle celle de tous les animaux.
+    pub size_help: String,
+    pub pet_sounds: String,
+    /// « Surprises », et ce qu'elles sont.
+    pub surprises: String,
+    pub surprises_help: String,
+    pub walks_section: String,
+    pub collisions: String,
+    pub collisions_help: String,
+    pub realistic_physics: String,
+    pub realistic_physics_help: String,
+    pub frontmost_only: String,
+    pub frontmost_only_help: String,
+    pub walk_under_dock: String,
+    pub walk_under_dock_help: String,
+    /// Sous « Marcher sous le Dock » tant que l'autorisation manque.
+    pub accessibility_waiting: String,
+    pub startup_section: String,
+    pub open_at_login: String,
+    /// Sous « Ouvrir Mouflon à l'ouverture de session » tant que
+    /// l'utilisateur n'a pas donné son accord.
+    pub login_waiting: String,
+    pub open_system_settings: String,
+    pub my_pets_section: String,
+    pub my_pets_help: String,
     pub open_pets_folder: String,
-    pub about: String,
-    pub quit: String,
+    // Galerie des animaux : son titre, le bouton d'une carte, l'auteur
+    // (`{author}`).
+    pub gallery_title: String,
+    pub gallery_add: String,
+    pub gallery_by: String,
+    // Fenêtre « À propos ».
     pub description: String,
     pub credits: String,
+    pub license: String,
+}
+
+impl Texts {
+    /// Tous les textes, pour les vérifier ensemble.
+    #[cfg(test)]
+    fn all(&self) -> Vec<&str> {
+        [
+            &self.add_named,
+            &self.add_pet,
+            &self.gallery,
+            &self.goodbye,
+            &self.goodbye_all,
+            &self.together,
+            &self.pause,
+            &self.resume,
+            &self.sounds,
+            &self.settings,
+            &self.about,
+            &self.quit,
+            &self.goodbye_named,
+            &self.size_named,
+            &self.size,
+            &self.size_small,
+            &self.size_normal,
+            &self.size_large,
+            &self.size_huge,
+            &self.settings_title,
+            &self.pets_section,
+            &self.size_help,
+            &self.pet_sounds,
+            &self.surprises,
+            &self.surprises_help,
+            &self.walks_section,
+            &self.collisions,
+            &self.collisions_help,
+            &self.realistic_physics,
+            &self.realistic_physics_help,
+            &self.frontmost_only,
+            &self.frontmost_only_help,
+            &self.walk_under_dock,
+            &self.walk_under_dock_help,
+            &self.accessibility_waiting,
+            &self.startup_section,
+            &self.open_at_login,
+            &self.login_waiting,
+            &self.open_system_settings,
+            &self.my_pets_section,
+            &self.my_pets_help,
+            &self.open_pets_folder,
+            &self.gallery_title,
+            &self.gallery_add,
+            &self.gallery_by,
+            &self.description,
+            &self.credits,
+            &self.license,
+        ]
+        .into_iter()
+        .map(String::as_str)
+        .collect()
+    }
 }
 
 /// Code de la première langue préférée que Mouflon parle, l'anglais à défaut.
@@ -109,15 +220,31 @@ fn parse(code: &str) -> Texts {
     })
 }
 
-/// Textes de l'interface dans la langue de l'utilisateur, choisie au premier appel.
+/// Langue de l'interface et ses textes, choisis au premier appel.
+fn chosen() -> &'static (&'static str, Texts) {
+    static CHOSEN: OnceLock<(&'static str, Texts)> = OnceLock::new();
+    CHOSEN.get_or_init(|| {
+        // `MOUFLON_LANGUE=de` : une autre langue que celle de macOS, pour
+        // voir la fenêtre des réglages dans chacune (vitrine de la CI).
+        let mut preferred = mouflon_platform::preferred_languages();
+        if let Ok(tag) = std::env::var("MOUFLON_LANGUE") {
+            preferred.insert(0, tag);
+        }
+        let code = language(&preferred);
+        log::info!("langue de l'interface : {code}");
+        (code, parse(code))
+    })
+}
+
+/// Textes de l'interface dans la langue de l'utilisateur.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub fn texts() -> &'static Texts {
-    static TEXTS: OnceLock<Texts> = OnceLock::new();
-    TEXTS.get_or_init(|| {
-        let code = language(&mouflon_platform::preferred_languages());
-        log::info!("langue de l'interface : {code}");
-        parse(code)
-    })
+    &chosen().1
+}
+
+/// Code de la langue de l'interface (« fr », « zh-Hant »…).
+pub fn code() -> &'static str {
+    chosen().0
 }
 
 #[cfg(test)]
@@ -133,28 +260,28 @@ mod tests {
         for (code, source) in LOCALES {
             let texts: Texts =
                 toml::from_str(source).unwrap_or_else(|e| panic!("locales/{code}.toml : {e}"));
-            for text in [
-                &texts.add_pet,
-                &texts.add_menu,
-                &texts.remove_all,
-                &texts.together,
-                &texts.pause,
-                &texts.frontmost_only,
-                &texts.collisions,
-                &texts.size,
-                &texts.size_small,
-                &texts.size_normal,
-                &texts.size_large,
-                &texts.size_huge,
-                &texts.open_pets_folder,
-                &texts.about,
-                &texts.quit,
-                &texts.description,
-                &texts.credits,
-            ] {
+            for text in texts.all() {
                 assert!(!text.trim().is_empty(), "{code} : texte vide");
             }
             assert!(texts.about.contains("Mouflon") && texts.quit.contains("Mouflon"));
+            assert!(texts.gallery_by.contains("{author}"), "{code}");
+            assert!(
+                texts.gallery.ends_with('…') || texts.gallery.ends_with('⋯'),
+                "{code} : la galerie s'ouvre dans une fenêtre"
+            );
+            for named in [&texts.add_named, &texts.goodbye_named, &texts.size_named] {
+                assert!(
+                    named.contains("{name}"),
+                    "{code} : « {named} » sans {{name}}"
+                );
+            }
+            // « Réglages… » ouvre une fenêtre : des points de suspension,
+            // comme partout sur Mac.
+            assert!(
+                texts.settings.ends_with('…') || texts.settings.ends_with('⋯'),
+                "{code} : « {} » sans points de suspension",
+                texts.settings
+            );
         }
     }
 

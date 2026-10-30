@@ -22,8 +22,10 @@ strips_right = "planches/droite/{name}.png"
 frame = [256, 256]
 scale = 0.375                 # une image de 256 pixels fait 96 points
 anchor = [128, 226]           # milieu des sabots, sur le sol
-hold = [163, 102]             # la laine du dos, par où on l'attrape
 drawn = ["shadow", "dust", "squash"]
+# Une image intermédiaire après chaque image, pour un mouvement plus fluide
+# (calculées par tools/inbetween).
+inbetweens = "entre-deux.toml"
 
 [physics]
 width = 78.0                  # du museau au museau : il se retourne quand son nez touche le bord
@@ -53,6 +55,14 @@ meet = [
 ]
 leave = "au_revoir"           # un dernier bêlement avant de s'effacer
 together = "content"          # « Tous ensemble » : tout le troupeau saute de joie
+# Le pointeur file tout près de lui : il sursaute (ou bêle de surprise).
+startle = [{ to = "surpris", weight = 3 }, { to = "bele", weight = 1 }]
+# Personne au clavier ni à la souris depuis trois minutes : il bâille et
+# s'endort ; au retour de l'utilisateur, il se réveille.
+sleepy = "baille"
+wake = "se_reveiller"
+# Un coup de vent se lève : il le regarde passer, ou s'en étonne.
+wind = [{ to = "regarde", weight = 2 }, { to = "surpris", weight = 1 }]
 
 # Ce qu'il a envie de faire quand il a fini quelque chose.
 [choices]
@@ -72,7 +82,25 @@ envie = [
     # Il regarde volontiers le curseur qui passe, et s'endort plus vite la nuit.
     { to = "regarde", weight = 4, when = "cursor_near:220" },
     { to = "baille", weight = 4, when = "night" },
+    # Tu tapes au clavier : il se fait discret (il broute, se repose, te
+    # regarde travailler).
+    { to = "repos", weight = 5, when = "typing" },
+    { to = "brouter_debut", weight = 4, when = "typing" },
+    { to = "regarde", weight = 2, when = "typing" },
+    # Le matin, il s'ébroue et se réjouit ; le soir, il bâille.
+    { to = "s_ebroue", weight = 2, when = "morning" },
+    { to = "content", weight = 1, when = "morning" },
+    { to = "baille", weight = 2, when = "evening" },
 ]
+
+# Sons : bêlements d'agneau, la clochette, le broutage et un petit bruit
+# d'atterrissage (enregistrements libres de droits, CC0 et domaine public :
+# voir CREDITS.md). Chaque son a plusieurs prises, tirées au hasard.
+[sounds]
+bele = { files = ["sons/agneau-1.mp3", "sons/agneau-2.mp3", "sons/agneau-3.mp3", "sons/agneau-4.mp3", "sons/agneau-5.mp3"], volume = 0.8 }
+clochette = { files = ["sons/clochette-1.mp3", "sons/clochette-2.mp3", "sons/clochette-3.mp3", "sons/clochette-4.mp3"], volume = 0.55 }
+broute = { files = ["sons/broute-1.mp3", "sons/broute-2.mp3"], volume = 0.6 }
+pose = { files = ["sons/pose-1.mp3", "sons/pose-2.mp3"], volume = 0.5 }
 
 # ------------------------------------------------------------------ au repos
 
@@ -96,6 +124,8 @@ next = "repos"
 
 [[behavior]]
 name = "marche"
+# De temps en temps, la clochette tinte en marchant.
+sound = { name = "clochette", frame = 0, chance = 0.04 }
 fps = 10
 loops = [3, 6]
 move = [5.5, 0]
@@ -105,6 +135,8 @@ next = "envie"
 
 [[behavior]]
 name = "course"
+# En courant, la clochette tinte souvent (pattes en l'air, image 3).
+sound = { name = "clochette", frame = 3, chance = 0.2 }
 fps = 14
 loops = [6, 10]
 move = [13, 0]
@@ -117,6 +149,7 @@ next = "envie"
 # Il continue au bout de la fenêtre et saute dans le vide.
 [[behavior]]
 name = "aventure"
+sound = { name = "clochette", frame = 0, chance = 0.04 }
 strip = "marche"
 fps = 10
 loops = [1, 2]
@@ -127,6 +160,7 @@ next = "envie"
 
 [[behavior]]
 name = "course_vide"
+sound = { name = "clochette", frame = 3, chance = 0.2 }
 strip = "course"
 fps = 14
 loops = 2
@@ -144,12 +178,14 @@ next = [{ to = "marche", weight = 3 }, { to = "repos", weight = 1 }]
 # Lancé contre le bord de l'écran : il recule, sonné, puis fait demi-tour.
 [[behavior]]
 name = "se_cogne"
+sound = [{ name = "clochette", frame = 1 }, { name = "bele", chance = 0.3 }]
 fps = 12
 move = [[0, 0], [0, 0], [-5, 0], [-7, 0], [-4, 0], [-1.5, 0], [0, 0], [0, 0], [0, 0]]
 next = "demi_tour"
 
 [[behavior]]
 name = "saute"
+sound = [{ name = "clochette", frame = 3, chance = 0.8 }, { name = "pose", frame = 9, chance = 0.5 }]
 fps = 12
 next = "envie"
 
@@ -162,6 +198,7 @@ next = "brouter"
 
 [[behavior]]
 name = "brouter"
+sound = { name = "broute", frame = 0, chance = 0.7 }
 fps = 8
 loops = [3, 5]
 next = "brouter_fin"
@@ -173,11 +210,13 @@ next = "repos"
 
 [[behavior]]
 name = "s_ebroue"
+sound = [{ name = "clochette", frame = 1 }, { name = "clochette", frame = 4, chance = 0.7 }]
 fps = 14
 next = "repos_face"
 
 [[behavior]]
 name = "bele"
+sound = "bele"
 fps = 10
 next = "repos"
 
@@ -186,12 +225,14 @@ next = "repos"
 # Il bêle pour saluer l'autre, puis repart de son côté.
 [[behavior]]
 name = "salue"
+sound = "bele"
 strip = "bele"
 fps = 10
 next = "demi_tour"
 
 [[behavior]]
 name = "fete"
+sound = [{ name = "clochette", frame = 1, chance = 0.6 }, { name = "bele", chance = 0.3 }]
 strip = "content"
 fps = 10
 loops = 2
@@ -200,18 +241,21 @@ next = "demi_tour"
 # Au revoir : il bêle une dernière fois, puis s'efface.
 [[behavior]]
 name = "au_revoir"
+sound = "bele"
 strip = "bele"
 fps = 10
 next = "repos"
 
 [[behavior]]
 name = "content"
+sound = { name = "clochette", frame = 1, chance = 0.5 }
 fps = 10
 loops = 3
 next = "envie"
 
 [[behavior]]
 name = "surpris"
+sound = { name = "bele", chance = 0.4 }
 fps = 10
 next = "regarde"
 
@@ -236,18 +280,26 @@ next = "couche"
 [[behavior]]
 name = "couche"
 fps = 8
+sleep = true
 next = "s_endormir"
 
 [[behavior]]
 name = "s_endormir"
 fps = 6
+sleep = true
 next = "dort"
 
+# Il dort plus longtemps la nuit, et tant que tu n'es pas là.
 [[behavior]]
 name = "dort"
 fps = 6
 loops = [3, 6]
-next = [{ to = "se_reveiller", weight = 1 }, { to = "dort", weight = 3, when = "night" }]
+sleep = true
+next = [
+    { to = "se_reveiller", weight = 1, when = "present" },
+    { to = "dort", weight = 3, when = ["night", "present"] },
+    { to = "dort", weight = 1, when = "away" },
+]
 
 [[behavior]]
 name = "se_reveiller"
@@ -277,28 +329,37 @@ fps = 10
 duration = "forever"
 on_land = "atterrit"
 
-# Heurté par un autre animal (mode collisions) : il culbute et se relève sonné.
+# Heurté par un autre animal (mode collisions) : il culbute et se relève
+# sonné. La clochette sonne au choc ; les premières images passent vite (20
+# par seconde), le temps qu'il s'envole, puis la chute reprend son rythme.
 [[behavior]]
 name = "culbute"
+sound = { name = "clochette" }
 strip = "tombe"
 motion = "fall"
-fps = 10
+fps = [20, 10]
 duration = "forever"
 on_land = "atterrit_sonne"
 
+# Le choc d'abord, vite (20 images par seconde), puis il se remet plus
+# lentement (8).
 [[behavior]]
 name = "atterrit"
-fps = 10
+sound = { name = "pose", chance = 0.8 }
+fps = [20, 8]
 next = "repos"
 
 [[behavior]]
 name = "atterrit_sonne"
+sound = [{ name = "pose" }, { name = "bele", chance = 0.5 }]
 strip = "atterrit"
-fps = 10
+fps = [20, 8]
 next = "etourdi"
 
 [[behavior]]
 name = "tenu"
+# Attrapé, il bêle souvent.
+sound = { name = "bele", chance = 0.5 }
 motion = "held"
 fps = 10
 duration = "forever"

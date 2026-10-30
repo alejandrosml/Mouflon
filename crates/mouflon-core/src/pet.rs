@@ -8,19 +8,45 @@ use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 use crate::def::{
-    Appearance, Condition, Duration, Motion, PetDef, Pose, Rules, SpawnPoint, Transition,
+    Appearance, Condition, Duration, Motion, PetDef, Pose, Rules, SpawnPoint, SpriteClip,
+    Transition,
 };
 use crate::expr::Expr;
 use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep};
+use crate::physics::{Back, Tracker};
 use crate::world::{Surface, SurfaceId, SurfaceKind, World};
 
+mod real;
 mod script;
 
 /// Pas de simulation fixe : 120 Hz, la fréquence des écrans ProMotion.
 pub const TICK: f32 = 1.0 / 120.0;
 
 const BLINK_TIME: f32 = 0.13;
+/// Cadence qui suffit à un animal qui va son petit train (images par
+/// seconde) : à moins de [`SLOW_RATE`] points par seconde, sa fenêtre avance
+/// d'un point au plus d'une image à l'autre.
+pub const SLOW_RATE: f32 = 60.0;
+/// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois celle du pas).
+pub const RUN_STRIDE: f32 = 1.2;
+/// L'horloge d'un animal (voir [`PoseSignals::clock`]) repart de zéro toutes
+/// les heures : elle garde sa précision.
+pub const CLOCK_LOOP: f32 = 3600.0;
 const MAX_PARTICLES: usize = 64;
+
+/// Une touche frappée il y a moins de ceci (secondes) : l'utilisateur tape.
+pub const TYPING_WINDOW: f32 = 3.0;
+/// Rien touché depuis ceci (secondes) : l'utilisateur est parti.
+pub const AWAY_AFTER: f32 = 180.0;
+/// Un pointeur plus rapide que ceci (points par seconde) qui frôle un animal
+/// le fait sursauter.
+pub const STARTLE_SPEED: f32 = 1400.0;
+/// Pause entre deux sursauts d'un même animal (secondes).
+const STARTLE_COOLDOWN: f32 = 8.0;
+/// Parti, l'utilisateur laisse les animaux s'endormir l'un après l'autre,
+/// dans ce délai (secondes) ; réveillé avant la fin, l'un se rendort au
+/// bout d'un moment.
+const NAP_SPREAD: f32 = 40.0;
 
 /// Ce que l'animal perçoit de l'extérieur à chaque pas.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -29,6 +55,26 @@ pub struct Input {
     pub cursor: Option<Vec2>,
     /// Heure locale décimale (0–24).
     pub local_hour: f32,
+    /// Secondes depuis la dernière touche frappée (laquelle, Mouflon ne le
+    /// sait pas) ; `None` : inconnu.
+    pub since_key: Option<f32>,
+    /// Secondes depuis le dernier geste de l'utilisateur (clavier, souris,
+    /// trackpad) ; `None` : inconnu.
+    pub idle: Option<f32>,
+}
+
+impl Input {
+    /// L'utilisateur tape-t-il au clavier ?
+    #[must_use]
+    pub fn typing(&self) -> bool {
+        self.since_key.is_some_and(|s| s < TYPING_WINDOW)
+    }
+
+    /// L'utilisateur est-il parti ?
+    #[must_use]
+    pub fn away(&self) -> bool {
+        self.idle.is_some_and(|s| s >= AWAY_AFTER)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +101,17 @@ pub enum PetEvent {
     Met {
         other: u32,
     },
+    /// Fait entendre un son : rang dans [`PetDef::sounds`] et prise choisie.
+    Sound {
+        sound: usize,
+        clip: usize,
+    },
+    /// Le pointeur l'a frôlé à toute vitesse : il sursaute.
+    Startled,
+    /// L'utilisateur est parti : il s'endort.
+    Napping,
+    /// L'utilisateur est revenu : il se réveille.
+    Woken,
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
@@ -64,6 +121,16 @@ const BUMP_COOLDOWN: f32 = 3.5;
 /// Pause entre deux rencontres d'un même animal (secondes).
 const MEET_COOLDOWN: f32 = 2.5;
 
+/// Durée d'affichage d'une image intermédiaire, au plus (secondes).
+const INBETWEEN_TIME: f32 = 0.08;
+/// Pas d'une même image regardés, au plus, pour répartir un passage.
+const MAX_HELD_STEPS: usize = 32;
+/// Élan gardé au plus après un atterrissage (points par seconde) : lancé de
+/// loin, il glisse de quelques dizaines de points, pas d'un bout à l'autre.
+const MAX_SLIDE: f32 = 260.0;
+/// Lissage de la vitesse d'un animal tenu (secondes) : l'élan qu'il garde au
+/// lâcher est celui des derniers centièmes de seconde du geste.
+const THROW_SMOOTHING: f32 = 0.06;
 /// Au revoir : durée du fondu, et durée au-delà de laquelle l'animation
 /// d'adieu est écourtée.
 const FADE_TIME: f32 = 1.2;
@@ -87,6 +154,8 @@ pub enum ParticleKind {
     Dust,
     /// Bulle de sommeil.
     Bubble,
+    /// Feuille emportée par un coup de vent.
+    Leaf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -141,6 +210,16 @@ pub struct PoseSignals {
     /// Culbute (radians, repère de l'écran, sens horaire) : l'animal heurté
     /// roule sur lui-même autour du milieu de son corps.
     pub roll: f32,
+    /// Broute (0–1) : la tête descend jusqu'au sol.
+    pub graze: f32,
+    /// Coups de dents en broutant (-1 à 1).
+    pub nibble: f32,
+    /// En l'air : de -1 (il tombe vite) à 1 (il monte vite), pour plier ou
+    /// tendre les pattes.
+    pub rise: f32,
+    /// Horloge propre à l'animal (secondes, en boucle sur [`CLOCK_LOOP`]) :
+    /// elle fait tourner les animations qui ne suivent pas ses pas.
+    pub clock: f32,
 }
 
 impl PoseSignals {
@@ -180,6 +259,8 @@ pub struct PetView<'a> {
     pub particles: &'a [Particle],
     pub support: Support,
     pub behavior: &'a str,
+    /// Tenu : le point par lequel le curseur le tient (il se balance autour).
+    pub grip: Option<Vec2>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -215,16 +296,27 @@ struct Anim {
     blink_left: f32,
     double_blink: bool,
     breath_phase: f32,
+    /// Horloge propre à l'animal (secondes, en boucle sur une heure).
+    clock: f32,
     look: Vec2,
     glance: Vec2,
     glance_timer: f32,
     bubble_timer: f32,
     /// Prochaine bouffée de poussière quand il court.
     dust_timer: f32,
+    /// Prochaine feuille portée par le vent.
+    leaf_timer: f32,
     /// Culbute : angle courant, angle qu'il reste à parcourir (signé) et vitesse (rad/s).
     roll: f32,
     roll_left: f32,
     roll_rate: f32,
+    graze: f32,
+    nibble_phase: f32,
+    rise: f32,
+    /// Prochain frémissement d'oreille, prochain coup de queue (secondes).
+    ear_timer: f32,
+    tail: Spring,
+    tail_timer: f32,
 }
 
 impl Anim {
@@ -242,21 +334,41 @@ impl Anim {
             lean: Spring::new(2.2, 0.55),
             ear: Spring::new(2.4, 0.22),
             swing: Spring::new(1.3, 0.18),
+            graze: 0.0,
+            nibble_phase: 0.0,
+            rise: 0.0,
+            // Sans tirage au hasard : les animaux en images, qui n'en ont pas
+            // l'usage, gardent exactement leurs tirages.
+            ear_timer: 3.5,
+            tail: Spring::new(3.2, 0.2),
+            tail_timer: 5.0,
             tail_phase: rng.range(0.0, TAU),
             blink: 0.0,
             blink_timer: rng.range(1.0, 4.0),
             blink_left: 0.0,
             double_blink: false,
             breath_phase: rng.range(0.0, TAU),
+            // Sans tirage de plus, voir `with_clock`.
+            clock: 0.0,
             look: Vec2::new(0.3, 0.0),
             glance: Vec2::new(0.3, 0.0),
             glance_timer: 0.0,
             bubble_timer: 1.0,
             dust_timer: 0.0,
+            leaf_timer: 0.0,
             roll: 0.0,
             roll_left: 0.0,
             roll_rate: 0.0,
         }
+        .with_clock()
+    }
+
+    /// L'horloge part d'un instant propre à chaque animal (de 0 à une
+    /// minute), tiré de sa respiration : pas de tirage au hasard de plus, les
+    /// animaux gardent exactement leurs tirages.
+    fn with_clock(mut self) -> Self {
+        self.clock = self.breath_phase / TAU * 60.0;
+        self
     }
 }
 
@@ -265,6 +377,9 @@ pub struct Pet {
     id: u32,
     def: Arc<PetDef>,
     rng: Rng,
+    /// Tirages des sons, à part : ajouter (ou couper) des sons ne change
+    /// rien à ce que fait l'animal.
+    voice: Rng,
     pos: Vec2,
     prev_pos: Vec2,
     vel: Vec2,
@@ -298,8 +413,23 @@ pub struct Pet {
     children: Vec<ChildRequest>,
     /// Envoyé en arrière par une collision : il se pose sans se retourner.
     knocked: bool,
+    /// Élan qui reste après un atterrissage (points par seconde) : l'animal
+    /// glisse un peu avant de s'arrêter, même quand ses images le figent.
+    slide: f32,
     /// Temps avant de pouvoir être heurté de nouveau.
     bump_cooldown: f32,
+    /// Pause avant de pouvoir sursauter de nouveau (secondes).
+    startle_cooldown: f32,
+    /// Dans combien de temps il s'endort (l'utilisateur est parti).
+    nap_in: Option<f32>,
+    /// Dans combien de temps il se réveille (l'utilisateur est revenu).
+    wake_in: Option<f32>,
+    /// Le vent du moment : accélération qu'il donne en l'air (pt/s², signée).
+    wind: f32,
+    /// Distance du point d'appui au bout de son dessin, devant et derrière
+    /// (points) : les collisions partent quand les dessins se touchent.
+    /// Sans elle, la moitié de la largeur de l'animal, des deux côtés.
+    reach: Option<(f32, f32)>,
     /// Temps avant de pouvoir rencontrer un autre animal.
     meet_cooldown: f32,
     /// En train de dire au revoir.
@@ -308,6 +438,31 @@ pub struct Pet {
     particles: Vec<Particle>,
     events: Vec<PetEvent>,
     shadow: Option<Shadow>,
+    /// Physique réaliste (voir [`crate::physics`]) : angle du corps
+    /// (radians, sens horaire de l'écran) et vitesse de rotation.
+    angle: f32,
+    spin: f32,
+    /// Au sol en physique réaliste : la vitesse que lui donne la plateforme
+    /// qui le porte (ses pattes la suivent tant qu'elles adhèrent). `vel`
+    /// est alors sa vitesse à lui, par rapport à elle.
+    carry: Vec2,
+    /// Vitesse lissée de la main qui le tient (physique réaliste), et où
+    /// elle était au pas précédent.
+    hand: Vec2,
+    hand_at: Option<Vec2>,
+    /// Animal scripté (desktopPet) qui tombe pour de vrai, sous la pesanteur.
+    free_fall: bool,
+    /// Temps passé en l'air depuis qu'il a quitté le sol (physique réaliste).
+    air_time: f32,
+    /// La plateforme s'est dérobée sous ses pattes il y a un instant : il
+    /// garde son comportement (et le reprend s'il retrouve vite le sol)
+    /// avant de passer à sa chute.
+    grace: bool,
+    /// Le pas en cours est-il en physique réaliste ?
+    realistic: bool,
+    /// Vitesse dans le repère de l'écran au pas précédent (physique
+    /// réaliste) : ses accélérations font bouger oreilles et queue.
+    prev_world_vel: Vec2,
 }
 
 /// Au revoir : l'animal joue son animation d'adieu, puis s'efface.
@@ -328,6 +483,9 @@ struct ChildRequest {
     facing: f32,
     depth: u8,
     skin: u32,
+    /// `randS` du parent : dans desktopPet, il vaut pareil pour toute la
+    /// scène (le bain dure autant que la plongée du mouton dans la baignoire).
+    rand_s: f32,
 }
 
 impl Pet {
@@ -387,8 +545,8 @@ impl Pet {
         if !self.def.behaviors[spawn.next].children.is_empty() {
             self.facing = -1.0;
         }
-        let mut left = self.eval(&spawn.x).trunc() as f32;
-        let top = self.eval(&spawn.y).trunc() as f32;
+        let mut left = self.eval_position(&spawn.x);
+        let top = self.eval_position(&spawn.y);
         if self.facing > 0.0 {
             left = frame.w - left - p.width;
         }
@@ -453,6 +611,7 @@ impl Pet {
         let mut pet = Self::bare(id, def, rng, request.pos);
         pet.child_depth = request.depth;
         pet.skin = request.skin;
+        pet.rand_s = request.rand_s;
         pet.facing = request.facing;
         pet.anim.flip = request.facing;
         pet.update_screen(world);
@@ -492,6 +651,19 @@ impl Pet {
         self.support = Support::Air;
         self.ground_ref = None;
         self.walking_off = false;
+        self.take_off();
+    }
+
+    /// Il quitte le sol : en physique réaliste, l'élan de la plateforme qui
+    /// le portait devient le sien (rien à faire en physique classique).
+    fn take_off(&mut self) {
+        self.vel += self.carry;
+        self.carry = Vec2::ZERO;
+        self.air_time = 0.0;
+        if self.realistic && matches!(self.def.behaviors[self.behavior].motion, Motion::Script(_)) {
+            // Un animal scripté qui quitte le sol tombe désormais pour de vrai.
+            self.free_fall = true;
+        }
     }
 
     /// La fenêtre sous l'animal a bougé (sans changer de largeur) : il voyage avec elle.
@@ -513,6 +685,7 @@ impl Pet {
     }
 
     fn bare(id: u32, def: Arc<PetDef>, mut rng: Rng, pos: Vec2) -> Self {
+        let voice = rng.fork(0x534F_554E_4453);
         let facing = if rng.chance(0.5) { 1.0 } else { -1.0 };
         let anim = Anim::new(facing, &mut rng);
         let rand_s = (10 + rng.next_u32() % 80) as f32;
@@ -524,6 +697,7 @@ impl Pet {
             id,
             def,
             rng,
+            voice,
             pos,
             prev_pos: pos,
             vel: Vec2::ZERO,
@@ -547,13 +721,29 @@ impl Pet {
             finished: false,
             children: Vec::new(),
             knocked: false,
+            slide: 0.0,
             bump_cooldown: 0.0,
+            startle_cooldown: 0.0,
+            nap_in: None,
+            wake_in: None,
+            wind: 0.0,
+            reach: None,
             meet_cooldown: 0.0,
             leaving: None,
             anim,
             particles: Vec::new(),
             events: Vec::new(),
             shadow: None,
+            angle: 0.0,
+            spin: 0.0,
+            carry: Vec2::ZERO,
+            hand: Vec2::ZERO,
+            hand_at: None,
+            free_fall: false,
+            air_time: 0.0,
+            grace: false,
+            realistic: false,
+            prev_world_vel: Vec2::ZERO,
         }
     }
 
@@ -628,7 +818,11 @@ impl Pet {
             || (self.anim.flip - self.facing).abs() > 0.01
             || self.anim.swing.value.abs() > 0.01
             || self.anim.walk > 0.02
-            || self.anim.roll_left != 0.0;
+            || self.anim.roll_left != 0.0
+            // Physique réaliste : il se redresse, ou une fenêtre l'emporte.
+            || self.angle != 0.0
+            || self.spin != 0.0
+            || self.carry.length() > 0.5;
         let sprites = self.def.behaviors[self.behavior].clip.is_some();
         // Les bulles de sommeil montent lentement : elles n'exigent pas la pleine cadence.
         let dust = self.particles.iter().any(|p| p.kind == ParticleKind::Dust);
@@ -644,6 +838,40 @@ impl Pet {
         }
     }
 
+    /// Images par seconde qu'il lui faut pour que son mouvement reste fluide :
+    /// [`SLOW_RATE`] quand il va son petit train, `f32::INFINITY` (toute la
+    /// cadence de l'écran) sinon.
+    ///
+    /// Au pas, en grimpant ou en se promenant sur un rebord, il avance de
+    /// moins d'un point d'une image à l'autre à 60 images par seconde : sa
+    /// fenêtre, qui ne se pose qu'au point entier, ne saute aucun point, et
+    /// ses pattes dessinées bougent comme sur n'importe quel écran à 60 Hz.
+    /// Un écran ProMotion peut alors battre deux fois moins vite. En vol libre,
+    /// tenu, plus vite, ou tant qu'un rebond se calme, il faut toute la cadence.
+    #[must_use]
+    pub fn smooth_rate(&self) -> f32 {
+        let scripted = matches!(self.def.behaviors[self.behavior].motion, Motion::Script(_));
+        let free = match self.support {
+            Support::Held => true,
+            // Une animation scriptée avance à vitesse constante, pas en chute libre.
+            Support::Air => !scripted,
+            Support::Ground { .. } => false,
+        };
+        let settling = self.anim.squash.velocity.abs() > 0.02
+            || (self.anim.flip - self.facing).abs() > 0.01
+            || self.anim.swing.value.abs() > 0.01
+            || self.anim.roll_left != 0.0
+            || self.spin != 0.0
+            || self.particles.iter().any(|p| p.kind == ParticleKind::Dust);
+        let world_vel = self.vel + self.carry;
+        let speed = world_vel.x.abs().max(world_vel.y.abs());
+        if free || settling || speed > SLOW_RATE {
+            f32::INFINITY
+        } else {
+            SLOW_RATE
+        }
+    }
+
     // ----------------------------------------------------------------- entrées
 
     /// Le curseur attrape l'animal.
@@ -651,12 +879,25 @@ impl Pet {
         if self.is_child() || self.leaving.is_some() {
             return;
         }
+        let offset = if self.realistic {
+            // Le point de prise dans le repère du corps : l'animal pendra
+            // dessous et tournera autour (voir `step_held_real`).
+            self.grip_offset(cursor)
+        } else {
+            cursor - self.pos
+        };
         self.hold = Some(Hold {
             target: cursor,
-            offset: cursor - self.pos,
+            offset,
         });
         self.support = Support::Held;
         self.vel = Vec2::ZERO;
+        self.carry = Vec2::ZERO;
+        self.hand = Vec2::ZERO;
+        self.hand_at = Some(cursor);
+        self.spin = 0.0;
+        self.free_fall = false;
+        self.grace = false;
         self.ground_ref = None;
         self.walking_off = false;
         self.knocked = false;
@@ -676,14 +917,34 @@ impl Pet {
         }
     }
 
+    /// Au sol, il se penche contre le vent (radians, sens horaire).
+    fn wind_lean(&self) -> f32 {
+        if matches!(self.support, Support::Ground { .. }) {
+            -(self.wind / crate::surprise::GUST_PEAK) * 0.07
+        } else {
+            0.0
+        }
+    }
+
+    /// Là où la main (ou le faisceau d'une soucoupe) le tient.
+    #[must_use]
+    pub fn hold_target(&self) -> Option<Vec2> {
+        self.hold.map(|h| h.target)
+    }
+
     /// Le curseur relâche l'animal, qui garde son élan.
     pub fn release(&mut self, world: &World) {
         if self.support != Support::Held {
             return;
         }
+        if self.realistic {
+            // Lancé avec l'élan de la main et sa rotation (voir `throw_real`).
+            self.throw_real();
+        }
         self.hold = None;
         self.vel = self.vel.clamp_length(self.def.physics.max_throw_speed);
         self.support = Support::Air;
+        self.air_time = 0.0;
         self.events.push(PetEvent::Thrown {
             speed: self.vel.length(),
         });
@@ -735,6 +996,9 @@ impl Pet {
         self.def = def;
         self.vel *= ratio;
         self.script = [self.script[0] * ratio, self.script[1] * ratio];
+        self.reach = self
+            .reach
+            .map(|(front, back)| (front * ratio, back * ratio));
         if let Some(hold) = &mut self.hold {
             hold.offset *= ratio;
         }
@@ -745,6 +1009,27 @@ impl Pet {
     pub fn face(&mut self, facing: f32) {
         self.facing = if facing < 0.0 { -1.0 } else { 1.0 };
         self.anim.flip = self.facing;
+    }
+
+    /// Donne la place réelle de son dessin, devant et derrière son point
+    /// d'appui (points) : il heurte ou rencontre un autre animal quand leurs
+    /// dessins se touchent, pas avant ni après.
+    pub fn set_reach(&mut self, front: f32, back: f32) {
+        self.reach = (front > 0.0 && back > 0.0).then_some((front, back));
+    }
+
+    /// Distance du point d'appui au bout de son dessin, du côté `side`
+    /// (1 : vers la droite, -1 : vers la gauche).
+    fn reach_toward(&self, side: f32) -> f32 {
+        let (front, back) = self.reach.unwrap_or_else(|| {
+            let half = self.def.physics.width * 0.5;
+            (half, half)
+        });
+        if self.facing * side > 0.0 {
+            front
+        } else {
+            back
+        }
     }
 
     /// Peut-il être heurté par un autre animal (mode collisions) ?
@@ -900,7 +1185,10 @@ impl Pet {
             }
             return false;
         };
-        self.vel = push;
+        self.vel = push + self.carry;
+        self.carry = Vec2::ZERO;
+        self.air_time = 0.0;
+        self.grace = false;
         self.support = Support::Air;
         self.ground_ref = None;
         self.walking_off = false;
@@ -910,7 +1198,11 @@ impl Pet {
         });
         self.squash_kick(-0.7);
         self.anim.ear.kick(-4.0);
-        if !def.drawn().roll {
+        if self.realistic && !def.drawn().roll {
+            // Un tour complet pendant le vol : c'est la physique qui le fait tourner.
+            let flight = (2.0 * (-push.y).max(60.0) / def.physics.gravity.max(1.0)).max(0.2);
+            self.spin = push.x.signum() * TAU / flight;
+        } else if !def.drawn().roll {
             // Un tour complet en roulant comme une roue (vers la droite : sens
             // horaire), réparti sur la durée du vol.
             let flight = (2.0 * (-push.y).max(60.0) / def.physics.gravity.max(1.0)).max(0.2);
@@ -945,12 +1237,131 @@ impl Pet {
         }
     }
 
+    // -------------------------------------------------------------- humeurs
+
+    /// Dort-il (ou s'endort-il) ?
+    #[must_use]
+    pub fn is_asleep(&self) -> bool {
+        let behavior = &self.def.behaviors[self.behavior];
+        behavior.sleeping || behavior.motion == Motion::Sleep
+    }
+
+    /// Peut-il réagir à ce que fait l'utilisateur (sursauter, s'endormir) ?
+    /// Posé, à lui, et pas en train de partir.
+    fn can_react(&self) -> bool {
+        matches!(self.support, Support::Ground { .. })
+            && !self.is_child()
+            && self.leaving.is_none()
+            && !self.finished
+    }
+
+    /// Le pointeur vient de le frôler à toute vitesse, entre `from` et `to`.
+    fn startle(&mut self, from: Vec2, to: Vec2, world: &World, input: &Input) {
+        if self.startle_cooldown > 0.0 || !self.can_react() || self.is_asleep() {
+            return;
+        }
+        let p = self.def.physics;
+        let center = self.pos - Vec2::new(0.0, p.height * 0.5);
+        let reach = p.height * 1.1 + p.width * 0.3;
+        if distance_to_segment(center, from, to) > reach {
+            return;
+        }
+        self.startle_cooldown = STARTLE_COOLDOWN;
+        // Pas à chaque fois : certains ne lèvent même pas la tête.
+        if !self.rng.chance(0.7) {
+            return;
+        }
+        self.events.push(PetEvent::Startled);
+        self.squash_kick(0.6);
+        self.anim.ear.kick(-5.0);
+        let def = Arc::clone(&self.def);
+        if let Some(next) = self.choose(&def.reflexes.startle, world, input) {
+            self.enter(next);
+        }
+    }
+
+    /// L'utilisateur part (`away`) ou revient : il s'endort bientôt, ou se
+    /// réveille s'il dormait.
+    fn user_away(&mut self, away: bool) {
+        if away {
+            self.wake_in = None;
+            if !self.is_asleep() {
+                self.nap_in = Some(self.rng.range(1.0, NAP_SPREAD));
+            }
+        } else {
+            self.nap_in = None;
+            if self.is_asleep() {
+                self.wake_in = Some(self.rng.range(0.2, 1.8));
+            }
+        }
+    }
+
+    /// Les humeurs que lui donne l'utilisateur : il s'endort quand il est
+    /// parti (et se rendort s'il s'est réveillé entre-temps), se réveille
+    /// quand il revient.
+    fn step_moods(&mut self, dt: f32, world: &World, input: &Input) {
+        if let Some(left) = &mut self.nap_in {
+            *left -= dt;
+            if *left <= 0.0 {
+                self.nap_in = None;
+                if self.can_react() && !self.is_asleep() {
+                    let def = Arc::clone(&self.def);
+                    if let Some(next) = self.choose(&def.reflexes.sleepy, world, input) {
+                        self.events.push(PetEvent::Napping);
+                        self.enter(next);
+                    }
+                }
+            }
+        } else if input.away() && !self.is_asleep() && self.can_react() {
+            // Réveillé pendant que l'utilisateur est toujours parti : il se
+            // rendort un peu plus tard.
+            self.nap_in = Some(self.rng.range(NAP_SPREAD * 0.5, NAP_SPREAD * 1.5));
+        }
+        if let Some(left) = &mut self.wake_in {
+            *left -= dt;
+            if *left <= 0.0 {
+                self.wake_in = None;
+                if self.is_asleep() && self.leaving.is_none() {
+                    let def = Arc::clone(&self.def);
+                    let own = &def.behaviors[self.behavior].next;
+                    let list = if def.reflexes.wake.is_empty() {
+                        own
+                    } else {
+                        &def.reflexes.wake
+                    };
+                    if let Some(next) = self.choose(list, world, input) {
+                        self.events.push(PetEvent::Woken);
+                        self.enter(next);
+                    }
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------- simulation
 
     pub fn step(&mut self, dt: f32, world: &World, input: &Input) {
+        self.step_with(dt, world, input, None);
+    }
+
+    /// Un pas en physique réaliste : le monde est celui du suivi des
+    /// fenêtres (positions lissées, vitesses, dos des autres animaux).
+    pub fn step_real(&mut self, dt: f32, tracker: &Tracker, input: &Input) {
+        self.step_with(dt, tracker.world(), input, Some(tracker));
+    }
+
+    fn step_with(&mut self, dt: f32, world: &World, input: &Input, tracker: Option<&Tracker>) {
+        if self.realistic && tracker.is_none() {
+            self.leave_realistic();
+        } else if !self.realistic && tracker.is_some() {
+            self.enter_realistic();
+        }
+        self.realistic = tracker.is_some();
         self.prev_pos = self.pos;
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
+        self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
+        self.step_moods(dt, world, input);
         if let Some(leaving) = &mut self.leaving {
             leaving.time += dt;
             if leaving.fade.is_none() && leaving.time >= LEAVE_MAX {
@@ -965,21 +1376,24 @@ impl Pet {
         }
         self.update_screen(world);
         let scripted = matches!(self.def.behaviors[self.behavior].motion, Motion::Script(_));
-        match self.support {
-            Support::Held => self.step_held(dt),
-            _ if scripted => self.step_script(dt, world, input),
-            Support::Air => self.step_air(dt, world, input),
-            Support::Ground { surface } => self.step_ground(dt, world, input, surface),
+        match (tracker, self.support) {
+            (Some(tracker), _) => self.step_physics(dt, tracker, input, scripted),
+            (None, Support::Held) => self.step_held(dt),
+            (None, _) if scripted => self.step_script(dt, world, input),
+            (None, Support::Air) => self.step_air(dt, world, input),
+            (None, Support::Ground { surface }) => self.step_ground(dt, world, input, surface),
         }
         self.step_behavior(dt, world, input);
         self.step_anim(dt, input);
         self.step_particles(dt);
         self.update_shadow(world);
         self.prev_vel_x = self.vel.x;
+        self.prev_world_vel = self.vel + self.carry;
     }
 
     fn step_ground(&mut self, dt: f32, world: &World, input: &Input, surface_id: SurfaceId) {
-        let p = self.def.physics;
+        // Ici, c'est sa vitesse qui porte l'élan.
+        self.slide = 0.0;
         let Some(surface) = world.surface(surface_id).copied() else {
             self.lift_off(world, input);
             return;
@@ -987,7 +1401,16 @@ impl Pet {
 
         self.ride(&surface);
         self.pos.y = surface.y;
+        self.walk_on(dt, world, input, &surface);
+    }
 
+    /// Ce qu'il fait sur la surface qui le porte : il marche (ou glisse
+    /// jusqu'à s'arrêter), réagit aux côtés des fenêtres, aux bouts du
+    /// rebord et aux bords de l'écran. `vel` est sa vitesse par rapport à
+    /// la surface.
+    fn walk_on(&mut self, dt: f32, world: &World, input: &Input, surface: &Surface) {
+        let p = self.def.physics;
+        let surface = *surface;
         let motion = &self.def.behaviors[self.behavior].motion;
         let desired = match *motion {
             Motion::Walk { speed } | Motion::Run { speed } => speed * self.facing,
@@ -1055,9 +1478,12 @@ impl Pet {
     }
 
     fn step_air(&mut self, dt: f32, world: &World, input: &Input) {
+        self.slide = 0.0;
         let p = self.def.physics;
         self.vel.y = (self.vel.y + p.gravity * dt).min(p.terminal_velocity);
         self.vel.x *= (-p.air_drag * dt).exp();
+        // Le vent le fait dériver, à proportion de sa taille.
+        self.vel.x += self.wind * dt * (p.height / 60.0).clamp(0.5, 2.0);
         let from = self.pos;
         let mut to = self.pos + self.vel * dt;
 
@@ -1070,7 +1496,9 @@ impl Pet {
             to.x = arena.right() - half;
             self.vel.x = -self.vel.x.abs() * 0.45;
         }
-        let ceiling = arena.top() + p.height;
+        // Lancé vers le haut, il peut monter jusqu'au bord de l'écran, en
+        // passant derrière la barre des menus (et l'encoche), puis retombe.
+        let ceiling = world.bounds().top() + p.height;
         if to.y < ceiling {
             to.y = ceiling;
             self.vel.y = self.vel.y.max(0.0);
@@ -1097,40 +1525,52 @@ impl Pet {
     }
 
     fn step_held(&mut self, dt: f32) {
-        let p = self.def.physics;
-        let Some(hold) = &mut self.hold else {
+        self.slide = 0.0;
+        let Some(hold) = &self.hold else {
             self.support = Support::Air;
             return;
         };
-        // Le point de prise glisse vers le dos : l'animal finit par pendre sous
-        // le curseur, par son point de prise s'il en a un (dessiné tourné vers la gauche).
-        let hang = match p.hold {
-            Some(h) => Vec2::new(-h.x * self.facing, h.y),
-            None => Vec2::new(0.0, -p.height * 0.8),
-        };
-        hold.offset = hold.offset.lerp(hang, 1.0 - (-4.0 * dt).exp());
+        // Comme une fenêtre qu'on déplace : le point par lequel on l'a pris
+        // reste sous le curseur, sans retard ni glissement.
         let target = hold.target - hold.offset;
-        let omega = TAU * p.hold_frequency;
-        let accel =
-            (target - self.pos) * (omega * omega) - self.vel * (2.0 * p.hold_damping * omega);
-        self.vel += accel * dt;
-        self.pos += self.vel * dt;
+        // Sa vitesse est celle du geste, lissée sur quelques centièmes de
+        // seconde : elle donne l'élan au lâcher (rien si la main s'est
+        // arrêtée) et le balancement du dessin.
+        if dt > 0.0 {
+            let gesture = (target - self.pos) * (1.0 / dt);
+            self.vel = self.vel.lerp(gesture, 1.0 - (-dt / THROW_SMOOTHING).exp());
+        }
+        self.pos = target;
     }
 
     fn land(&mut self, surface: &Surface, world: &World, input: &Input) {
         let p = self.def.physics;
         let impact = self.vel.y.max(0.0);
+        self.touch_down(impact);
+        if impact > p.bounce_min_speed && p.bounce > 0.0 {
+            self.vel.y = -impact * p.bounce;
+            self.vel.x *= 0.75;
+            return;
+        }
+        self.vel.x *= 0.5;
+        self.settle(surface, impact, world, input);
+    }
+
+    /// Ce qui se voit et s'entend quand il touche une surface : l'événement,
+    /// l'écrasement, les oreilles, la poussière.
+    fn touch_down(&mut self, impact: f32) {
         self.events.push(PetEvent::Landed { impact });
         self.squash_kick((impact * 0.0016).min(3.2));
         self.anim.ear.kick((impact * 0.004).min(6.0));
         if impact > 420.0 {
             self.emit_dust(impact);
         }
-        if impact > p.bounce_min_speed && p.bounce > 0.0 {
-            self.vel.y = -impact * p.bounce;
-            self.vel.x *= 0.75;
-            return;
-        }
+    }
+
+    /// Il se pose sur `surface` (après un choc d'`impact` pt/s) : il y reste,
+    /// tourné vers où il allait, et choisit sa réaction d'atterrissage.
+    fn settle(&mut self, surface: &Surface, impact: f32, world: &World, input: &Input) {
+        let p = self.def.physics;
         // Lancé, il se pose tourné vers où il allait. Heurté, il est parti à
         // reculons et garde son sens ; un animal desktopPet, qui n'a pas d'idée
         // à lui pour aller ailleurs, foncerait de nouveau sur l'autre : il
@@ -1147,7 +1587,7 @@ impl Pet {
             self.anim.roll_rate = self.anim.roll_rate.max(self.anim.roll_left.abs() / 0.15);
         }
         self.vel.y = 0.0;
-        self.vel.x *= 0.5;
+        self.slide = self.vel.x.clamp(-MAX_SLIDE, MAX_SLIDE);
         self.set_ground(surface);
         let def = Arc::clone(&self.def);
         let own = &def.behaviors[self.behavior].on_land;
@@ -1169,6 +1609,7 @@ impl Pet {
         self.support = Support::Air;
         self.ground_ref = None;
         self.walking_off = false;
+        self.take_off();
         let def = Arc::clone(&self.def);
         let behavior = &def.behaviors[self.behavior];
         if !behavior.motion.is_airborne() {
@@ -1237,7 +1678,7 @@ impl Pet {
         self.behavior_time += dt;
         let def = Arc::clone(&self.def);
         let behavior = &def.behaviors[self.behavior];
-        if behavior.clip.is_some() {
+        if let Some(clip) = &behavior.clip {
             self.clip_timer += dt;
             loop {
                 let interval = self.clip_interval();
@@ -1246,6 +1687,10 @@ impl Pet {
                 }
                 self.clip_timer -= interval;
                 self.clip_step += 1;
+                let looping = behavior.duration != Duration::Clip || self.support == Support::Held;
+                if looping || self.clip_step < self.clip_total {
+                    self.cue_sounds(Some(clip.frame_index_at(self.clip_step)));
+                }
             }
         }
         let desktoppet = def.rules == Rules::DesktopPet;
@@ -1292,6 +1737,27 @@ impl Pet {
                     def.default_ground()
                 };
                 self.enter(next);
+            }
+        }
+    }
+
+    /// Sons du comportement en cours prévus au début (`frame` vide) ou sur
+    /// cette image de sa séquence, chacun selon sa chance.
+    fn cue_sounds(&mut self, frame: Option<usize>) {
+        if self.leaving.is_some_and(|l| l.fade.is_some()) {
+            return;
+        }
+        let def = Arc::clone(&self.def);
+        for cue in &def.behaviors[self.behavior].sounds {
+            if cue.frame == frame && self.voice.chance(cue.chance) {
+                let clips = def.sounds.get(cue.sound).map_or(0, |s| s.clips.len());
+                if clips > 0 {
+                    let clip = self.voice.next_u32() as usize % clips;
+                    self.events.push(PetEvent::Sound {
+                        sound: cue.sound,
+                        clip,
+                    });
+                }
             }
         }
     }
@@ -1346,6 +1812,11 @@ impl Pet {
             }),
             Duration::Forever => f32::INFINITY,
         };
+        self.cue_sounds(None);
+        // L'image du premier pas peut aussi avoir son son.
+        if behavior.clip.is_some() {
+            self.cue_sounds(Some(0));
+        }
         match &behavior.motion {
             Motion::Turn => {
                 self.facing = -self.facing;
@@ -1356,6 +1827,9 @@ impl Pet {
                 self.vel = Vec2::new(vx * self.facing, -vy);
                 self.support = Support::Air;
                 self.ground_ref = None;
+                self.vel += self.carry;
+                self.carry = Vec2::ZERO;
+                self.air_time = 0.0;
                 self.squash_kick(1.4);
             }
             Motion::Look => self.anim.glance_timer = 0.0,
@@ -1375,14 +1849,15 @@ impl Pet {
             let (frame, _) = self.screen.unwrap_or_default();
             let flipped = self.facing > 0.0;
             for c in &behavior.children {
-                let x = self.eval(if flipped { &c.x_flipped } else { &c.x }).trunc() as f32;
-                let y = self.eval(&c.y).trunc() as f32;
+                let x = self.eval_position(if flipped { &c.x_flipped } else { &c.x });
+                let y = self.eval_position(&c.y);
                 self.children.push(ChildRequest {
                     behavior: c.next,
                     pos: Vec2::new(frame.x + x + p.width * 0.5, frame.y + y + p.height),
                     facing: self.facing,
                     depth: self.child_depth + 1,
                     skin: self.skin,
+                    rand_s: self.rand_s,
                 });
             }
         }
@@ -1392,16 +1867,16 @@ impl Pet {
         self.screen = world.screen_at(self.pos).map(|s| (s.frame, s.usable));
     }
 
-    /// Évalue une expression desktopPet avec les mesures de l'écran et de l'animal.
+    /// Évalue une expression desktopPet avec les mesures de l'écran et de
+    /// l'animal, en pixels du fichier d'origine (voir [`PetDef::unit`]) : ses
+    /// positions et ses nombres de pas restent ceux prévus pour des images à
+    /// leur taille d'origine, quelle que soit la taille d'affichage.
     fn eval(&mut self, expr: &Expr) -> f64 {
         let (frame, usable) = self.screen.unwrap_or_default();
         let p = self.def.physics;
+        let unit = f64::from(self.def.unit).max(1e-6);
         let behavior = &self.def.behaviors[self.behavior];
         let offset = behavior.clip.as_ref().map_or(0.0, |c| c.offset_y);
-        let scale = match &behavior.motion {
-            Motion::Script(s) => f64::from(s.scale),
-            _ => 1.0,
-        };
         let image_x = f64::from(self.pos.x - p.width * 0.5 - frame.x);
         let image_y = f64::from(self.pos.y - p.height + offset - frame.y);
         let rand_s = f64::from(self.rand_s);
@@ -1409,20 +1884,26 @@ impl Pet {
         let random = f64::from(self.rng.next_u32() % 100);
         expr.eval(&mut |name| {
             Some(match name {
-                "screenW" => f64::from(frame.w),
-                "screenH" => f64::from(frame.h),
-                "areaW" => f64::from(usable.right() - frame.x),
-                "areaH" => f64::from(usable.bottom() - frame.y),
-                "imageW" => f64::from(p.width),
-                "imageH" => f64::from(p.height),
-                "imageX" => image_x,
-                "imageY" => image_y,
+                "screenW" => f64::from(frame.w) / unit,
+                "screenH" => f64::from(frame.h) / unit,
+                "areaW" => f64::from(usable.right() - frame.x) / unit,
+                "areaH" => f64::from(usable.bottom() - frame.y) / unit,
+                "imageW" => f64::from(p.width) / unit,
+                "imageH" => f64::from(p.height) / unit,
+                "imageX" => image_x / unit,
+                "imageY" => image_y / unit,
                 "random" => random,
                 "randS" => rand_s,
-                "scale" => scale,
+                // Le zoom de desktopPet : ses images sont ici à leur taille d'origine.
+                "scale" => 1.0,
                 _ => return None,
             })
         })
+    }
+
+    /// Une position desktopPet (pixels entiers du fichier), en points.
+    fn eval_position(&mut self, expr: &Expr) -> f32 {
+        self.eval(expr).trunc() as f32 * self.def.unit
     }
 
     fn choose(&mut self, list: &[Transition], world: &World, input: &Input) -> Option<usize> {
@@ -1452,6 +1933,11 @@ impl Pet {
             Condition::CursorNear(r) => cursor_dist.is_some_and(|d| d <= r),
             Condition::CursorFar(r) => cursor_dist.is_none_or(|d| d > r),
             Condition::Grounded => surface_kind.is_some(),
+            Condition::Typing => input.typing(),
+            Condition::Away => input.away(),
+            Condition::Present => !input.away(),
+            Condition::Morning => (6.0..11.0).contains(&input.local_hour),
+            Condition::Evening => (18.0..22.0).contains(&input.local_hour),
         }
     }
 
@@ -1467,6 +1953,16 @@ impl Pet {
         let looking = behavior.motion == Motion::Look;
         let sprites = matches!(self.def.appearance, Appearance::Sprites(_));
         let drawn = self.def.drawn();
+        let realistic = self.realistic;
+        // Physique réaliste : l'inertie des oreilles et de la queue quand le
+        // corps accélère (une fenêtre qui l'emporte, un choc…).
+        let inertia = if realistic && dt > 0.0 {
+            let accel = (self.vel + self.carry - self.prev_world_vel) * (1.0 / dt);
+            -accel.x * self.facing
+        } else {
+            0.0
+        } + self.wind * self.facing * 0.5;
+        let wind = self.wind;
         let Self {
             anim: a,
             rng,
@@ -1486,7 +1982,8 @@ impl Pet {
 
         // Démarche calée sur la distance parcourue : les pattes ne glissent pas.
         let speed = if grounded { vel.x.abs() } else { 0.0 };
-        let stride = p.height * 0.9;
+        // Au galop, la foulée s'allonge (des bonds plutôt que des pas pressés).
+        let stride = self.def.stride() * (1.0 + RUN_STRIDE * a.run);
         a.gait_phase = (a.gait_phase + speed / stride * TAU * dt).rem_euclid(TAU);
         a.walk = damp(
             a.walk,
@@ -1514,6 +2011,18 @@ impl Pet {
         a.sleep = damp(a.sleep, weight(Pose::Sleep), 2.0, dt);
         a.dangle = damp(a.dangle, weight(Pose::Dangle), 9.0, dt);
         a.air = damp(a.air, weight(Pose::Air), 12.0, dt);
+        a.graze = damp(a.graze, weight(Pose::Graze), 2.6, dt);
+        if a.graze > 0.02 {
+            // Deux coups de dents par seconde, un peu irréguliers.
+            let rate = TAU * (1.9 + 0.5 * (a.nibble_phase * 0.37).sin());
+            a.nibble_phase = (a.nibble_phase + rate * dt).rem_euclid(TAU * 8.0);
+        }
+        let rise = if pose == Pose::Air {
+            (-vel.y / (0.3 * p.terminal_velocity)).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        a.rise = damp(a.rise, rise, 12.0, dt);
 
         a.squash.target = if pose == Pose::Air && !drawn.squash {
             -(vel.y.abs() / p.terminal_velocity).min(1.0) * 0.08
@@ -1535,12 +2044,31 @@ impl Pet {
             (-vel.y * 0.0007).clamp(-0.7, 0.7)
         } else {
             0.0
-        } - a.sleep * 0.25;
+        } - a.sleep * 0.25
+            + (inertia * 0.00018).clamp(-0.45, 0.45);
+        // Au calme, une oreille frémit de temps en temps et la queue bat un
+        // coup (les dessins vectoriels seulement : les images ont les leurs).
+        if grounded && a.sleep < 0.5 && !sprites {
+            a.ear_timer -= dt;
+            if a.ear_timer <= 0.0 {
+                let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                a.ear.kick(side * rng.range(2.5, 4.5));
+                a.ear_timer = rng.range(2.5, 8.0);
+            }
+            a.tail_timer -= dt;
+            if a.tail_timer <= 0.0 {
+                let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                a.tail.kick(side * rng.range(5.0, 8.0));
+                a.tail_timer = rng.range(2.0, 9.0) / (1.0 + a.walk);
+            }
+        }
         a.ear.step(dt);
+        a.tail.target = (inertia * 0.00025).clamp(-0.6, 0.6);
+        a.tail.step(dt);
 
         // Balancement dans le repère de l'écran : tiré vers la droite, le corps
         // reste en arrière, à gauche (rotation positive, y vers le bas).
-        a.swing.target = if pose == Pose::Dangle {
+        a.swing.target = if pose == Pose::Dangle && !realistic {
             (vel.x * 0.0012).clamp(-0.75, 0.75)
         } else {
             0.0
@@ -1588,6 +2116,7 @@ impl Pet {
 
         let period = lerp(3.6, 5.4, a.sleep);
         a.breath_phase = (a.breath_phase + TAU * dt / period).rem_euclid(TAU);
+        a.clock = (a.clock + dt).rem_euclid(CLOCK_LOOP);
 
         // Regard : le curseur s'il est proche, sinon des coups d'œil.
         let head = *pos + Vec2::new(*facing * p.width * 0.32, -p.height * 0.72);
@@ -1635,6 +2164,29 @@ impl Pet {
             }
         } else {
             a.dust_timer = 0.05;
+        }
+
+        // Un coup de vent emporte des feuilles devant lui.
+        let gust = wind.abs() / crate::surprise::GUST_PEAK;
+        if gust > 0.25 {
+            a.leaf_timer -= dt * gust;
+            if a.leaf_timer <= 0.0 && particles.len() < MAX_PARTICLES {
+                a.leaf_timer = rng.range(0.08, 0.22);
+                let dir = wind.signum();
+                // Elles traversent les abords de l'animal (sa fenêtre est plus
+                // large) et s'effacent avant d'en sortir.
+                let half = (p.width * 0.95).max(p.height * 1.2).max(55.0);
+                let speed = rng.range(170.0, 320.0) * gust.max(0.5);
+                particles.push(Particle {
+                    kind: ParticleKind::Leaf,
+                    pos: *pos + Vec2::new(-dir * half, -rng.range(-4.0, p.height * 1.3)),
+                    vel: Vec2::new(dir * speed, 0.0),
+                    age: 0.0,
+                    life: 2.0 * half / speed,
+                    size: rng.range(4.0, 6.5) * (p.height / 60.0).clamp(0.6, 1.5),
+                    phase: rng.range(0.0, TAU),
+                });
+            }
         }
 
         // Bulles de sommeil.
@@ -1690,6 +2242,10 @@ impl Pet {
                 ParticleKind::Bubble => {
                     p.vel.x = (p.age * 2.3 + p.phase).sin() * 9.0;
                 }
+                ParticleKind::Leaf => {
+                    // Elle voltige : elle monte et descend en tournoyant.
+                    p.vel.y = (p.age * 7.0 + p.phase).sin() * 45.0 + 12.0;
+                }
             }
             p.pos += p.vel * dt;
         }
@@ -1713,6 +2269,53 @@ impl Pet {
 
     /// Image dans la variante de couleur de l'animal : les indices du fichier
     /// désignent la première variante (desktopPet).
+    /// Image affichée au pas `step` : celle de la séquence, ou, vers la fin
+    /// du pas, une image intermédiaire vers celle du pas suivant. Le passage
+    /// dure au plus [`INBETWEEN_TIME`] par image intermédiaire : une pose
+    /// longue reste tenue, puis l'animal change de pose en douceur.
+    fn sprite_frame(&self, clip: &SpriteClip, step: usize, looping: bool) -> u32 {
+        let frame = clip.frame_at(step);
+        let Appearance::Sprites(sheet) = &self.def.appearance else {
+            return frame;
+        };
+        // Pas de pas suivant : la séquence s'arrête (ou garde sa dernière image).
+        let total = self.clip_total.max(1);
+        let last = |s: usize| !looping && s + 1 >= total;
+        if step != self.clip_step || last(step) {
+            return frame;
+        }
+        // Une image tenue plusieurs pas (desktopPet double souvent ses images) :
+        // le passage vers la suivante se répartit sur toute la tenue, pas
+        // seulement sur son dernier pas.
+        let mut end = step;
+        while end - step < MAX_HELD_STEPS && !last(end) && clip.frame_at(end + 1) == frame {
+            end += 1;
+        }
+        if last(end) {
+            return frame;
+        }
+        let next = clip.frame_at(end + 1);
+        let Some((first, count)) = (next != frame)
+            .then(|| sheet.inbetween(frame, next))
+            .flatten()
+        else {
+            return frame;
+        };
+        let mut start = step;
+        while step - start < MAX_HELD_STEPS && start > 0 && clip.frame_at(start - 1) == frame {
+            start -= 1;
+        }
+        let interval = self.clip_interval();
+        let hold = interval * (end - start + 1) as f32;
+        let n = count as f32;
+        let span = (hold * n / (n + 1.0)).min(n * INBETWEEN_TIME);
+        let into = (step - start) as f32 * interval + self.clip_timer - (hold - span);
+        if into < 0.0 || span <= 0.0 {
+            return frame;
+        }
+        first + ((into / span * n) as u32).min(count - 1)
+    }
+
     fn skinned(&self, frame: u32) -> u32 {
         match &self.def.appearance {
             Appearance::Sprites(sheet) if sheet.skins > 1 => {
@@ -1747,7 +2350,7 @@ impl Pet {
                 };
                 let t = (self.clip_step as f32 / total as f32).min(1.0);
                 (
-                    Some(self.skinned(clip.frame_at(step))),
+                    Some(self.skinned(self.sprite_frame(clip, step, looping))),
                     if self.support == Support::Held {
                         0.0
                     } else {
@@ -1765,7 +2368,13 @@ impl Pet {
         let opacity = opacity * fade;
         PetView {
             id: self.id,
-            ground: self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
+            // Tenu, il est dessiné exactement sous le curseur, sans attendre
+            // le prochain pas de la simulation.
+            ground: match &self.hold {
+                Some(hold) if self.realistic => self.held_ground(hold.target, hold.offset),
+                Some(hold) => hold.target - hold.offset,
+                None => self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
+            },
             facing: a.flip,
             pose: PoseSignals {
                 gait_phase: a.gait_phase,
@@ -1778,12 +2387,16 @@ impl Pet {
                 squash: a.squash.value,
                 lean: a.lean.value,
                 ear: a.ear.value,
-                tail: a.tail_phase.sin() * (0.12 + a.walk * 0.1),
+                tail: a.tail.value + a.tail_phase.sin() * (0.03 + a.walk * 0.07),
                 blink: a.blink,
                 breath: a.breath_phase.sin(),
                 look: a.look,
                 swing: a.swing.value,
-                roll: a.roll,
+                roll: a.roll + self.angle + self.wind_lean(),
+                graze: a.graze,
+                nibble: (a.nibble_phase).sin(),
+                rise: a.rise,
+                clock: a.clock,
             },
             shadow: self.shadow,
             sprite_frame,
@@ -1792,6 +2405,7 @@ impl Pet {
             particles: &self.particles,
             support: self.support,
             behavior: &behavior.name,
+            grip: self.hold.map(|hold| hold.target),
         }
     }
 }
@@ -1804,6 +2418,36 @@ pub struct Flock {
     next_id: u32,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     collisions: bool,
+    /// Change quand un animal arrive, s'en va ou part (voir [`Flock::generation`]).
+    generation: u64,
+    /// L'animal qui attend, immobile (son menu est ouvert) : voir
+    /// [`Flock::hold_still`].
+    still: Option<u32>,
+    /// Physique réaliste (voir [`crate::physics`]), et ce qu'il lui faut :
+    /// le suivi des fenêtres et, à chaque pas, les dos des animaux.
+    realistic: bool,
+    tracker: Tracker,
+    backs: Vec<Back>,
+    /// L'utilisateur est parti (voir [`Input::away`]).
+    away: bool,
+    /// Le coup de vent du moment.
+    gust: Option<crate::surprise::Gust>,
+    /// Soucoupes en visite.
+    saucers: Vec<crate::surprise::Saucer>,
+    /// Le pointeur au dernier [`Flock::advance`].
+    last_cursor: Option<Vec2>,
+}
+
+/// Distance d'un point au segment `[a, b]`.
+fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    let t = if len2 > 0.0 {
+        ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p - (a + ab * t)).length()
 }
 
 /// Élans donnés à deux animaux qui se rentrent dedans, ou rien.
@@ -1813,16 +2457,16 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
     }
     let (pa, pb) = (a.def.physics, b.def.physics);
     let dx = b.pos.x - a.pos.x;
-    // Les corps se touchent (museaux un peu écrasés), à la même hauteur.
-    if dx.abs() >= 0.47 * (pa.width + pb.width) {
+    // Ils se rapprochent : l'un au moins va vers l'autre (`side` : côté de b).
+    let side = if dx == 0.0 { -a.facing } else { dx.signum() };
+    // Les dessins se touchent, à la même hauteur.
+    if dx.abs() >= a.reach_toward(side) + b.reach_toward(-side) {
         return None;
     }
     let (a_top, b_top) = (a.pos.y - pa.height * 0.8, b.pos.y - pb.height * 0.8);
     if a.pos.y <= b_top || b.pos.y <= a_top {
         return None;
     }
-    // Ils se rapprochent : l'un au moins va vers l'autre.
-    let side = if dx == 0.0 { -a.facing } else { dx.signum() };
     let closing = (a.vel.x - b.vel.x) * side;
     let airborne = a.support == Support::Air || b.support == Support::Air;
     if closing < if airborne { 40.0 } else { 6.0 } {
@@ -1838,6 +2482,95 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
     Some((push(&pa, -side), push(&pb, side)))
 }
 
+/// Ces deux animaux peuvent-ils se heurter comme des corps (physique
+/// réaliste) ? Il en faut un en l'air ; ni l'un ni l'autre ne doit être un
+/// personnage secondaire ou en partance, ni porté par l'autre.
+fn physical_pair(a: &Pet, b: &Pet) -> bool {
+    let flying = |p: &Pet| p.support == Support::Air;
+    let free = |p: &Pet| !p.is_child() && p.leaving.is_none() && !p.finished;
+    let carried = |p: &Pet, by: &Pet| {
+        p.support
+            == Support::Ground {
+                surface: crate::physics::pet_surface(by.id),
+            }
+    };
+    // Arrivant d'en haut sur un animal au sol, il se pose sur son dos (une
+    // surface), au lieu de rebondir sur son corps.
+    let landing_on = |p: &Pet, by: &Pet| {
+        flying(p) && by.back().is_some() && p.body().center.y < by.pos.y - by.def.physics.height
+    };
+    (flying(a) || flying(b))
+        && free(a)
+        && free(b)
+        && !carried(a, b)
+        && !carried(b, a)
+        && !landing_on(a, b)
+        && !landing_on(b, a)
+}
+
+/// Deux corps se heurtent : échange d'élan au point de contact (avec
+/// rotation), puis on les sépare. Un animal tenu ne bouge pas (la main le
+/// tient) ; un animal au sol encaisse le choc, et part à la renverse si le
+/// choc est rude.
+fn bodies_hit(
+    a: &mut Pet,
+    b: &mut Pet,
+    contact: crate::physics::Contact,
+    world: &World,
+    input: &Input,
+) {
+    use crate::physics::{PET_FRICTION, PET_RESTITUTION, Rigid, collide_pair};
+    let rigid = |p: &Pet| match p.support {
+        Support::Held => Rigid::fixed(p.vel),
+        _ => p.rigid(),
+    };
+    let (mut ra, mut rb) = (rigid(a), rigid(b));
+    let (ca, cb) = (a.body().center, b.body().center);
+    let closing = collide_pair(
+        &mut ra,
+        ca,
+        &mut rb,
+        cb,
+        contact.point,
+        contact.normal,
+        PET_RESTITUTION,
+        PET_FRICTION,
+    );
+    // Séparés le long de la normale, selon qui peut bouger.
+    let movable = |p: &Pet| if p.support == Support::Air { 1.0 } else { 0.0 };
+    let (ma, mb) = (movable(a), movable(b));
+    if ma + mb > 0.0 {
+        let push = contact.normal * (contact.depth / (ma + mb));
+        a.pos -= push * ma;
+        b.pos += push * mb;
+        // Poussé vers le bas, il ne passe pas sous le sol.
+        a.keep_above_floor(world);
+        b.keep_above_floor(world);
+    }
+    for (pet, after) in [(a, ra), (b, rb)] {
+        match pet.support {
+            Support::Air => {
+                pet.vel = after.vel;
+                pet.spin = after
+                    .spin
+                    .clamp(-crate::physics::MAX_SPIN, crate::physics::MAX_SPIN);
+                if closing > 150.0 {
+                    pet.events.push(PetEvent::Bumped { speed: closing });
+                    pet.squash_kick(-0.6);
+                }
+            }
+            Support::Ground { .. } if closing > 320.0 && pet.can_bump() => {
+                // Bousculé : il part avec l'élan reçu, un peu vers le haut.
+                let world_vel = pet.vel + pet.carry;
+                let push = after.vel - world_vel + Vec2::new(0.0, -closing * 0.25);
+                let knocked = Vec2::new(push.x, push.y.min(-120.0));
+                pet.knock(knocked, world, input);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// `a` vient-il, en marchant, de toucher `b` posé au même niveau ?
 fn meeting(a: &Pet, b: &Pet) -> bool {
     if !a.can_meet() || !b.can_meet() || (a.pos.y - b.pos.y).abs() > 2.0 {
@@ -1847,8 +2580,9 @@ fn meeting(a: &Pet, b: &Pet) -> bool {
     if dx == 0.0 || a.vel.x * dx.signum() <= 1.0 {
         return false;
     }
-    // Ils se touchent à ce pas-ci (corps côte à côte, de leur largeur).
-    let reach = 0.5 * (a.def.physics.width + b.def.physics.width);
+    // Leurs dessins se touchent à ce pas-ci.
+    let side = dx.signum();
+    let reach = a.reach_toward(side) + b.reach_toward(-side);
     let before = (b.prev_pos.x - a.prev_pos.x).abs();
     dx.abs() <= reach && before > reach
 }
@@ -1943,15 +2677,30 @@ impl Flock {
         let id = self.next_id;
         self.next_id += 1;
         self.pets.push(Pet::spawn(id, def, seed, world, x));
+        self.generation += 1;
         id
     }
 
     pub fn remove(&mut self, id: u32) {
+        let before = self.pets.len();
         self.pets.retain(|p| p.id() != id);
+        if self.pets.len() != before {
+            self.generation += 1;
+        }
     }
 
     pub fn clear(&mut self) {
         self.pets.clear();
+        self.generation += 1;
+    }
+
+    /// Change à chaque animal qui arrive, qui commence à dire au revoir ou
+    /// qui quitte le troupeau : tant qu'elle ne change pas, la liste des
+    /// animaux (et de ceux qui partent) est la même. De quoi ne refaire les
+    /// fenêtres et le menu que quand il le faut.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     #[must_use]
@@ -1973,6 +2722,38 @@ impl Flock {
         self.collisions = on;
     }
 
+    /// Cet animal attend, immobile, sans que le temps passe pour lui (on a
+    /// ouvert son menu : il reste sous le curseur) ; les autres continuent.
+    /// `None` : il reprend où il en était.
+    pub fn hold_still(&mut self, id: Option<u32>) {
+        self.still = id;
+        if let Some(pet) = id.and_then(|id| self.pets.iter_mut().find(|p| p.id == id)) {
+            // Plus rien à interpoler : il est dessiné là où il est.
+            pet.prev_pos = pet.pos;
+        }
+    }
+
+    /// L'animal qui attend, s'il y en a un.
+    #[must_use]
+    pub fn still(&self) -> Option<u32> {
+        self.still
+    }
+
+    /// Physique réaliste (voir [`crate::physics`]) ou classique, celle
+    /// d'eSheep et de desktopPet.
+    pub fn set_realistic(&mut self, on: bool) {
+        if on == self.realistic {
+            return;
+        }
+        self.realistic = on;
+        self.tracker = Tracker::default();
+    }
+
+    #[must_use]
+    pub fn realistic(&self) -> bool {
+        self.realistic
+    }
+
     #[must_use]
     pub fn collisions(&self) -> bool {
         self.collisions
@@ -1981,16 +2762,25 @@ impl Flock {
     /// Avance la simulation du temps écoulé et renvoie le facteur
     /// d'interpolation à passer à [`Pet::view`].
     pub fn advance(&mut self, elapsed: f32, world: &World, input: &Input) -> f32 {
-        // Au-delà d'un quart de seconde (Mac réveillé, débogueur…), on ne rattrape pas.
-        self.accumulator += elapsed.clamp(0.0, 0.25);
+        self.react(elapsed, world, input);
+        // Au-delà d'un dixième de seconde (Mac réveillé, débogueur…), on ne
+        // rattrape pas : l'animal reprend où il était au lieu de bondir.
+        self.accumulator += elapsed.clamp(0.0, 0.1);
         while self.accumulator >= TICK {
-            for pet in &mut self.pets {
-                pet.step(TICK, world, input);
-            }
-            if self.collisions {
-                self.collide(world, input);
+            self.step_surprises(world, input);
+            if self.realistic {
+                self.step_realistic(world, input);
             } else {
-                self.meet(world, input);
+                for pet in &mut self.pets {
+                    if self.still != Some(pet.id) {
+                        pet.step(TICK, world, input);
+                    }
+                }
+                if self.collisions {
+                    self.collide(world, input);
+                } else {
+                    self.meet(world, input);
+                }
             }
             self.adopt_children(world);
             self.accumulator -= TICK;
@@ -1998,10 +2788,176 @@ impl Flock {
         self.accumulator / TICK
     }
 
+    /// Un coup de vent se lève, vers la droite (`dir` positif) ou la gauche,
+    /// pour à peu près `seconds` secondes.
+    pub fn blow(&mut self, dir: f32, seconds: f32) {
+        self.gust = Some(crate::surprise::Gust::new(dir, seconds));
+    }
+
+    /// Le coup de vent du moment.
+    #[must_use]
+    pub fn gust(&self) -> Option<&crate::surprise::Gust> {
+        self.gust.as_ref()
+    }
+
+    /// Une soucoupe volante vient emprunter un animal posé (pas un
+    /// personnage secondaire, ni un animal qui part ou qu'on tient) ; elle a
+    /// son numéro, comme un animal. `None` s'il n'y en a aucun.
+    pub fn invite_saucer(&mut self, world: &World, seed: u64) -> Option<u32> {
+        let mut rng = crate::math::Rng::new(seed);
+        let busy: Vec<u32> = self
+            .saucers
+            .iter()
+            .map(crate::surprise::Saucer::target)
+            .collect();
+        let candidates: Vec<&Pet> = self
+            .pets
+            .iter()
+            .filter(|p| p.can_react() && !busy.contains(&p.id) && self.still != Some(p.id))
+            .collect();
+        let pick = (rng.next_u32() as usize) % candidates.len().max(1);
+        let pet = candidates.get(pick)?;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.saucers.push(crate::surprise::Saucer::new(
+            id,
+            pet.id,
+            pet.position(),
+            world.arena(),
+            rng.next_u32().into(),
+        ));
+        self.generation += 1;
+        Some(id)
+    }
+
+    /// Les soucoupes en visite.
+    #[must_use]
+    pub fn saucers(&self) -> &[crate::surprise::Saucer] {
+        &self.saucers
+    }
+
+    /// Un pas des surprises : le vent souffle sur chacun (et ils le
+    /// remarquent quand il se lève), les soucoupes font leur visite.
+    fn step_surprises(&mut self, world: &World, input: &Input) {
+        let blowing = self.gust.as_mut().is_some_and(|gust| gust.step(TICK));
+        let accel = match &mut self.gust {
+            Some(gust) if blowing => {
+                if !gust.noticed && gust.strength() > 0.45 {
+                    gust.noticed = true;
+                    for pet in &mut self.pets {
+                        if pet.can_react() && !pet.is_asleep() && pet.rng.chance(0.6) {
+                            let def = Arc::clone(&pet.def);
+                            if let Some(next) = pet.choose(&def.reflexes.wind, world, input) {
+                                pet.enter(next);
+                            }
+                        }
+                    }
+                }
+                gust.accel()
+            }
+            Some(_) => {
+                self.gust = None;
+                0.0
+            }
+            None => 0.0,
+        };
+        for pet in &mut self.pets {
+            pet.wind = accel;
+        }
+        if self.saucers.is_empty() {
+            return;
+        }
+        for saucer in &mut self.saucers {
+            let pet = self.pets.iter_mut().find(|p| p.id == saucer.target());
+            saucer.step(TICK, pet, world);
+        }
+        let before = self.saucers.len();
+        self.saucers.retain(|s| !s.is_gone());
+        if self.saucers.len() != before {
+            self.generation += 1;
+        }
+    }
+
+    /// Ce que fait l'utilisateur, vu par tout le troupeau : un pointeur qui
+    /// file près d'un animal le fait sursauter ; parti, il les laisse
+    /// s'endormir ; de retour, il les réveille.
+    fn react(&mut self, elapsed: f32, world: &World, input: &Input) {
+        let away = input.away();
+        if away != self.away {
+            self.away = away;
+            for pet in &mut self.pets {
+                pet.user_away(away);
+            }
+        }
+        let from = self.last_cursor;
+        self.last_cursor = input.cursor;
+        let (Some(from), Some(to)) = (from, input.cursor) else {
+            return;
+        };
+        let speed = (to - from).length() / elapsed.max(1.0 / 240.0);
+        if elapsed <= 0.0 || speed < STARTLE_SPEED {
+            return;
+        }
+        for pet in &mut self.pets {
+            if self.still != Some(pet.id) {
+                pet.startle(from, to, world, input);
+            }
+        }
+    }
+
+    /// Un pas en physique réaliste : le suivi des fenêtres (et les dos des
+    /// animaux, qui sont solides en mode collisions), chaque animal, puis
+    /// les chocs entre eux.
+    fn step_realistic(&mut self, world: &World, input: &Input) {
+        self.backs.clear();
+        if self.collisions {
+            self.backs.extend(self.pets.iter().filter_map(Pet::back));
+        }
+        // Le suivi est mis de côté le temps du pas : les animaux le lisent
+        // pendant que le troupeau les change.
+        let mut tracker = std::mem::take(&mut self.tracker);
+        tracker.update(world, TICK, &self.backs);
+        for pet in &mut self.pets {
+            if self.still != Some(pet.id) {
+                pet.step_real(TICK, &tracker, input);
+            }
+        }
+        if self.collisions {
+            self.collide_bodies(tracker.world(), input);
+            self.collide(tracker.world(), input);
+        } else {
+            self.meet(tracker.world(), input);
+        }
+        self.tracker = tracker;
+    }
+
+    /// Chocs entre corps (physique réaliste, mode collisions) : un animal en
+    /// l'air heurte les autres, en l'air ou au sol ; tenu, il est comme la
+    /// main qui le tient. Deux animaux au sol se heurtent comme en physique
+    /// classique (`collide`), et l'un sur le dos de l'autre y est posé.
+    fn collide_bodies(&mut self, world: &World, input: &Input) {
+        for i in 0..self.pets.len() {
+            for j in i + 1..self.pets.len() {
+                let (left, right) = self.pets.split_at_mut(j);
+                let (a, b) = (&mut left[i], &mut right[0]);
+                if !physical_pair(a, b) || self.still == Some(a.id) || self.still == Some(b.id) {
+                    continue;
+                }
+                let Some(contact) = crate::physics::obb_contact(&a.body(), &b.body()) else {
+                    continue;
+                };
+                bodies_hit(a, b, contact, world, input);
+            }
+        }
+    }
+
     /// Deux animaux qui se rentrent dedans partent chacun à la renverse.
     fn collide(&mut self, world: &World, input: &Input) {
         for i in 0..self.pets.len() {
             for j in i + 1..self.pets.len() {
+                if self.is_still(i) || self.is_still(j) {
+                    continue;
+                }
                 let Some((push_i, push_j)) = bump(&self.pets[i], &self.pets[j]) else {
                     continue;
                 };
@@ -2017,7 +2973,11 @@ impl Flock {
     fn meet(&mut self, world: &World, input: &Input) {
         for i in 0..self.pets.len() {
             for j in 0..self.pets.len() {
-                if i == j || !meeting(&self.pets[i], &self.pets[j]) {
+                if i == j
+                    || self.is_still(i)
+                    || self.is_still(j)
+                    || !meeting(&self.pets[i], &self.pets[j])
+                {
                     continue;
                 }
                 let (a, b) = if i < j {
@@ -2038,6 +2998,35 @@ impl Flock {
         for pet in &mut self.pets {
             pet.leave(world, input);
         }
+        self.generation += 1;
+    }
+
+    /// Un animal de cette espèce (identifiant de sa définition) dit au
+    /// revoir : le dernier arrivé parmi ceux qui ne partent pas déjà (les
+    /// personnages secondaires finissent leur rôle d'eux-mêmes). Renvoie son
+    /// numéro, s'il y en avait un.
+    pub fn leave_one(&mut self, species: &str, world: &World, input: &Input) -> Option<u32> {
+        let pet = self.pets.iter_mut().rev().find(|p| {
+            !p.is_child() && !p.is_leaving() && !p.is_finished() && p.def.meta.id == species
+        })?;
+        pet.leave(world, input);
+        self.generation += 1;
+        Some(pet.id())
+    }
+
+    /// Cet animal-là (son numéro) dit au revoir, s'il ne part pas déjà et
+    /// n'est pas un personnage secondaire. Renvoie `true` s'il s'en va.
+    pub fn leave(&mut self, id: u32, world: &World, input: &Input) -> bool {
+        let Some(pet) = self
+            .pets
+            .iter_mut()
+            .find(|p| p.id() == id && !p.is_child() && !p.is_leaving() && !p.is_finished())
+        else {
+            return false;
+        };
+        pet.leave(world, input);
+        self.generation += 1;
+        true
     }
 
     /// Tous ensemble : chaque animal libre joue son comportement `together`.
@@ -2058,6 +3047,8 @@ impl Flock {
                 born.push((Arc::clone(&pet.def), pet.rng.next_u32(), request));
             }
         }
+        let before = self.pets.len();
+        let arrived = !born.is_empty();
         for (def, seed, request) in born {
             let id = self.next_id;
             self.next_id += 1;
@@ -2065,12 +3056,43 @@ impl Flock {
                 .push(Pet::child(id, def, u64::from(seed), world, request));
         }
         self.pets.retain(|p| !p.finished);
+        if arrived || self.pets.len() != before {
+            self.generation += 1;
+        }
     }
 
-    /// Activité la plus élevée du troupeau.
+    /// L'animal de ce rang attend-il, immobile ?
+    fn is_still(&self, index: usize) -> bool {
+        self.still.is_some() && self.still == self.pets.get(index).map(|p| p.id)
+    }
+
+    /// Activité la plus élevée du troupeau (l'animal qui attend, immobile,
+    /// n'en a pas).
     #[must_use]
     pub fn activity(&self) -> Option<Activity> {
-        self.pets.iter().map(Pet::activity).max()
+        // Une surprise en cours (soucoupe, vent) bouge à toute vitesse.
+        if !self.saucers.is_empty() || self.gust.is_some() {
+            return Some(Activity::Moving);
+        }
+        self.pets
+            .iter()
+            .filter(|p| self.still != Some(p.id))
+            .map(Pet::activity)
+            .max()
+    }
+
+    /// Images par seconde qu'il faut aux animaux qui bougent (voir
+    /// [`Pet::smooth_rate`]) ; 0 si aucun ne bouge.
+    #[must_use]
+    pub fn smooth_rate(&self) -> f32 {
+        if !self.saucers.is_empty() || self.gust.is_some() {
+            return f32::INFINITY;
+        }
+        self.pets
+            .iter()
+            .filter(|p| self.still != Some(p.id) && p.activity() == Activity::Moving)
+            .map(Pet::smooth_rate)
+            .fold(0.0, f32::max)
     }
 }
 
@@ -2118,7 +3140,7 @@ mod tests {
     "#;
 
     fn def() -> Arc<PetDef> {
-        Arc::new(parse_pet_toml(PET, |_| Ok(b"<svg/>".to_vec())).unwrap())
+        Arc::new(parse_pet_toml(PET, |_: &str| Ok(b"<svg/>".to_vec())).unwrap())
     }
 
     fn world() -> World {
@@ -2133,6 +3155,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK) as usize {
             pet.step(TICK, world, &input);
@@ -2235,6 +3258,37 @@ mod tests {
         assert!(matches!(pet.support(), Support::Ground { .. }));
     }
 
+    #[test]
+    fn a_slow_walk_needs_only_sixty_frames_per_second() {
+        let world = world();
+        let mut pet = Pet::spawn(0, def(), 6, &world, Some(700.0));
+        pet.step(TICK, &world, &Input::default());
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "en chute libre");
+        run(&mut pet, &world, 3.0);
+        pet.force("walk");
+        run(&mut pet, &world, 2.0);
+        assert!((pet.velocity().x.abs() - 60.0).abs() < 0.1);
+        assert_eq!(pet.smooth_rate(), SLOW_RATE, "au pas, à 60 pt/s");
+
+        let start = pet.position();
+        pet.grab(start - Vec2::new(0.0, 30.0), &world);
+        pet.step(TICK, &world, &Input::default());
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "tenu");
+
+        // Plus vite qu'un point par image à 60 images par seconde.
+        let fast = Arc::new(
+            parse_pet_toml(&PET.replace("speed = 60.0", "speed = 61.0"), |_: &str| {
+                Ok(b"<svg/>".to_vec())
+            })
+            .unwrap(),
+        );
+        let mut pet = Pet::spawn(0, fast, 6, &world, Some(700.0));
+        run(&mut pet, &world, 3.0);
+        pet.force("walk");
+        run(&mut pet, &world, 2.0);
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "à 61 pt/s");
+    }
+
     fn two_screens() -> World {
         World::new(vec![
             Screen {
@@ -2298,6 +3352,101 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn inbetweens_show_up_at_the_end_of_each_step() {
+        let world = world();
+        let def = Arc::new(
+            parse_pet_toml(
+                &crate::format::tests::strips_with_inbetweens(),
+                crate::format::tests::inbetweens_resolve,
+            )
+            .unwrap(),
+        );
+        // Marche à 10 images par seconde : chaque image dure 0,1 s, la
+        // seconde moitié montre l'image intermédiaire vers la suivante.
+        let mut pet = standing(def, &world, 700.0, -1.0, "marche");
+        let mut seen = Vec::new();
+        for _ in 0..(0.4 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            let frame = pet.view(1.0).sprite_frame.unwrap();
+            if seen.last() != Some(&frame) {
+                seen.push(frame);
+            }
+        }
+        assert_eq!(&seen[..6], &[4, 34, 5, 35, 6, 36], "{seen:?}");
+        // Après la dernière image de la marche, rien : elle est sautée.
+        assert!(!seen.contains(&37), "{seen:?}");
+    }
+
+    #[test]
+    fn inbetweens_spread_over_held_frames() {
+        let world = world();
+        let mut def = parse_pet_toml(
+            &crate::format::tests::strips_with_inbetweens(),
+            crate::format::tests::inbetweens_resolve,
+        )
+        .unwrap();
+        // Chaque image tenue deux pas, comme desktopPet le fait souvent : le
+        // passage vers la suivante se prend sur toute la tenue (0,2 s), pas
+        // seulement sur la fin du second pas.
+        let walk = def.behavior_index("marche").unwrap();
+        def.behaviors[walk].clip.as_mut().unwrap().frames = vec![4, 4, 5, 5, 6, 6, 7, 7];
+        let mut pet = standing(Arc::new(def), &world, 700.0, -1.0, "marche");
+        let mut shown: Vec<(u32, usize)> = Vec::new();
+        for _ in 0..(0.8 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            let frame = pet.view(1.0).sprite_frame.unwrap();
+            match shown.last_mut() {
+                Some((f, n)) if *f == frame => *n += 1,
+                _ => shown.push((frame, 1)),
+            }
+        }
+        let frames: Vec<u32> = shown.iter().map(|(f, _)| *f).collect();
+        assert_eq!(&frames[..6], &[4, 34, 5, 35, 6, 36], "{shown:?}");
+        // 0,08 s pour l'image intermédiaire (le plus long passage), 0,12 s
+        // pour l'image tenue ; avant, 0,05 et 0,15 s.
+        let ticks = |frame: u32| shown.iter().find(|(f, _)| *f == frame).unwrap().1;
+        assert!((9..=10).contains(&ticks(34)), "{shown:?}");
+        assert!((14..=15).contains(&ticks(5)), "{shown:?}");
+    }
+
+    #[test]
+    fn behaviors_play_their_sounds() {
+        let world = world();
+        let def = Arc::new(
+            parse_pet_toml(
+                &crate::format::tests::strips_with_sounds(),
+                crate::format::tests::sounds_resolve,
+            )
+            .unwrap(),
+        );
+        let sounds = |pet: &mut Pet| -> Vec<usize> {
+            pet.take_events()
+                .into_iter()
+                .filter_map(|e| match e {
+                    PetEvent::Sound { sound, clip } => {
+                        assert!(clip < pet.def.sounds[sound].clips.len());
+                        Some(sound)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // Le repos bêle dès qu'il commence.
+        let mut pet = standing(Arc::clone(&def), &world, 700.0, -1.0, "repos");
+        assert_eq!(sounds(&mut pet), vec![0]);
+        // La marche fait tinter la clochette sur sa troisième image, à chaque
+        // passage (trois passages de quatre images à 10 images par seconde).
+        let mut pet = standing(def, &world, 700.0, -1.0, "marche");
+        pet.take_events();
+        let mut bells = 0;
+        for _ in 0..(1.15 / TICK).round() as usize {
+            pet.step(TICK, &world, &Input::default());
+            bells += sounds(&mut pet).iter().filter(|s| **s == 1).count();
+        }
+        assert_eq!(bells, 3);
     }
 
     /// Animal posé au sol, dans le comportement voulu.
@@ -2387,16 +3536,35 @@ mod tests {
     }
 
     #[test]
-    fn a_held_pet_hangs_from_its_hold_point() {
+    fn a_held_pet_stays_where_it_was_caught() {
         let world = world();
         let mut pet = standing(strips(), &world, 700.0, -1.0, "repos");
-        let cursor = Vec2::new(650.0, 500.0);
-        pet.grab(cursor, &world);
+        // Attrapé par le bas, à droite des pattes.
+        let caught = pet.position() + Vec2::new(10.0, -3.0);
+        pet.grab(caught, &world);
         assert_eq!(pet.behavior_name(), "tenu");
-        run(&mut pet, &world, 3.0);
-        // Prise à (4, -16) du point d'appui, tourné vers la gauche.
-        let hang = pet.position() + Vec2::new(4.0, -16.0);
-        assert!((hang - cursor).length() < 0.5, "{:?}", pet.position());
+        // Comme une fenêtre : le point de prise reste sous le curseur, à
+        // chaque instant, sans glisser ni traîner derrière lui.
+        for i in 1..=120 {
+            let cursor = caught + Vec2::new(i as f32 * 3.0, -(i as f32) * 5.0);
+            pet.drag_to(cursor);
+            pet.step(TICK, &world, &Input::default());
+            let held = pet.position() + Vec2::new(10.0, -3.0);
+            assert!((held - cursor).length() < 1e-3, "{i} : {held:?} {cursor:?}");
+        }
+        // Tout en haut de l'écran aussi, et au-delà.
+        let top = Vec2::new(600.0, -40.0);
+        pet.drag_to(top);
+        run(&mut pet, &world, 0.5);
+        assert!((pet.position() + Vec2::new(10.0, -3.0) - top).length() < 1e-3);
+        // La main s'arrête avant de le lâcher : il tombe sans élan.
+        pet.release(&world);
+        assert!(pet.velocity().length() < 5.0, "{:?}", pet.velocity());
+        assert_eq!(
+            pet.behavior_name(),
+            "chute",
+            "lâché sans élan, il tombe simplement"
+        );
     }
 
     #[test]
@@ -2540,6 +3708,16 @@ mod tests {
         margin: f32,
         collisions: bool,
     ) -> (Arc<PetDef>, std::collections::BTreeMap<String, f32>) {
+        long_life_with(pet, minutes, margin, collisions, false)
+    }
+
+    fn long_life_with(
+        pet: &str,
+        minutes: f32,
+        margin: f32,
+        collisions: bool,
+        realistic: bool,
+    ) -> (Arc<PetDef>, std::collections::BTreeMap<String, f32>) {
         use std::collections::BTreeMap;
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../pets/{pet}/pet.toml"));
@@ -2547,6 +3725,7 @@ mod tests {
         let mut world = world();
         let mut flock = Flock::new();
         flock.set_collisions(collisions);
+        flock.set_realistic(realistic);
         for seed in 0..4 {
             flock.spawn(Arc::clone(&def), seed * 7919 + 1, &world, None);
         }
@@ -2569,6 +3748,7 @@ mod tests {
             let input = Input {
                 cursor: Some(Vec2::new(700.0, 700.0)),
                 local_hour: if t > minutes * 30.0 { 23.0 } else { 15.0 },
+                ..Input::default()
             };
             flock.advance(TICK, &world, &input);
             for pet in flock.pets() {
@@ -2580,8 +3760,13 @@ mod tests {
                         && p.x < 1440.0 + margin
                         && p.y > -margin
                         && p.y <= 825.0 + 0.01,
-                    "{p:?} {}",
-                    pet.behavior_name()
+                    "{p:?} {} angle {} spin {} vel {:?} carry {:?} support {:?} t {t}",
+                    pet.behavior_name(),
+                    pet.angle,
+                    pet.spin,
+                    pet.vel,
+                    pet.carry,
+                    pet.support
                 );
                 *seconds_in
                     .entry(pet.behavior_name().to_owned())
@@ -2614,13 +3799,275 @@ mod tests {
             .collect()
     }
 
+    fn bundled(name: &str) -> Arc<PetDef> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../pets/{name}/pet.toml"));
+        Arc::new(crate::format::load_pet(&path).unwrap())
+    }
+
+    /// Un troupeau de Lainou au repos sur le sol, côte à côte.
+    fn resting_flock(def: &Arc<PetDef>, count: u32, behavior: &str) -> (Flock, World) {
+        let world = world();
+        let mut flock = Flock::new();
+        for i in 0..count {
+            let id = flock.spawn(Arc::clone(def), u64::from(i) * 31 + 7, &world, None);
+            let floor = *world.floor_under(300.0).unwrap();
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos = Vec2::new(200.0 + 150.0 * i as f32, floor.y);
+            pet.prev_pos = pet.pos;
+            pet.set_ground(&floor);
+            assert!(pet.force(behavior));
+        }
+        (flock, world)
+    }
+
+    #[test]
+    fn a_rushing_cursor_startles_the_pets_it_brushes_past() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 8, "repos");
+        let y = flock.pets()[0].position().y - 25.0;
+        // Lent, ou loin : rien.
+        let slow = |x: f32| Input {
+            cursor: Some(Vec2::new(x, y)),
+            ..Input::default()
+        };
+        for step in 0..200 {
+            flock.advance(TICK, &world, &slow(100.0 + step as f32 * 2.0));
+        }
+        let far = |x: f32| Input {
+            cursor: Some(Vec2::new(x, y - 400.0)),
+            ..Input::default()
+        };
+        for step in 0..60 {
+            flock.advance(TICK, &world, &far(step as f32 * 40.0));
+        }
+        assert!(
+            flock.pets().iter().all(|p| p.behavior_name() != "surpris"),
+            "personne ne sursaute"
+        );
+        // Un geste vif qui les frôle tous (4 800 pt/s) : la plupart sursautent.
+        for step in 0..40 {
+            flock.advance(
+                TICK,
+                &world,
+                &Input {
+                    cursor: Some(Vec2::new(100.0 + step as f32 * 40.0, y)),
+                    ..Input::default()
+                },
+            );
+        }
+        let startled = flock
+            .pets()
+            .iter()
+            .filter(|p| matches!(p.behavior_name(), "surpris" | "bele"))
+            .count();
+        assert!(startled >= 3, "{startled} sur 8");
+        let events: Vec<PetEvent> = flock
+            .pets_mut()
+            .iter_mut()
+            .flat_map(Pet::take_events)
+            .collect();
+        assert!(events.contains(&PetEvent::Startled));
+    }
+
+    #[test]
+    fn pets_doze_off_when_the_user_is_away_and_wake_up_when_back() {
+        for name in ["lainou", "pelote"] {
+            let def = bundled(name);
+            let ground = if name == "lainou" { "repos" } else { "walk" };
+            let (mut flock, world) = resting_flock(&def, 3, ground);
+            // En plein après-midi : la nuit, ils s'endorment d'eux-mêmes.
+            let away = Input {
+                idle: Some(AWAY_AFTER + 1.0),
+                since_key: Some(AWAY_AFTER + 1.0),
+                local_hour: 15.0,
+                ..Input::default()
+            };
+            let mut asleep = false;
+            for _ in 0..((NAP_SPREAD + 20.0) / TICK) as usize {
+                flock.advance(TICK, &world, &away);
+                asleep = flock.pets().iter().all(Pet::is_asleep);
+                if asleep {
+                    break;
+                }
+            }
+            let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+            assert!(asleep, "{name} : tous endormis ({names:?})");
+            // Lainou dort tant que l'utilisateur n'est pas là (Pelote, lui,
+            // se réveille parfois et se rendort).
+            if name == "lainou" {
+                for _ in 0..(30.0 / TICK) as usize {
+                    flock.advance(TICK, &world, &away);
+                    assert!(flock.pets().iter().all(Pet::is_asleep), "{name}");
+                }
+            }
+            // Il revient : ils se réveillent en moins de deux secondes.
+            let back = Input {
+                idle: Some(0.1),
+                since_key: Some(5.0),
+                local_hour: 15.0,
+                ..Input::default()
+            };
+            for _ in 0..(2.0 / TICK) as usize {
+                flock.advance(TICK, &world, &back);
+            }
+            let names: Vec<&str> = flock.pets().iter().map(Pet::behavior_name).collect();
+            assert!(
+                flock.pets().iter().all(|p| !p.is_asleep()),
+                "{name} : réveillés ({names:?})"
+            );
+            let events: Vec<PetEvent> = flock
+                .pets_mut()
+                .iter_mut()
+                .flat_map(Pet::take_events)
+                .collect();
+            assert!(
+                events.contains(&PetEvent::Napping) && events.contains(&PetEvent::Woken),
+                "{name} : {:?}",
+                events
+                    .iter()
+                    .filter(|e| !matches!(e, PetEvent::Sound { .. }))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn a_gust_of_wind_carries_the_flying_and_bends_the_standing() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 2, "repos");
+        // L'un tombe du haut de l'écran, l'autre reste posé.
+        let x0 = 700.0;
+        let flying = flock.spawn(Arc::clone(&lainou), 5, &world, Some(x0));
+        flock.blow(1.0, 4.0);
+        let mut leaves = 0;
+        let mut leaned = false;
+        for _ in 0..(1.5 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            leaves = leaves.max(
+                flock
+                    .pets()
+                    .iter()
+                    .flat_map(|p| p.particles.iter())
+                    .filter(|p| p.kind == ParticleKind::Leaf)
+                    .count(),
+            );
+            leaned |= flock.pets()[0].view(1.0).pose.roll < -0.02;
+        }
+        let drifted = flock.pets().iter().find(|p| p.id() == flying).unwrap();
+        assert!(drifted.position().x > x0 + 40.0, "{:?}", drifted.position());
+        assert!(leaves > 0, "des feuilles passent");
+        assert!(leaned, "il se penche contre le vent");
+        // Le vent retombe : plus rien.
+        for _ in 0..(4.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert!(flock.gust().is_none());
+        assert_eq!(flock.pets()[0].view(1.0).pose.roll, 0.0);
+    }
+
+    #[test]
+    fn a_saucer_borrows_a_pet_and_sets_it_down_elsewhere() {
+        for realistic in [false, true] {
+            let lainou = bundled("lainou");
+            let (mut flock, world) = resting_flock(&lainou, 1, "dort");
+            flock.set_realistic(realistic);
+            let pet = flock.pets()[0].id();
+            let start = flock.pets()[0].position();
+            let saucer = flock.invite_saucer(&world, 3).unwrap();
+            assert_ne!(saucer, pet);
+            let mut lifted = false;
+            let mut highest = f32::MAX;
+            let mut seen_beam = false;
+            for _ in 0..(16.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+                let p = flock.pets().iter().find(|p| p.id() == pet).unwrap();
+                lifted |= p.is_held();
+                highest = highest.min(p.position().y);
+                seen_beam |= flock.saucers().iter().any(|s| s.view().beam > 0.9);
+            }
+            assert!(lifted && seen_beam, "aspiré dans le faisceau");
+            assert!(highest < start.y - 150.0, "emporté en l'air : {highest}");
+            assert!(flock.saucers().is_empty(), "elle est repartie");
+            let after = flock.pets().iter().find(|p| p.id() == pet).unwrap();
+            assert!(
+                matches!(after.support(), Support::Ground { .. }),
+                "reposé : {:?}",
+                after.support()
+            );
+            assert!(
+                (after.position().x - start.x).abs() > 200.0,
+                "ailleurs : {:?} → {:?}",
+                start,
+                after.position()
+            );
+        }
+    }
+
+    #[test]
+    fn a_saucer_gives_up_a_pet_taken_back_by_the_hand() {
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 1, "repos");
+        let pet = flock.pets()[0].id();
+        flock.invite_saucer(&world, 9).unwrap();
+        // Dans le faisceau…
+        for _ in 0..(5.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert!(flock.pets()[0].is_held());
+        // … repris par la main.
+        let hand = flock.pets()[0].position() - Vec2::new(0.0, 30.0);
+        flock.get_mut(pet).unwrap().grab(hand, &world);
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.get_mut(pet).unwrap().drag_to(hand);
+            flock.advance(TICK, &world, &Input::default());
+        }
+        assert_eq!(
+            flock.pets()[0].hold_target(),
+            Some(hand),
+            "toujours en main"
+        );
+        assert!(flock.saucers().is_empty(), "la soucoupe a renoncé");
+    }
+
+    #[test]
+    fn typing_and_the_time_of_day_are_conditions() {
+        let world = world();
+        let pet = Pet::spawn(0, bundled("lainou"), 1, &world, Some(300.0));
+        let typing = Input {
+            since_key: Some(1.0),
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Typing, &world, &typing));
+        assert!(!pet.condition(Condition::Typing, &world, &Input::default()));
+        let morning = Input {
+            local_hour: 8.5,
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Morning, &world, &morning));
+        assert!(!pet.condition(Condition::Evening, &world, &morning));
+        let evening = Input {
+            local_hour: 19.0,
+            ..Input::default()
+        };
+        assert!(pet.condition(Condition::Evening, &world, &evening));
+        assert!(!pet.condition(Condition::Away, &world, &evening));
+    }
+
     #[test]
     fn lainou_lives_a_long_life() {
         // Sans collisions, les Lainou se rencontrent et se saluent.
         let (def, seconds_in) = long_life("lainou", 30.0, 40.0, false);
+        // Tenu, lancé, heurté, sonné par une grosse chute ou en partance :
+        // il y faut la main de l'utilisateur, ou une chute de très haut.
         let never: Vec<&str> = never_played(&def, &seconds_in)
             .into_iter()
-            .filter(|n| !matches!(*n, "tenu" | "tombe" | "au_revoir" | "culbute"))
+            .filter(|n| {
+                !matches!(
+                    *n,
+                    "tenu" | "tombe" | "au_revoir" | "culbute" | "atterrit_sonne" | "etourdi"
+                )
+            })
             .collect();
         assert!(never.len() <= 3, "jamais joués : {never:?}");
         assert!(
@@ -2630,6 +4077,27 @@ mod tests {
         // En mode collisions, ils se bousculent et ne restent pas coincés.
         let (_, seconds_in) = long_life("lainou", 10.0, 40.0, true);
         assert!(seconds_in.contains_key("culbute"));
+    }
+
+    #[test]
+    fn lainou_and_pelote_live_long_lives_in_realistic_physics() {
+        // Fenêtres qui bougent, qui apparaissent et disparaissent : jamais
+        // hors de l'écran, jamais bloqués, et toujours de quoi vivre.
+        for collisions in [false, true] {
+            let (def, seconds_in) = long_life_with("lainou", 8.0, 40.0, collisions, true);
+            let never: Vec<&str> = never_played(&def, &seconds_in)
+                .into_iter()
+                .filter(|n| {
+                    !matches!(
+                        *n,
+                        "tenu" | "tombe" | "au_revoir" | "culbute" | "atterrit_sonne" | "etourdi"
+                    )
+                })
+                .collect();
+            assert!(never.len() <= 4, "jamais joués : {never:?}");
+            let (_, seconds_in) = long_life_with("pelote", 8.0, 400.0, collisions, true);
+            assert!(seconds_in.len() > 8, "{seconds_in:?}");
+        }
     }
 
     #[test]
@@ -2723,7 +4191,7 @@ mod tests {
     "#;
 
     fn social() -> Arc<PetDef> {
-        Arc::new(parse_pet_toml(SOCIAL, |_| Ok(b"<svg/>".to_vec())).unwrap())
+        Arc::new(parse_pet_toml(SOCIAL, |_: &str| Ok(b"<svg/>".to_vec())).unwrap())
     }
 
     /// Pose un animal du troupeau sur le sol, tourné et occupé comme voulu.
@@ -2742,6 +4210,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK).round() as usize {
             flock.advance(TICK, world, &input);
@@ -2871,6 +4340,78 @@ mod tests {
     }
 
     #[test]
+    fn one_pet_of_a_species_says_goodbye_the_latest_first() {
+        let world = world();
+        let mut flock = Flock::new();
+        let first = flock.spawn(def(), 1, &world, None);
+        let other = flock.spawn(social(), 2, &world, None);
+        let latest = flock.spawn(def(), 3, &world, None);
+        put(&mut flock, &world, first, 300.0, 1.0, "stand");
+        put(&mut flock, &world, other, 600.0, 1.0, "stand");
+        put(&mut flock, &world, latest, 900.0, 1.0, "stand");
+        let input = Input::default();
+        assert_eq!(flock.leave_one("t", &world, &input), Some(latest));
+        assert_eq!(flock.leave_one("t", &world, &input), Some(first));
+        assert_eq!(flock.leave_one("t", &world, &input), None, "plus aucun");
+        assert_eq!(flock.leave_one("inconnu", &world, &input), None);
+        let still = flock.pets().iter().find(|p| p.id() == other).unwrap();
+        assert!(!still.is_leaving(), "l'autre espèce reste");
+        advance(&mut flock, &world, 1.5);
+        let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
+        assert_eq!(ids, vec![other]);
+    }
+
+    #[test]
+    fn the_pet_chosen_with_a_right_click_says_goodbye_alone() {
+        let world = world();
+        let mut flock = Flock::new();
+        let first = flock.spawn(def(), 1, &world, None);
+        let latest = flock.spawn(def(), 2, &world, None);
+        put(&mut flock, &world, first, 300.0, 1.0, "stand");
+        put(&mut flock, &world, latest, 900.0, 1.0, "stand");
+        let input = Input::default();
+        let generation = flock.generation();
+        // Le premier, pas le dernier arrivé de son espèce.
+        assert!(flock.leave(first, &world, &input));
+        assert!(flock.generation() > generation, "le menu le saura");
+        assert!(!flock.leave(first, &world, &input), "il part déjà");
+        assert!(!flock.leave(99, &world, &input), "inconnu");
+        advance(&mut flock, &world, 1.5);
+        let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
+        assert_eq!(ids, vec![latest]);
+    }
+
+    #[test]
+    fn the_pet_whose_menu_is_open_waits_while_the_others_walk() {
+        let world = world();
+        let mut flock = Flock::new();
+        let waiting = flock.spawn(def(), 1, &world, None);
+        let walker = flock.spawn(def(), 2, &world, None);
+        put(&mut flock, &world, waiting, 300.0, 1.0, "walk");
+        put(&mut flock, &world, walker, 900.0, 1.0, "walk");
+        advance(&mut flock, &world, 0.1);
+        flock.hold_still(Some(waiting));
+        assert_eq!(flock.still(), Some(waiting));
+        let x = |flock: &Flock, id: u32| {
+            flock
+                .pets()
+                .iter()
+                .find(|p| p.id() == id)
+                .unwrap()
+                .view(0.5)
+                .ground
+                .x
+        };
+        let (before, other) = (x(&flock, waiting), x(&flock, walker));
+        advance(&mut flock, &world, 0.5);
+        assert_eq!(x(&flock, waiting), before, "il attend, sans trembler");
+        assert!(x(&flock, walker) > other + 10.0, "l'autre marche");
+        flock.hold_still(None);
+        advance(&mut flock, &world, 0.5);
+        assert!(x(&flock, waiting) > before + 10.0, "il repart");
+    }
+
+    #[test]
     fn a_pet_without_farewell_fades_at_once_even_when_held() {
         let world = world();
         let mut flock = Flock::new();
@@ -2890,6 +4431,26 @@ mod tests {
         assert!(!pet.is_held());
         advance(&mut flock, &world, 1.0);
         assert!(flock.pets().is_empty());
+    }
+
+    #[test]
+    fn thrown_upward_it_slips_behind_the_menu_bar_then_falls_back() {
+        let world = world();
+        let mut pet = Pet::spawn(0, def(), 6, &world, Some(600.0));
+        run(&mut pet, &world, 2.0);
+        let h = pet.def.physics.height;
+        pet.support = Support::Air;
+        pet.ground_ref = None;
+        pet.vel = Vec2::new(0.0, -2600.0);
+        let mut highest = f32::MAX;
+        for _ in 0..(3.0 / TICK) as usize {
+            pet.step(TICK, &world, &Input::default());
+            highest = highest.min(pet.position().y - h);
+        }
+        // Le haut de la tête passe au-dessus de la zone utile (sous la barre
+        // des menus), sans dépasser le bord de l'écran.
+        assert!((0.0..25.0).contains(&highest), "{highest}");
+        assert_eq!(pet.position().y, 825.0, "il est retombé");
     }
 
     #[test]

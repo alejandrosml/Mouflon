@@ -12,9 +12,13 @@ repository.workspace = true
 log.workspace = true
 raw-window-handle.workspace = true
 
+# Ressources du processus (essais).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale"] }
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError", "NSProcessInfo", "NSDistributedNotificationCenter", "NSDate", "NSTimer"] }
 objc2-app-kit = { workspace = true, features = [
     "libc",
     "NSScreen",
@@ -25,9 +29,45 @@ objc2-app-kit = { workspace = true, features = [
     "NSView",
     "NSResponder",
     "NSGraphics",
+    "NSPanel",
+    # Fenêtres « À propos » et des réglages, menu d'un animal.
+    "NSApplication",
+    "NSAppearance",
+    "NSAttributedString",
+    "NSBitmapImageRep",
+    "NSBox",
+    "NSButton",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSFont",
+    "NSImage",
+    "NSImageRep",
+    "NSImageView",
+    "NSScrollView",
+    "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
+    "NSParagraphStyle",
+    "NSSlider",
+    "NSText",
+    "NSTextField",
+    # Sons des animaux.
+    "NSSound",
+    # Horloge de l'écran (CADisplayLink).
+    "objc2-quartz-core",
+    # Diagnostics des essais (réglages d'accessibilité de l'affichage).
+    "NSAccessibility",
 ] }
-objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry"] }
-objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes"] }
+objc2-quartz-core = { workspace = true, features = ["std", "objc2-core-foundation", "CABase", "CADisplayLink", "CAFrameRateRange", "CALayer"] }
+objc2-core-graphics = { workspace = true, features = ["CGWindow", "CGGeometry", "CGEventSource", "CGEventTypes"] }
+objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFBase", "CFCGTypes", "CFRunLoop"] }
+# Noms des fonctions Rust dans les piles relevées (diagnostics des essais).
+rustc-demangle = "0.1"
+# Ouvrir Mouflon à l'ouverture de session (macOS 13 et plus).
+objc2-service-management = { workspace = true, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
+# Accessibilité : la place exacte du Dock (avec l'autorisation de l'utilisateur).
+objc2-application-services = { workspace = true, features = ["std", "libc", "HIServices", "AXError", "AXUIElement", "AXValue"] }
 
 # Ce crate n'hérite pas du `forbid(unsafe_code)` du workspace : c'est la
 # frontière avec le système. Chaque bloc unsafe y est commenté.

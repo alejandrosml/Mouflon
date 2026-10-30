@@ -21,8 +21,23 @@ pub struct Settings {
     pub frontmost_only: bool,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     pub collisions: bool,
+    /// Physique réaliste (voir `mouflon_core::physics`) : les fenêtres
+    /// emportent les animaux et peuvent les faire tomber, lancés ils tournent
+    /// et rebondissent. Sans elle, celle d'eSheep et de desktopPet.
+    pub realistic_physics: bool,
     /// Taille des animaux, par rapport à celle prévue par chacun.
     pub size: f32,
+    /// Marcher sous le Dock : les animaux descendent jusqu'en bas de l'écran,
+    /// passent derrière le Dock et peuvent sauter dessus (il faut
+    /// l'autorisation d'Accessibilité pour savoir où il est). Sans cela, ils
+    /// marchent sur le Dock.
+    #[serde(alias = "walk_on_dock")]
+    pub walk_under_dock: bool,
+    /// Les animaux font entendre leurs sons (bêlements, clochette…).
+    pub sounds: bool,
+    /// De temps en temps, un coup de vent ou une soucoupe volante (voir
+    /// `mouflon_core::surprise`).
+    pub surprises: bool,
 }
 
 impl Default for Settings {
@@ -32,20 +47,30 @@ impl Default for Settings {
             default_pet: None,
             frontmost_only: true,
             collisions: false,
+            realistic_physics: true,
             size: 1.0,
+            walk_under_dock: false,
+            sounds: true,
+            surprises: true,
         }
     }
+}
+
+/// Rang dans [`SIZES`] de la taille la plus proche de `size`.
+#[must_use]
+pub fn size_index_of(size: f32) -> usize {
+    SIZES
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - size).abs().total_cmp(&(*b - size).abs()))
+        .map_or(1, |(i, _)| i)
 }
 
 impl Settings {
     /// Rang de la taille dans [`SIZES`] (la plus proche, pour une valeur écrite à la main).
     #[must_use]
     pub fn size_index(&self) -> usize {
-        SIZES
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| (*a - self.size).abs().total_cmp(&(*b - self.size).abs()))
-            .map_or(1, |(i, _)| i)
+        size_index_of(self.size)
     }
 
     /// Taille à appliquer : une valeur de [`SIZES`].
@@ -89,6 +114,9 @@ impl Settings {
 pub struct Paths {
     pub settings: PathBuf,
     pub pets: PathBuf,
+    /// Images des animaux déjà prêtes (sur macOS : `~/Library/Caches/…`),
+    /// que le système peut effacer : elles seraient simplement refaites.
+    pub images: PathBuf,
 }
 
 impl Paths {
@@ -112,6 +140,7 @@ impl Paths {
         Self {
             settings: dirs.config_dir().join("settings.toml"),
             pets: dirs.data_dir().join("pets"),
+            images: dirs.cache_dir().join("images"),
         }
     }
 
@@ -158,16 +187,26 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_dock_choice_made_under_its_old_name() {
+        let old: Settings = toml::from_str("walk_on_dock = true").unwrap();
+        assert!(old.walk_under_dock);
+        let saved = toml::to_string(&old).unwrap();
+        assert!(saved.contains("walk_under_dock = true"), "{saved}");
+    }
+
+    #[test]
     fn takes_over_the_old_pets_and_settings_once() {
         let root = std::env::temp_dir().join(format!("mouflon-migration-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let old = Paths {
             settings: root.join("ancien/settings.toml"),
             pets: root.join("ancien/pets"),
+            images: root.join("ancien/images"),
         };
         let new = Paths {
             settings: root.join("nouveau/settings.toml"),
             pets: root.join("nouveau/pets"),
+            images: root.join("nouveau/images"),
         };
         std::fs::create_dir_all(old.pets.join("esheep")).unwrap();
         std::fs::write(old.pets.join("esheep/animations.xml"), "<animations/>").unwrap();
@@ -176,7 +215,11 @@ mod tests {
             default_pet: Some("esheep".into()),
             frontmost_only: false,
             collisions: true,
+            realistic_physics: false,
             size: 1.0,
+            walk_under_dock: false,
+            sounds: true,
+            surprises: false,
         }
         .save(&old.settings);
 
