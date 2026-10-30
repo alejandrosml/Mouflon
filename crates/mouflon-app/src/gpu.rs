@@ -21,6 +21,9 @@ use winit::window::Window;
 
 use crate::quick::Quick;
 
+/// Sans dessin vectoriel depuis ce temps, Vello s'arrête et rend sa mémoire.
+const VELLO_IDLE: Duration = Duration::from_secs(20);
+
 /// Format des fenêtres sur Mac (et le plus souvent ailleurs) : ses programmes
 /// se préparent avant d'ouvrir la première fenêtre.
 const USUAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -78,6 +81,9 @@ pub struct Gpu {
     context: RenderContext,
     quick: Option<Quick>,
     vello: Option<VelloPath>,
+    /// Dernier dessin passé par Vello : sans dessin vectoriel depuis un
+    /// moment, ses tampons de travail (plus de 150 Mo) sont rendus.
+    vello_used: Option<Instant>,
     /// Format des fenêtres (le premier vu) : les programmes sont prêts pour lui.
     format: Option<wgpu::TextureFormat>,
     timings: Timings,
@@ -247,6 +253,7 @@ impl Gpu {
             context: RenderContext::new(),
             quick: None,
             vello: None,
+            vello_used: None,
             format: None,
             timings: Timings::default(),
         }
@@ -398,6 +405,7 @@ impl Gpu {
             if self.vello.is_none() {
                 self.vello = Some(VelloPath::new(&handle.device)?);
             }
+            self.vello_used = Some(Instant::now());
             let Some(vello) = self.vello.as_mut() else {
                 return Ok(());
             };
@@ -448,7 +456,16 @@ impl Gpu {
                 direct.push(i);
             } else {
                 done[i] = self.render_vello(job.surface, job.list, job.window);
+                self.vello_used = Some(Instant::now());
             }
+        }
+        if self.vello.is_some()
+            && self
+                .vello_used
+                .is_none_or(|used| used.elapsed() > VELLO_IDLE)
+        {
+            self.vello = None;
+            log::info!("Vello arrêté : plus de dessin vectoriel à l'écran");
         }
         let Some(quick) = self.quick.as_mut() else {
             return done;
