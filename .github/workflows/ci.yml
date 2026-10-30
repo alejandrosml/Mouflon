@@ -67,10 +67,15 @@ jobs:
       # chaque image et chaque événement dans un journal, puis quitte. Un
       # plantage, même en quittant (ou un blocage : 7 minutes au plus), fait
       # échouer la construction ; l'app, déjà envoyée, reste téléchargeable.
+      # Vers la fin de l'essai, la mémoire de l'app par catégories du système
+      # (images, GPU, surfaces des fenêtres…) : `memoire.txt`. Le relevé
+      # arrête l'app un instant, d'où un à-coup vers 290 s.
       - name: Essai de cinq minutes
         run: |
           set -o pipefail
           export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info
+          ( sleep 290
+            pid=$(pgrep -x mouflon) && { footprint "$pid" || vmmap -summary "$pid"; } > memoire.txt 2>&1 ) &
           MOUFLON_ESSAI=300 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
             MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=essai-journal.log \
             perl -e 'alarm 420; exec @ARGV' \
@@ -84,6 +89,7 @@ jobs:
           path: |
             essai.log
             essai-journal.log
+            memoire.txt
 
       - name: Publier la version
         if: startsWith(github.ref, 'refs/tags/')
