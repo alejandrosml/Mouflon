@@ -24,7 +24,8 @@ throw them across the desktop.
   At launch, each kind of pet decodes its sheets on its own threads, one
   row of tiles at a time, while the menu and the GPU get ready. Images
   follow the display's own clock
-  (its full rate in motion, 30 fps at rest, 20 fps asleep), a sprite is
+  (its full rate for brisk moves, half a ProMotion display's rate for a
+  stroll, 30 fps at rest, 20 fps asleep), a sprite is
   redrawn only when its image changes, and the window list is read on a
   separate thread (often only while a window carrying a pet moves), so it
   never holds up an image.
@@ -260,7 +261,8 @@ se laissent attraper et lancer à travers le bureau.
   s'arrête quand il s'en va. Au lancement, chaque espèce décode ses
   planches sur ses propres fils, une rangée de cases à la fois, pendant que
   le menu et le GPU se préparent. Les images suivent l'horloge de
-  l'écran lui-même (sa pleine cadence en mouvement, 30 i/s au repos, 20 i/s
+  l'écran lui-même (sa pleine cadence pour un mouvement vif, la moitié de
+  celle d'un écran ProMotion pour une promenade, 30 i/s au repos, 20 i/s
   endormi), une image n'est redessinée que quand elle change, et la liste des
   fenêtres est relevée sur un fil à part (souvent seulement lorsqu'une
   fenêtre portant un animal bouge), sans jamais retenir une image.

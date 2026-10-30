@@ -21,6 +21,10 @@ mod script;
 pub const TICK: f32 = 1.0 / 120.0;
 
 const BLINK_TIME: f32 = 0.13;
+/// Cadence qui suffit à un animal qui va son petit train (images par
+/// seconde) : à moins de [`SLOW_RATE`] points par seconde, sa fenêtre avance
+/// d'un point au plus d'une image à l'autre.
+pub const SLOW_RATE: f32 = 60.0;
 /// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois celle du pas).
 pub const RUN_STRIDE: f32 = 1.2;
 const MAX_PARTICLES: usize = 64;
@@ -701,6 +705,38 @@ impl Pet {
             Activity::Asleep
         } else {
             Activity::Idle
+        }
+    }
+
+    /// Images par seconde qu'il lui faut pour que son mouvement reste fluide :
+    /// [`SLOW_RATE`] quand il va son petit train, `f32::INFINITY` (toute la
+    /// cadence de l'écran) sinon.
+    ///
+    /// Au pas, en grimpant ou en se promenant sur un rebord, il avance de
+    /// moins d'un point d'une image à l'autre à 60 images par seconde : sa
+    /// fenêtre, qui ne se pose qu'au point entier, ne saute aucun point, et
+    /// ses pattes dessinées bougent comme sur n'importe quel écran à 60 Hz.
+    /// Un écran ProMotion peut alors battre deux fois moins vite. En vol libre,
+    /// tenu, plus vite, ou tant qu'un rebond se calme, il faut toute la cadence.
+    #[must_use]
+    pub fn smooth_rate(&self) -> f32 {
+        let scripted = matches!(self.def.behaviors[self.behavior].motion, Motion::Script(_));
+        let free = match self.support {
+            Support::Held => true,
+            // Une animation scriptée avance à vitesse constante, pas en chute libre.
+            Support::Air => !scripted,
+            Support::Ground { .. } => false,
+        };
+        let settling = self.anim.squash.velocity.abs() > 0.02
+            || (self.anim.flip - self.facing).abs() > 0.01
+            || self.anim.swing.value.abs() > 0.01
+            || self.anim.roll_left != 0.0
+            || self.particles.iter().any(|p| p.kind == ParticleKind::Dust);
+        let speed = self.vel.x.abs().max(self.vel.y.abs());
+        if free || settling || speed > SLOW_RATE {
+            f32::INFINITY
+        } else {
+            SLOW_RATE
         }
     }
 
@@ -2322,6 +2358,17 @@ impl Flock {
     pub fn activity(&self) -> Option<Activity> {
         self.pets.iter().map(Pet::activity).max()
     }
+
+    /// Images par seconde qu'il faut aux animaux qui bougent (voir
+    /// [`Pet::smooth_rate`]) ; 0 si aucun ne bouge.
+    #[must_use]
+    pub fn smooth_rate(&self) -> f32 {
+        self.pets
+            .iter()
+            .filter(|p| p.activity() == Activity::Moving)
+            .map(Pet::smooth_rate)
+            .fold(0.0, f32::max)
+    }
 }
 
 #[cfg(test)]
@@ -2483,6 +2530,37 @@ mod tests {
         assert!(pet.velocity().x > 0.0, "l'élan est conservé");
         run(&mut pet, &world, 4.0);
         assert!(matches!(pet.support(), Support::Ground { .. }));
+    }
+
+    #[test]
+    fn a_slow_walk_needs_only_sixty_frames_per_second() {
+        let world = world();
+        let mut pet = Pet::spawn(0, def(), 6, &world, Some(700.0));
+        pet.step(TICK, &world, &Input::default());
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "en chute libre");
+        run(&mut pet, &world, 3.0);
+        pet.force("walk");
+        run(&mut pet, &world, 2.0);
+        assert!((pet.velocity().x.abs() - 60.0).abs() < 0.1);
+        assert_eq!(pet.smooth_rate(), SLOW_RATE, "au pas, à 60 pt/s");
+
+        let start = pet.position();
+        pet.grab(start - Vec2::new(0.0, 30.0), &world);
+        pet.step(TICK, &world, &Input::default());
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "tenu");
+
+        // Plus vite qu'un point par image à 60 images par seconde.
+        let fast = Arc::new(
+            parse_pet_toml(&PET.replace("speed = 60.0", "speed = 61.0"), |_: &str| {
+                Ok(b"<svg/>".to_vec())
+            })
+            .unwrap(),
+        );
+        let mut pet = Pet::spawn(0, fast, 6, &world, Some(700.0));
+        run(&mut pet, &world, 3.0);
+        pet.force("walk");
+        run(&mut pet, &world, 2.0);
+        assert_eq!(pet.smooth_rate(), f32::INFINITY, "à 61 pt/s");
     }
 
     fn two_screens() -> World {

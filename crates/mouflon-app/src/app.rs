@@ -40,6 +40,9 @@ const CLOCK_ASLEEP: Duration = Duration::from_secs(1);
 /// Cadences quand les animaux se reposent ou dorment (images par seconde).
 const IDLE_FPS: f64 = 30.0;
 const ASLEEP_FPS: f64 = 20.0;
+/// Après un mouvement vif, la cadence reste pleine ce temps-là avant de
+/// ralentir : elle ne change pas d'allure à chaque rebond qui se calme.
+const FULL_RATE_HOLD: Duration = Duration::from_millis(300);
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -159,6 +162,8 @@ pub struct App {
     /// Images par seconde voulues par le dernier `schedule` (0 : horloge
     /// arrêtée) : notées au journal d'un essai.
     cadence: f64,
+    /// Jusqu'à quand la cadence reste pleine après un mouvement vif.
+    full_rate_until: Option<Instant>,
     /// Pour réveiller la boucle depuis l'horloge, le menu ou un autre fil.
     proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -302,6 +307,7 @@ impl App {
             seed,
             refresh_hz: 60.0,
             cadence: 0.0,
+            full_rate_until: None,
             proxy: Arc::new(Mutex::new(proxy)),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu: None,
@@ -1483,7 +1489,19 @@ impl App {
             Some(moving)
         } else {
             match self.flock.activity() {
-                Some(Activity::Moving) => Some(moving),
+                Some(Activity::Moving) => {
+                    // Toute la cadence de l'écran pour un mouvement vif ; la
+                    // moitié (ProMotion) quand tous vont leur petit train.
+                    let needed = self.flock.smooth_rate();
+                    if f64::from(needed) >= moving {
+                        self.full_rate_until = Some(now + FULL_RATE_HOLD);
+                    }
+                    if self.full_rate_until.is_some_and(|until| now < until) {
+                        Some(moving)
+                    } else {
+                        Some(moving_rate(needed, moving))
+                    }
+                }
                 Some(Activity::Idle) => Some(IDLE_FPS),
                 Some(Activity::Asleep) => Some(ASLEEP_FPS),
                 None => None,
@@ -1519,6 +1537,19 @@ impl App {
         self.next_frame = Some(now + wake);
         event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
     }
+}
+
+/// Cadence pour des animaux qui bougent : la plus lente qui divise celle de
+/// l'écran (`full`) sans descendre sous celle qu'il leur faut (`needed`,
+/// voir `Pet::smooth_rate`). Un diviseur : l'écran montre chaque image le
+/// même nombre de fois, et le mouvement reste régulier.
+fn moving_rate(needed: f32, full: f64) -> f64 {
+    let needed = f64::from(needed);
+    if !needed.is_finite() || needed >= full {
+        return full;
+    }
+    let divisor = (full / needed.max(1.0)).floor().max(1.0);
+    full / divisor
 }
 
 /// Un événement d'un animal, pour le journal d'un essai.
@@ -1857,5 +1888,24 @@ impl ApplicationHandler<UserEvent> for App {
         {
             self.frame(event_loop, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moving_rate;
+
+    #[test]
+    fn slow_pets_halve_a_promotion_screen_but_never_drop_below_their_need() {
+        // ProMotion : la moitié pour un animal au pas.
+        assert_eq!(moving_rate(60.0, 120.0), 60.0);
+        // Un écran à 60 Hz ne change pas.
+        assert_eq!(moving_rate(60.0, 60.0), 60.0);
+        // Toujours un diviseur de la cadence de l'écran, jamais sous le besoin.
+        assert_eq!(moving_rate(60.0, 144.0), 72.0);
+        assert_eq!(moving_rate(60.0, 240.0), 60.0);
+        assert_eq!(moving_rate(60.0, 90.0), 90.0);
+        // Un mouvement vif : toute la cadence.
+        assert_eq!(moving_rate(f32::INFINITY, 120.0), 120.0);
     }
 }
