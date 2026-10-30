@@ -31,8 +31,11 @@ use mouflon_render::vello::wgpu;
 /// Place d'un élément dans le tampon de paramètres : l'alignement exigé
 /// pour un décalage dynamique (256 octets sur tous les GPU).
 const SLOT: usize = 256;
-/// Éléments par image, au plus (un animal en a rarement plus d'une dizaine).
+/// Éléments par fenêtre, au plus (un animal en a rarement plus d'une dizaine).
 const MAX_DRAWS: usize = 64;
+/// Places du tampon de paramètres au départ ; il double quand une image de
+/// toutes les fenêtres en demande davantage.
+pub(crate) const FIRST_CAPACITY: usize = 64;
 /// Arrêts de couleur d'un dégradé, au plus.
 const MAX_STOPS: usize = 4;
 /// Images gardées sur le GPU, en octets : au-delà, les moins récemment
@@ -230,15 +233,20 @@ pub struct Quick {
     image_layout: wgpu::BindGroupLayout,
     shapes_layout: wgpu::PipelineLayout,
     images_layout: wgpu::PipelineLayout,
+    params_layout: wgpu::BindGroupLayout,
+    nearest: wgpu::Sampler,
+    bilinear: wgpu::Sampler,
     params: wgpu::Buffer,
     params_group: wgpu::BindGroup,
+    /// Éléments que le tampon de paramètres peut recevoir.
+    capacity: usize,
     pipelines: HashMap<wgpu::TextureFormat, Pipelines>,
     textures: HashMap<u64, Texture>,
     texture_bytes: usize,
     /// Numéro de l'image en cours (pour oublier les images les plus anciennes).
     tick: u64,
-    /// Paramètres et éléments de l'image en cours (gardés pour ne pas
-    /// réallouer à chaque image).
+    /// Paramètres et éléments de l'image en cours, toutes fenêtres
+    /// confondues (gardés pour ne pas réallouer à chaque image).
     bytes: Vec<u8>,
     calls: Vec<Call>,
 }
@@ -300,12 +308,6 @@ impl Quick {
             bind_group_layouts: &[Some(&params_layout), Some(&image_layout)],
             immediate_size: 0,
         });
-        let params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mouflon-rapide-parametres"),
-            size: (SLOT * MAX_DRAWS) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let sampler = |filter: wgpu::FilterMode| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("mouflon-rapide"),
@@ -320,35 +322,19 @@ impl Quick {
             sampler(wgpu::FilterMode::Nearest),
             sampler(wgpu::FilterMode::Linear),
         );
-        let params_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mouflon-rapide-parametres"),
-            layout: &params_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &params,
-                        offset: 0,
-                        size: NonZeroU64::new(SLOT as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&nearest),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&bilinear),
-                },
-            ],
-        });
+        let (params, params_group) =
+            params_buffer(device, &params_layout, &nearest, &bilinear, FIRST_CAPACITY);
         Self {
             module,
             image_layout,
             shapes_layout,
             images_layout,
+            params_layout,
+            nearest,
+            bilinear,
             params,
             params_group,
+            capacity: FIRST_CAPACITY,
             pipelines: HashMap::new(),
             textures: HashMap::new(),
             texture_bytes: 0,
@@ -451,10 +437,45 @@ impl Quick {
         draws <= MAX_DRAWS
     }
 
-    /// Dessine la liste (que [`Self::supports`] accepte) dans `target`, une
-    /// texture au format `format` d'abord effacée. Les images manquantes
-    /// sont téléversées au passage.
-    pub fn render(
+    /// Éléments que la liste fera dessiner (au plus [`MAX_DRAWS`]).
+    #[must_use]
+    pub fn draws(list: &DisplayList) -> usize {
+        list.commands
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    Command::Image { .. } | Command::BlurredRect { .. } | Command::Disc { .. }
+                )
+            })
+            .count()
+            .min(MAX_DRAWS)
+    }
+
+    /// Commence une image de toutes les fenêtres, qui dessineront ensemble au
+    /// plus `draws` éléments : leurs passes partiront au GPU en un seul envoi.
+    pub fn begin(&mut self, device: &wgpu::Device, draws: usize) {
+        self.tick += 1;
+        self.bytes.clear();
+        self.calls.clear();
+        if draws > self.capacity {
+            let capacity = draws.next_power_of_two();
+            (self.params, self.params_group) = params_buffer(
+                device,
+                &self.params_layout,
+                &self.nearest,
+                &self.bilinear,
+                capacity,
+            );
+            self.capacity = capacity;
+        }
+    }
+
+    /// Ajoute à `encoder` une passe qui dessine la liste (que
+    /// [`Self::supports`] accepte) dans `target`, une texture au format
+    /// `format` d'abord effacée. Les images manquantes sont téléversées au
+    /// passage ; les paramètres partent avec [`Self::finish`].
+    pub fn draw(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -464,13 +485,12 @@ impl Quick {
         list: &DisplayList,
     ) {
         self.prepare(device, format);
-        self.tick += 1;
-        self.bytes.clear();
-        self.calls.clear();
+        let first = self.calls.len();
         let size = (f64::from(list.width.max(1)), f64::from(list.height.max(1)));
         let mut alpha = 1.0f32;
         for command in &list.commands {
-            if self.calls.len() >= MAX_DRAWS {
+            // Jamais plus que la liste n'en a droit, ni que le tampon n'en reçoit.
+            if self.calls.len() - first >= MAX_DRAWS || self.calls.len() >= self.capacity {
                 break;
             }
             match command {
@@ -552,9 +572,6 @@ impl Quick {
                 Command::Fill { .. } | Command::Stroke { .. } => {}
             }
         }
-        if !self.bytes.is_empty() {
-            queue.write_buffer(&self.params, 0, &self.bytes);
-        }
         let Some(pipelines) = self.pipelines.get(&format) else {
             return;
         };
@@ -575,7 +592,7 @@ impl Quick {
             multiview_mask: None,
         });
         let mut current: Option<Kind> = None;
-        for (i, call) in self.calls.iter().enumerate() {
+        for (i, call) in self.calls.iter().enumerate().skip(first) {
             if current != Some(call.kind) {
                 pass.set_pipeline(match call.kind {
                     Kind::Image => &pipelines.image,
@@ -593,7 +610,30 @@ impl Quick {
             pass.draw(0..4, 0..1);
         }
         drop(pass);
+    }
+
+    /// Envoie les paramètres de toutes les passes de l'image (avant
+    /// `queue.submit`), puis oublie au besoin les images les plus anciennes.
+    pub fn finish(&mut self, queue: &wgpu::Queue) {
+        if !self.bytes.is_empty() {
+            queue.write_buffer(&self.params, 0, &self.bytes);
+        }
         self.forget_old();
+    }
+
+    /// Dessine une liste seule : une image d'une seule fenêtre.
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        list: &DisplayList,
+    ) {
+        self.begin(device, Self::draws(list));
+        self.draw(device, queue, encoder, target, format, list);
+        self.finish(queue);
     }
 
     fn push(&mut self, kind: Kind, image: Option<u64>, params: &Params) {
@@ -720,6 +760,46 @@ impl Quick {
     pub fn texture_usage(&self) -> (usize, usize) {
         (self.textures.len(), self.texture_bytes)
     }
+}
+
+/// Tampon de paramètres pour `capacity` éléments, et son groupe de liaison
+/// (une place de [`SLOT`] octets par élément, choisie par décalage dynamique).
+fn params_buffer(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    nearest: &wgpu::Sampler,
+    bilinear: &wgpu::Sampler,
+    capacity: usize,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("mouflon-rapide-parametres"),
+        size: (SLOT * capacity) as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mouflon-rapide-parametres"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &params,
+                    offset: 0,
+                    size: NonZeroU64::new(SLOT as u64),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(nearest),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(bilinear),
+            },
+        ],
+    });
+    (params, group)
 }
 
 /// `inner` est-il entièrement dans `outer` (au demi-pixel près) ?

@@ -20,7 +20,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 use winit::window::{Theme, Window, WindowId, WindowLevel};
 
-use crate::gpu::{Gpu, PetSurface};
+use crate::gpu::{Gpu, Job, PetSurface};
 use crate::library::{Entry, Library};
 use crate::menu::Action;
 use crate::settings::{Paths, Settings};
@@ -84,6 +84,9 @@ struct PetWindow {
     /// l'affichage ferait attendre toute l'app).
     monitor: Option<MonitorHandle>,
     hz: f64,
+    /// Ce qu'on y dessine à cette image (gardé d'une image à l'autre pour ne
+    /// pas réallouer) : toutes les fenêtres partent ensuite au GPU d'un coup.
+    list: DisplayList,
 }
 
 /// Ce qui change l'image d'un animal en sprites. Le déplacement passe par la
@@ -790,6 +793,7 @@ impl App {
                 sprite: None,
                 monitor,
                 hz,
+                list: DisplayList::default(),
             },
         );
     }
@@ -1344,12 +1348,13 @@ impl App {
             windows,
             flock,
             gpu,
-            list,
             style,
             pointer,
             paused,
             ..
         } = self;
+        // Fenêtres à redessiner, avec l'image et le décalage qu'elles montreront.
+        let mut redraw: Vec<(&mut PetWindow, Option<SpriteKey>, (f64, f64))> = Vec::new();
         for pw in windows.values_mut() {
             let Some(pet) = flock.pets().iter().find(|p| p.id() == pw.pet) else {
                 continue;
@@ -1371,12 +1376,9 @@ impl App {
             if settling {
                 // Une image vide : la fenêtre s'affiche et l'affichage se met en
                 // route sans que l'animal se voie encore.
-                if let Some(gpu) = gpu.as_mut() {
-                    let size = pw.window.inner_size();
-                    list.clear(size.width, size.height);
-                    gpu.render(&mut pw.surface, list, &pw.window);
-                }
-                pw.last_render = None;
+                let size = pw.window.inner_size();
+                pw.list.clear(size.width, size.height);
+                redraw.push((pw, None, (0.0, 0.0)));
                 continue;
             }
             // L'animal est dessiné là où il est, même si sa fenêtre n'a pas pu
@@ -1408,24 +1410,42 @@ impl App {
                         now.duration_since(t) + Duration::from_millis(2) >= interval
                     })
             };
-            if !needed {
+            if !needed || gpu.is_none() {
                 continue;
             }
-            let Some(gpu) = gpu.as_mut() else { continue };
             let size = pw.window.inner_size();
-            list.clear(size.width, size.height);
+            pw.list.clear(size.width, size.height);
             let frame = Frame {
                 origin: Vec2::new(pw.placed.0 as f32, pw.placed.1 as f32),
                 scale,
             };
             let started = Instant::now();
-            paint_pet(&pw.art, &view, &frame, style, list);
+            paint_pet(&pw.art, &view, &frame, style, &mut pw.list);
             phases.paint += started.elapsed();
-            phases.renders += 1;
-            if gpu.render(&mut pw.surface, list, &pw.window) {
-                pw.last_render = Some(now);
-                pw.sprite = sprite;
-                pw.drawn_offset = offset;
+            redraw.push((pw, sprite, offset));
+        }
+        if let Some(gpu) = gpu.as_mut()
+            && !redraw.is_empty()
+        {
+            let mut jobs: Vec<Job<'_>> = redraw
+                .iter_mut()
+                .map(|(pw, _, _)| Job {
+                    surface: &mut pw.surface,
+                    list: &pw.list,
+                    window: &pw.window,
+                })
+                .collect();
+            let done = gpu.render_all(&mut jobs);
+            drop(jobs);
+            phases.renders += done.iter().filter(|&&ok| ok).count() as u32;
+            for ((pw, sprite, offset), ok) in redraw.into_iter().zip(done) {
+                if settling {
+                    pw.last_render = None;
+                } else if ok {
+                    pw.last_render = Some(now);
+                    pw.sprite = sprite;
+                    pw.drawn_offset = offset;
+                }
             }
         }
         if let Some(gpu) = self.gpu.as_mut() {

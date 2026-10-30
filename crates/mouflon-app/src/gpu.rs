@@ -37,6 +37,14 @@ pub enum GpuError {
     Vello(#[from] mouflon_render::vello::Error),
 }
 
+/// Une fenêtre à redessiner : sa surface, ce qu'on y dessine, la fenêtre.
+#[derive(Debug)]
+pub struct Job<'a> {
+    pub surface: &'a mut PetSurface,
+    pub list: &'a DisplayList,
+    pub window: &'a Window,
+}
+
 /// Fenêtre de rendu d'un animal.
 pub struct PetSurface {
     surface: wgpu::Surface<'static>,
@@ -409,18 +417,73 @@ impl Gpu {
         surface.target = None;
     }
 
-    /// Dessine une image dans la fenêtre. Renvoie `false` si l'image a été sautée.
-    pub fn render(
-        &mut self,
-        surface: &mut PetSurface,
-        list: &DisplayList,
-        window: &Window,
-    ) -> bool {
-        if Quick::supports(list) {
-            self.render_quick(surface, list, window)
-        } else {
-            self.render_vello(surface, list, window)
+    /// Dessine les fenêtres de l'image en cours. Celles que le rendu direct
+    /// sait dessiner (toutes, pour des animaux en images) partagent un seul
+    /// envoi au GPU : leurs passes s'enchaînent dans une même liste de
+    /// commandes, puis chacune s'affiche. Les autres passent par Vello, une à
+    /// une. Renvoie, fenêtre par fenêtre, si elle a été dessinée.
+    ///
+    /// Toutes les fenêtres sont sur le même GPU (un Mac n'en montre qu'un aux
+    /// fenêtres) : c'est le sien qui reçoit l'envoi.
+    pub fn render_all(&mut self, jobs: &mut [Job<'_>]) -> Vec<bool> {
+        let mut done = vec![false; jobs.len()];
+        let mut direct = Vec::with_capacity(jobs.len());
+        for (i, job) in jobs.iter_mut().enumerate() {
+            if Quick::supports(job.list) {
+                direct.push(i);
+            } else {
+                done[i] = self.render_vello(job.surface, job.list, job.window);
+            }
         }
+        let Some(quick) = self.quick.as_mut() else {
+            return done;
+        };
+        let started = Instant::now();
+        let frames: Vec<(usize, wgpu::SurfaceTexture)> = direct
+            .into_iter()
+            .filter_map(|i| Some((i, Self::acquire(&self.context, jobs[i].surface)?)))
+            .collect();
+        let acquired = Instant::now();
+        self.timings.acquire += acquired - started;
+        let Some(&(first, _)) = frames.first() else {
+            return done;
+        };
+        let handle = &self.context.devices[jobs[first].surface.dev_id];
+        let draws = frames
+            .iter()
+            .map(|&(i, _)| Quick::draws(jobs[i].list))
+            .sum();
+        quick.begin(&handle.device, draws);
+        let mut encoder = handle
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("mouflon"),
+            });
+        for (i, frame) in &frames {
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let job = &jobs[*i];
+            quick.draw(
+                &handle.device,
+                &handle.queue,
+                &mut encoder,
+                &view,
+                job.surface.config.format,
+                job.list,
+            );
+        }
+        quick.finish(&handle.queue);
+        handle.queue.submit([encoder.finish()]);
+        let painted = Instant::now();
+        self.timings.paint += painted - acquired;
+        for (i, frame) in frames {
+            jobs[i].window.pre_present_notify();
+            handle.queue.present(frame);
+            done[i] = true;
+        }
+        self.timings.present += painted.elapsed();
+        done
     }
 
     /// Image de la fenêtre à dessiner, ou `None` (surface à refaire, écran perdu…).
@@ -435,47 +498,6 @@ impl Gpu {
             }
             _ => None,
         }
-    }
-
-    fn render_quick(
-        &mut self,
-        surface: &mut PetSurface,
-        list: &DisplayList,
-        window: &Window,
-    ) -> bool {
-        let Some(quick) = self.quick.as_mut() else {
-            return false;
-        };
-        let started = Instant::now();
-        let Some(frame) = Self::acquire(&self.context, surface) else {
-            return false;
-        };
-        let acquired = Instant::now();
-        self.timings.acquire += acquired - started;
-        let handle = &self.context.devices[surface.dev_id];
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = handle
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("mouflon"),
-            });
-        quick.render(
-            &handle.device,
-            &handle.queue,
-            &mut encoder,
-            &view,
-            surface.config.format,
-            list,
-        );
-        handle.queue.submit([encoder.finish()]);
-        let painted = Instant::now();
-        self.timings.paint += painted - acquired;
-        window.pre_present_notify();
-        handle.queue.present(frame);
-        self.timings.present += painted.elapsed();
-        true
     }
 
     fn render_vello(
@@ -634,17 +656,9 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn direct_rendering_matches_vello() {
-        let mut context = RenderContext::new();
-        let Some(dev_id) = pollster::block_on(context.device(None)) else {
-            eprintln!("pas de GPU ici : comparaison sautée");
-            return;
-        };
-        let handle = &context.devices[dev_id];
-        let (device, queue) = (&handle.device, &handle.queue);
-        let mut quick = Quick::new(device);
-        let mut vello = VelloPath::new(device).expect("Vello");
+    /// Listes d'affichage de Lainou et Pelote dans des situations variées, à
+    /// deux échelles : (nom, liste).
+    fn sample_lists() -> Vec<(String, DisplayList)> {
         let world = mouflon_core::World::new(vec![mouflon_core::Screen {
             frame: mouflon_core::Rect::new(0.0, 0.0, 1440.0, 900.0),
             usable: mouflon_core::Rect::new(0.0, 25.0, 1440.0, 800.0),
@@ -665,7 +679,7 @@ mod tests {
                 phase: 0.0,
             })
             .collect();
-        let mut worst = (0u8, 0.0f64, 0.0f64);
+        let mut lists = Vec::new();
         for (def, art) in pets() {
             let mut pet = mouflon_core::Pet::spawn(0, Arc::clone(&def), 7, &world, Some(600.0));
             for _ in 0..600 {
@@ -706,60 +720,130 @@ mod tests {
                         scale,
                     };
                     paint_pet(&art, &view, &frame, &Style::default(), &mut list);
-                    assert!(Quick::supports(&list), "{} cas {case}", def.meta.name);
-
-                    let fast = target(device, &list);
-                    let fast_view = fast.create_view(&Default::default());
-                    let mut encoder = device.create_command_encoder(&Default::default());
-                    quick.render(device, queue, &mut encoder, &fast_view, FORMAT, &list);
-                    queue.submit([encoder.finish()]);
-
-                    let slow = target(device, &list);
-                    let slow_view = slow.create_view(&Default::default());
-                    let (_storage, storage_view) = create_target(device, list.width, list.height);
-                    vello
-                        .paint(
-                            device,
-                            queue,
-                            &list,
-                            &storage_view,
-                            (list.width, list.height),
-                        )
-                        .expect("Vello");
-                    let mut encoder = device.create_command_encoder(&Default::default());
-                    let blitter = vello.blitter(device, FORMAT);
-                    clear_and_blit(device, &mut encoder, blitter, &storage_view, &slow_view);
-                    queue.submit([encoder.finish()]);
-
-                    let (a, b) = (read(device, queue, &fast), read(device, queue, &slow));
-                    if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
-                        let name = format!("{dir}/{}-{scale}-{case}", def.meta.name);
-                        for (suffix, pixels) in [("rapide", &a), ("vello", &b)] {
-                            let bitmap = mouflon_render::display::Bitmap {
-                                width: list.width,
-                                height: list.height,
-                                rgba: mouflon_render::vello::peniko::Blob::from(pixels.clone()),
-                            };
-                            let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
-                            std::fs::write(format!("{name}-{suffix}.png"), png).expect("png");
-                        }
-                    }
-                    let (max, mean, far) = compare(&a, &b);
-                    eprintln!(
-                        "{} ×{scale} cas {case} : écart max {max}, moyen {mean:.4}, {:.3} % au-delà de 6",
-                        def.meta.name,
-                        far * 100.0
-                    );
-                    worst = (worst.0.max(max), worst.1.max(mean), worst.2.max(far));
-                    assert!(
-                        a.iter().skip(3).step_by(4).any(|&alpha| alpha > 0),
-                        "image vide"
-                    );
+                    let name = format!("{} ×{scale} cas {case}", def.meta.name);
+                    assert!(Quick::supports(&list), "{name}");
+                    lists.push((name, list));
                 }
             }
+        }
+        lists
+    }
+
+    #[test]
+    fn direct_rendering_matches_vello() {
+        let mut context = RenderContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : comparaison sautée");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let mut quick = Quick::new(device);
+        let mut vello = VelloPath::new(device).expect("Vello");
+        let mut worst = (0u8, 0.0f64, 0.0f64);
+        for (name, list) in sample_lists() {
+            let fast = target(device, &list);
+            let fast_view = fast.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            quick.render(device, queue, &mut encoder, &fast_view, FORMAT, &list);
+            queue.submit([encoder.finish()]);
+
+            let slow = target(device, &list);
+            let slow_view = slow.create_view(&Default::default());
+            let (_storage, storage_view) = create_target(device, list.width, list.height);
+            vello
+                .paint(
+                    device,
+                    queue,
+                    &list,
+                    &storage_view,
+                    (list.width, list.height),
+                )
+                .expect("Vello");
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let blitter = vello.blitter(device, FORMAT);
+            clear_and_blit(device, &mut encoder, blitter, &storage_view, &slow_view);
+            queue.submit([encoder.finish()]);
+
+            let (a, b) = (read(device, queue, &fast), read(device, queue, &slow));
+            if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
+                let file = format!("{dir}/{}", name.replace([' ', '×'], "-"));
+                for (suffix, pixels) in [("rapide", &a), ("vello", &b)] {
+                    let bitmap = mouflon_render::display::Bitmap {
+                        width: list.width,
+                        height: list.height,
+                        rgba: mouflon_render::vello::peniko::Blob::from(pixels.clone()),
+                    };
+                    let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
+                    std::fs::write(format!("{file}-{suffix}.png"), png).expect("png");
+                }
+            }
+            let (max, mean, far) = compare(&a, &b);
+            eprintln!(
+                "{name} : écart max {max}, moyen {mean:.4}, {:.3} % au-delà de 6",
+                far * 100.0
+            );
+            worst = (worst.0.max(max), worst.1.max(mean), worst.2.max(far));
+            assert!(
+                a.iter().skip(3).step_by(4).any(|&alpha| alpha > 0),
+                "image vide"
+            );
         }
         eprintln!("pire : {worst:?}");
         assert!(worst.1 < 0.35, "écart moyen {}", worst.1);
         assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
+    }
+
+    /// Plusieurs fenêtres en un seul envoi : chacune reçoit exactement l'image
+    /// qu'elle aurait eue seule, même quand le tampon de paramètres doit
+    /// grandir en route.
+    #[test]
+    fn one_submit_draws_each_window_as_if_alone() {
+        let mut context = RenderContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : essai sauté");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let mut quick = Quick::new(device);
+        // Trois fois chaque situation : bien plus d'éléments que le tampon
+        // de départ n'en reçoit.
+        let lists: Vec<(String, DisplayList)> =
+            sample_lists().into_iter().cycle().take(84).collect();
+        let draws: usize = lists.iter().map(|(_, list)| Quick::draws(list)).sum();
+        assert!(
+            draws > crate::quick::FIRST_CAPACITY,
+            "{draws} éléments seulement"
+        );
+
+        let alone: Vec<Vec<u8>> = lists
+            .iter()
+            .map(|(_, list)| {
+                let texture = target(device, list);
+                let view = texture.create_view(&Default::default());
+                let mut encoder = device.create_command_encoder(&Default::default());
+                quick.render(device, queue, &mut encoder, &view, FORMAT, list);
+                queue.submit([encoder.finish()]);
+                read(device, queue, &texture)
+            })
+            .collect();
+
+        let textures: Vec<wgpu::Texture> =
+            lists.iter().map(|(_, list)| target(device, list)).collect();
+        quick.begin(device, draws);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for ((_, list), texture) in lists.iter().zip(&textures) {
+            let view = texture.create_view(&Default::default());
+            quick.draw(device, queue, &mut encoder, &view, FORMAT, list);
+        }
+        quick.finish(queue);
+        queue.submit([encoder.finish()]);
+        for (((name, _), texture), expected) in lists.iter().zip(&textures).zip(&alone) {
+            assert!(
+                read(device, queue, texture) == *expected,
+                "{name} : image différente"
+            );
+        }
     }
 }
