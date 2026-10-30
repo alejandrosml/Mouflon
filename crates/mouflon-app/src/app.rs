@@ -262,6 +262,15 @@ fn local_hour() -> f32 {
 
 /// Le curseur est-il sur le corps de l'animal ? Hors du corps, la fenêtre
 /// laisse passer les clics vers les applications en dessous.
+/// Le dessin d'un animal en images doit-il suivre un nouvel écart entre sa
+/// fenêtre et lui ? Seulement d'un point au moins : macOS arrondit la place
+/// des fenêtres, et redessiner pour un demi-point (un pixel) coûtait, à un
+/// animal qui marche, trois ou quatre rendus de plus que ses propres images.
+/// L'écart exact revient à l'image suivante de l'animal.
+fn shifted(offset: (f64, f64), drawn: (f64, f64)) -> bool {
+    (offset.0 - drawn.0).abs() >= 1.0 || (offset.1 - drawn.1).abs() >= 1.0
+}
+
 fn hit_test(cursor: Vec2, view: &PetView<'_>, art: &PetArt) -> bool {
     let g = view.ground;
     let (half, height) = art.body;
@@ -1361,10 +1370,11 @@ impl App {
             };
             let view = pet.view(alpha);
             let scale = pw.scale;
-            let ox = ((f64::from(view.ground.x) - f64::from(pw.canvas.anchor.x)) * scale).floor()
-                / scale;
-            let oy = ((f64::from(view.ground.y) - f64::from(pw.canvas.anchor.y)) * scale).floor()
-                / scale;
+            // macOS ne place une fenêtre qu'au point entier (deux pixels d'un
+            // écran Retina) : on la demande directement là, sans déplacement
+            // inutile d'un demi-point.
+            let ox = (f64::from(view.ground.x) - f64::from(pw.canvas.anchor.x)).floor();
+            let oy = (f64::from(view.ground.y) - f64::from(pw.canvas.anchor.y)).floor();
             let moved = pw.position != Some((ox, oy));
             if moved {
                 let started = Instant::now();
@@ -1397,7 +1407,7 @@ impl App {
             }
             let sprite = SpriteKey::of(&pw.art, &view);
             let needed = if sprite.is_some() {
-                pw.last_render.is_none() || sprite != pw.sprite || offset != pw.drawn_offset
+                pw.last_render.is_none() || sprite != pw.sprite || shifted(offset, pw.drawn_offset)
             } else {
                 // En mouvement, au rythme de l'écran où se trouve la fenêtre.
                 let interval = match pet.activity() {
