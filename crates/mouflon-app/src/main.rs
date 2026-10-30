@@ -11,6 +11,7 @@ mod i18n;
 mod icon;
 mod library;
 mod menu;
+mod quick;
 mod settings;
 mod stats;
 mod watch;

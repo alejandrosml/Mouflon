@@ -247,25 +247,37 @@ fn decode_page(page: &SpritePage, sheet: &SpriteSheet) -> Result<DecodedPage, Sp
             page.tiles_x, page.tiles_y
         )));
     }
-    let target = reduced_size(tile_w, tile_h, sheet.scale);
+    let image = Image {
+        rgba: &rgba,
+        width: width as usize,
+    };
+    // Filtres de réduction : les mêmes pour toutes les cases de la planche.
+    let reduction = reduced_size(tile_w, tile_h, sheet.scale).map(|(w, h)| Reduction {
+        columns: coverage(tile_w, w),
+        rows: coverage(tile_h, h),
+        texel: tile_w as f32 / w as f32,
+    });
+    let mut scratch = Scratch::default();
     let mut frames = Vec::with_capacity((page.tiles_x * page.tiles_y) as usize);
     for ty in 0..page.tiles_y {
         for tx in 0..page.tiles_x {
-            let mut cell = Vec::with_capacity((tile_w * tile_h * 4) as usize);
-            for y in 0..tile_h {
-                let row = ((ty * tile_h + y) * width + tx * tile_w) as usize * 4;
-                cell.extend_from_slice(&rgba[row..row + tile_w as usize * 4]);
-            }
-            let (w, h, cell, texel) = match target {
-                Some((w, h)) => (
-                    w,
-                    h,
-                    resample(&cell, tile_w, tile_h, w, h),
-                    tile_w as f32 / w as f32,
-                ),
-                None => (tile_w, tile_h, cell, 1.0),
+            let tile = Area {
+                x0: (tx * tile_w) as usize,
+                y0: (ty * tile_h) as usize,
+                x1: ((tx + 1) * tile_w) as usize,
+                y1: ((ty + 1) * tile_h) as usize,
             };
-            frames.push(trimmed(&cell, w, h, texel));
+            let texel = reduction.as_ref().map_or(1.0, |r| r.texel);
+            // Seuls les pixels visibles de la case comptent : on réduit et on
+            // rogne le rectangle qui les contient, pas toute la case.
+            let frame = match image.visible(tile) {
+                None => empty_frame(texel),
+                Some(visible) => match &reduction {
+                    None => image.frame(visible, tile),
+                    Some(reduction) => reduction.frame(&image, tile, visible, &mut scratch),
+                },
+            };
+            frames.push(frame);
         }
     }
     Ok(DecodedPage {
@@ -284,6 +296,224 @@ fn reduced_size(tile_w: u32, tile_h: u32, scale: f32) -> Option<(u32, u32)> {
     let w = ((tile_w as f32 * k).round() as u32).max(1);
     let h = ((tile_h as f32 * k).round() as u32).max(1);
     Some((w, h))
+}
+
+/// Rectangle de pixels, bornes de fin exclues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Area {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+/// Une planche décodée (RGBA, alpha non prémultiplié).
+struct Image<'a> {
+    rgba: &'a [u8],
+    width: usize,
+}
+
+impl Image<'_> {
+    /// Rectangle des pixels visibles (alpha non nul) de `area`, en un seul
+    /// passage ligne par ligne.
+    fn visible(&self, area: Area) -> Option<Area> {
+        let mut bounds: Option<Area> = None;
+        for y in area.y0..area.y1 {
+            let row = &self.rgba[(y * self.width + area.x0) * 4..(y * self.width + area.x1) * 4];
+            let pixels = row.as_chunks::<4>().0;
+            let Some(first) = pixels.iter().position(|px| px[3] != 0) else {
+                continue;
+            };
+            let last = pixels.iter().rposition(|px| px[3] != 0).unwrap_or(first);
+            let (left, right) = (area.x0 + first, area.x0 + last + 1);
+            bounds = Some(match bounds {
+                None => Area {
+                    x0: left,
+                    y0: y,
+                    x1: right,
+                    y1: y + 1,
+                },
+                Some(b) => Area {
+                    x0: b.x0.min(left),
+                    y0: b.y0,
+                    x1: b.x1.max(right),
+                    y1: y + 1,
+                },
+            });
+        }
+        bounds
+    }
+
+    /// Image telle quelle (pas de réduction) : les pixels de `visible`,
+    /// placés dans leur case `tile`.
+    fn frame(&self, visible: Area, tile: Area) -> SpriteFrame {
+        let mut out = Vec::with_capacity((visible.x1 - visible.x0) * (visible.y1 - visible.y0) * 4);
+        for y in visible.y0..visible.y1 {
+            out.extend_from_slice(
+                &self.rgba[(y * self.width + visible.x0) * 4..(y * self.width + visible.x1) * 4],
+            );
+        }
+        SpriteFrame {
+            bitmap: Bitmap {
+                width: (visible.x1 - visible.x0) as u32,
+                height: (visible.y1 - visible.y0) as u32,
+                rgba: Blob::from(out),
+            },
+            x: (visible.x0 - tile.x0) as f32,
+            y: (visible.y0 - tile.y0) as f32,
+            texel: 1.0,
+        }
+    }
+}
+
+/// Case vide : un pixel transparent.
+fn empty_frame(texel: f32) -> SpriteFrame {
+    SpriteFrame {
+        bitmap: Bitmap {
+            width: 1,
+            height: 1,
+            rgba: Blob::from(vec![0u8; 4]),
+        },
+        x: 0.0,
+        y: 0.0,
+        texel,
+    }
+}
+
+/// Réduction d'une case : pour chaque pixel réduit, les pixels de la case
+/// qu'il couvre et leur part (filtre de surface), par colonne et par ligne.
+struct Reduction {
+    columns: Vec<Vec<(usize, f32)>>,
+    rows: Vec<Vec<(usize, f32)>>,
+    /// Pixels de la planche par pixel réduit.
+    texel: f32,
+}
+
+/// Mémoire de travail d'une réduction, gardée d'une case à l'autre.
+#[derive(Default)]
+struct Scratch {
+    premultiplied: Vec<[f32; 4]>,
+    wide: Vec<[f32; 4]>,
+    out: Vec<u8>,
+}
+
+impl Reduction {
+    /// Pixels réduits dont le filtre touche `[from, to)` : seuls ceux-là
+    /// peuvent être visibles.
+    fn span(filters: &[Vec<(usize, f32)>], from: usize, to: usize) -> (usize, usize) {
+        let first = filters
+            .iter()
+            .position(|taps| taps.last().is_some_and(|&(s, _)| s >= from))
+            .unwrap_or(filters.len());
+        let end = filters
+            .iter()
+            .rposition(|taps| taps.first().is_some_and(|&(s, _)| s < to))
+            .map_or(first, |i| i + 1);
+        (first, end.max(first))
+    }
+
+    /// La case `tile` réduite, rognée à ses pixels visibles. Le résultat est
+    /// exactement celui de la réduction de toute la case, rognée ensuite :
+    /// hors de `visible`, les pixels sont transparents et ne comptent pas.
+    fn frame(&self, image: &Image<'_>, tile: Area, visible: Area, s: &mut Scratch) -> SpriteFrame {
+        let local = |area: Area| {
+            (
+                area.x0 - tile.x0,
+                area.y0 - tile.y0,
+                area.x1 - tile.x0,
+                area.y1 - tile.y0,
+            )
+        };
+        let (vx0, vy0, vx1, vy1) = local(visible);
+        let (ox0, ox1) = Self::span(&self.columns, vx0, vx1);
+        let (oy0, oy1) = Self::span(&self.rows, vy0, vy1);
+        let (ow, oh) = (ox1 - ox0, oy1 - oy0);
+        if ow == 0 || oh == 0 {
+            return empty_frame(self.texel);
+        }
+        // Pixels de la case lus par ces filtres.
+        let sx0 = self.columns[ox0].first().map_or(0, |t| t.0);
+        let sx1 = self.columns[ox1 - 1].last().map_or(sx0, |t| t.0 + 1);
+        let sy0 = self.rows[oy0].first().map_or(0, |t| t.0);
+        let sy1 = self.rows[oy1 - 1].last().map_or(sy0, |t| t.0 + 1);
+        let (sw, sh) = (sx1 - sx0, sy1 - sy0);
+        // Couleurs pondérées par leur opacité : pas de liseré sombre.
+        s.premultiplied.clear();
+        for y in sy0..sy1 {
+            let start = ((tile.y0 + y) * image.width + tile.x0 + sx0) * 4;
+            for p in image.rgba[start..start + sw * 4].as_chunks::<4>().0 {
+                let a = f32::from(p[3]) / 255.0;
+                s.premultiplied.push([
+                    f32::from(p[0]) * a,
+                    f32::from(p[1]) * a,
+                    f32::from(p[2]) * a,
+                    a,
+                ]);
+            }
+        }
+        // Passe horizontale, puis verticale.
+        s.wide.clear();
+        s.wide.resize(ow * sh, [0.0; 4]);
+        for y in 0..sh {
+            for (i, taps) in self.columns[ox0..ox1].iter().enumerate() {
+                let mut acc = [0.0f32; 4];
+                for &(sx, weight) in taps {
+                    let p = s.premultiplied[y * sw + sx - sx0];
+                    for c in 0..4 {
+                        acc[c] += p[c] * weight;
+                    }
+                }
+                s.wide[y * ow + i] = acc;
+            }
+        }
+        s.out.clear();
+        for taps in &self.rows[oy0..oy1] {
+            for i in 0..ow {
+                let mut acc = [0.0f32; 4];
+                for &(sy, weight) in taps {
+                    let p = s.wide[(sy - sy0) * ow + i];
+                    for c in 0..4 {
+                        acc[c] += p[c] * weight;
+                    }
+                }
+                s.out.extend_from_slice(&unpremultiply(acc));
+            }
+        }
+        let out = Image {
+            rgba: &s.out,
+            width: ow,
+        };
+        let all = Area {
+            x0: 0,
+            y0: 0,
+            x1: ow,
+            y1: oh,
+        };
+        let Some(visible) = out.visible(all) else {
+            return empty_frame(self.texel);
+        };
+        let mut frame = out.frame(visible, all);
+        // Coin de l'image dans la case, en pixels de la planche.
+        frame.x = (ox0 + visible.x0) as f32 * self.texel;
+        frame.y = (oy0 + visible.y0) as f32 * self.texel;
+        frame.texel = self.texel;
+        frame
+    }
+}
+
+/// Pixel réduit, de prémultiplié à RGBA 8 bits non prémultiplié.
+fn unpremultiply(acc: [f32; 4]) -> [u8; 4] {
+    let a = acc[3];
+    if a <= 1e-6 {
+        return [0, 0, 0, 0];
+    }
+    let channel = |v: f32| (v / a).round().clamp(0.0, 255.0) as u8;
+    [
+        channel(acc[0]),
+        channel(acc[1]),
+        channel(acc[2]),
+        (a * 255.0).round().clamp(0.0, 255.0) as u8,
+    ]
 }
 
 /// Part de chaque pixel source dans chaque pixel réduit (filtre de surface).
@@ -309,102 +539,38 @@ fn coverage(source: u32, target: u32) -> Vec<Vec<(usize, f32)>> {
 
 /// Réduit une image RGBA (alpha non prémultiplié) en moyennant les surfaces
 /// couvertes, couleurs pondérées par leur opacité : pas de liseré sombre.
+#[cfg(test)]
 fn resample(rgba: &[u8], width: u32, height: u32, out_w: u32, out_h: u32) -> Vec<u8> {
-    let premultiplied: Vec<[f32; 4]> = rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|p| {
-            let a = f32::from(p[3]) / 255.0;
-            [
-                f32::from(p[0]) * a,
-                f32::from(p[1]) * a,
-                f32::from(p[2]) * a,
-                a,
-            ]
-        })
-        .collect();
-    let columns = coverage(width, out_w);
-    let rows = coverage(height, out_h);
-    let mut wide = vec![[0.0f32; 4]; (out_w * height) as usize];
-    for y in 0..height as usize {
-        for (ox, taps) in columns.iter().enumerate() {
-            let mut acc = [0.0f32; 4];
-            for &(sx, weight) in taps {
-                let p = premultiplied[y * width as usize + sx];
-                for c in 0..4 {
-                    acc[c] += p[c] * weight;
-                }
-            }
-            wide[y * out_w as usize + ox] = acc;
-        }
-    }
-    let mut out = Vec::with_capacity((out_w * out_h * 4) as usize);
-    for taps in &rows {
-        for ox in 0..out_w as usize {
-            let mut acc = [0.0f32; 4];
-            for &(sy, weight) in taps {
-                let p = wide[sy * out_w as usize + ox];
-                for c in 0..4 {
-                    acc[c] += p[c] * weight;
-                }
-            }
-            let a = acc[3];
-            if a <= 1e-6 {
-                out.extend_from_slice(&[0, 0, 0, 0]);
-            } else {
-                let channel = |v: f32| (v / a).round().clamp(0.0, 255.0) as u8;
-                out.extend_from_slice(&[
-                    channel(acc[0]),
-                    channel(acc[1]),
-                    channel(acc[2]),
-                    (a * 255.0).round().clamp(0.0, 255.0) as u8,
-                ]);
-            }
-        }
+    let reduction = Reduction {
+        columns: coverage(width, out_w),
+        rows: coverage(height, out_h),
+        texel: width as f32 / out_w as f32,
+    };
+    let image = Image {
+        rgba,
+        width: width as usize,
+    };
+    let all = Area {
+        x0: 0,
+        y0: 0,
+        x1: width as usize,
+        y1: height as usize,
+    };
+    let mut out = vec![0u8; (out_w * out_h * 4) as usize];
+    let Some(visible) = image.visible(all) else {
+        return out;
+    };
+    let frame = reduction.frame(&image, all, visible, &mut Scratch::default());
+    let (fx, fy) = (
+        (frame.x / reduction.texel).round() as usize,
+        (frame.y / reduction.texel).round() as usize,
+    );
+    let fw = frame.bitmap.width as usize;
+    for (row, line) in frame.bitmap.rgba.data().chunks_exact(fw * 4).enumerate() {
+        let start = ((fy + row) * out_w as usize + fx) * 4;
+        out[start..start + fw * 4].copy_from_slice(line);
     }
     out
-}
-
-/// Rogne une image à ses pixels visibles.
-fn trimmed(rgba: &[u8], width: u32, height: u32, texel: f32) -> SpriteFrame {
-    let (w, h) = (width as usize, height as usize);
-    let visible = |x: usize, y: usize| rgba[(y * w + x) * 4 + 3] != 0;
-    let rows: Vec<usize> = (0..h).filter(|&y| (0..w).any(|x| visible(x, y))).collect();
-    let (Some(&top), Some(&bottom)) = (rows.first(), rows.last()) else {
-        // Case vide : un pixel transparent.
-        return SpriteFrame {
-            bitmap: Bitmap {
-                width: 1,
-                height: 1,
-                rgba: Blob::from(vec![0u8; 4]),
-            },
-            x: 0.0,
-            y: 0.0,
-            texel,
-        };
-    };
-    let left = (0..w)
-        .find(|&x| (top..=bottom).any(|y| visible(x, y)))
-        .unwrap_or(0);
-    let right = (0..w)
-        .rev()
-        .find(|&x| (top..=bottom).any(|y| visible(x, y)))
-        .unwrap_or(w - 1);
-    let mut out = Vec::with_capacity((right - left + 1) * (bottom - top + 1) * 4);
-    for y in top..=bottom {
-        out.extend_from_slice(&rgba[(y * w + left) * 4..(y * w + right + 1) * 4]);
-    }
-    SpriteFrame {
-        bitmap: Bitmap {
-            width: (right - left + 1) as u32,
-            height: (bottom - top + 1) as u32,
-            rgba: Blob::from(out),
-        },
-        x: left as f32 * texel,
-        y: top as f32 * texel,
-        texel,
-    }
 }
 
 /// Décode un PNG quelconque en RGBA 8 bits.

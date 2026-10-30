@@ -5,7 +5,7 @@ use std::sync::Arc;
 use mouflon_core::{
     Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Support, Vec2 as CoreVec2,
 };
-use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
+use vello::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use vello::peniko::{Color, Extend, Fill, Mix};
 
 use crate::animate::{PoseTransforms, pose};
@@ -489,7 +489,7 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                     ],
                     extend: Extend::Pad,
                 };
-                out.fill(Circle::new(center, r).to_path(0.05), world, paint);
+                out.disc(center, r, world, paint);
             }
             ParticleKind::Bubble => {
                 let fade = smooth(0.0, 0.12, t) * (1.0 - smooth(0.72, 1.0, t));
@@ -499,8 +499,9 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                 } else {
                     rgba(120, 150, 210, 1.0)
                 };
-                out.fill(
-                    Circle::new(center, r).to_path(0.05),
+                out.disc(
+                    center,
+                    r,
                     world,
                     Paint::Radial {
                         start: center + (r * 0.25, r * 0.3),
@@ -525,8 +526,9 @@ fn paint_particles(particles: &[Particle], world: Affine, style: &Style, out: &m
                     },
                 );
                 let spark = center + (-r * 0.35, -r * 0.38);
-                out.fill(
-                    Circle::new(spark, r * 0.22).to_path(0.05),
+                out.disc(
+                    spark,
+                    r * 0.22,
                     world,
                     Paint::Solid(Color::WHITE.with_alpha(0.85 * fade as f32)),
                 );

@@ -1391,7 +1391,9 @@ impl App {
 
         self.schedule(event_loop, now, settling);
 
+        let textures = self.gpu.as_ref().map_or((0, 0), Gpu::texture_usage);
         if let Some(stats) = &mut self.stats {
+            stats.set_textures(textures);
             let pets = self.flock.pets().iter().map(|p| {
                 let view = p.view(alpha);
                 crate::stats::PetLine {

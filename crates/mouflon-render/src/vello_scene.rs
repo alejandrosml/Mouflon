@@ -1,7 +1,7 @@
 //! Traduction de la liste d'affichage en scène Vello (rendu GPU).
 
 use vello::Scene;
-use vello::kurbo::{Cap, Join, Stroke};
+use vello::kurbo::{Cap, Circle, Join, Stroke};
 use vello::peniko::{
     BlendMode, Brush, Color, ColorStop, Compose, Gradient, ImageAlphaType, ImageBrush, ImageData,
     ImageFormat, ImageQuality,
@@ -109,6 +109,20 @@ pub fn encode(list: &DisplayList, scene: &mut Scene) {
                         .with_quality(quality)
                         .with_alpha(*alpha),
                     *transform,
+                );
+            }
+            Command::Disc {
+                center,
+                radius,
+                paint,
+                transform,
+            } => {
+                scene.fill(
+                    vello::peniko::Fill::NonZero,
+                    *transform,
+                    &brush(paint),
+                    None,
+                    &Circle::new(*center, *radius),
                 );
             }
             Command::PushLayer {

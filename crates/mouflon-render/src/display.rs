@@ -118,6 +118,14 @@ pub enum Command {
         alpha: f32,
         smooth: bool,
     },
+    /// Disque plein (particules) : un cercle, plus simple à dessiner qu'un
+    /// chemin quelconque.
+    Disc {
+        center: Point,
+        radius: f64,
+        paint: Paint,
+        transform: Affine,
+    },
     /// Calque : tout ce qui suit jusqu'au `PopLayer` est découpé par `clip`,
     /// puis composé avec l'opacité et le mode de fusion donnés.
     PushLayer {
@@ -165,6 +173,15 @@ impl DisplayList {
             paint,
             brush_transform: None,
             rule: Fill::NonZero,
+        });
+    }
+
+    pub fn disc(&mut self, center: Point, radius: f64, transform: Affine, paint: Paint) {
+        self.commands.push(Command::Disc {
+            center,
+            radius,
+            paint,
+            transform,
         });
     }
 

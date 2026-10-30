@@ -175,6 +175,8 @@ pub struct FrameStats {
     journal: Option<Journal>,
     /// Depuis le dernier résumé.
     period: Period,
+    /// Images des animaux sur le GPU : nombre et octets.
+    textures: (usize, usize),
 }
 
 #[derive(Debug, Default)]
@@ -202,6 +204,7 @@ impl FrameStats {
             behaviors: BTreeMap::new(),
             journal: None,
             period: Period::default(),
+            textures: (0, 0),
         }
     }
 
@@ -341,7 +344,7 @@ impl FrameStats {
             let line = format!(
                 "S {at:.4} images {} plus_grand_ecart {:.1} plus_longue_prep {:.1} lentes {} \
                  moyennes rel {:.3} sim {:.3} son {:.3} fen {:.3} dep {:.3} des {:.3} att {:.3} \
-                 env {:.3} rendus {} {}",
+                 env {:.3} rendus {} textures_gpu {} mo_gpu {:.1} {}",
                 period.frames,
                 period.worst_gap,
                 period.worst_work,
@@ -355,6 +358,8 @@ impl FrameStats {
                 mean(period.phases.acquire),
                 mean(period.phases.present),
                 period.phases.renders,
+                self.textures.0,
+                self.textures.1 as f64 / 1e6,
                 process_usage(),
             );
             *period = Period::default();
@@ -363,6 +368,11 @@ impl FrameStats {
                 None => log::info!("{line}"),
             }
         }
+    }
+
+    /// Images des animaux gardées sur le GPU (nombre, octets), pour les résumés.
+    pub fn set_textures(&mut self, textures: (usize, usize)) {
+        self.textures = textures;
     }
 
     #[must_use]
