@@ -19,6 +19,11 @@ mod watch;
 
 use winit::event_loop::EventLoop;
 
+/// L'allocateur du système, qui compte les allocations pendant les essais
+/// (une lecture atomique par allocation le reste du temps).
+#[global_allocator]
+static ALLOCATOR: mouflon_platform::CountingAlloc = mouflon_platform::CountingAlloc;
+
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default()

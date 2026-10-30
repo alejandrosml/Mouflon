@@ -152,6 +152,8 @@ pub struct About<'a> {
 pub enum UiEvent {
     /// Article choisi dans un menu surgissant ([`pop_up_menu`]).
     Menu(u32),
+    /// Le menu surgissant s'est refermé (après l'article choisi, s'il y en a un).
+    MenuClosed,
     /// Case des réglages cochée (`true`) ou décochée.
     Check(u32, bool),
     /// Cran choisi sur un curseur des réglages.
@@ -270,13 +272,29 @@ impl LoginItem {
     }
 }
 
+mod alloc;
+pub mod diag;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mapped;
 mod usage;
 
+pub use alloc::{AllocCounts, CountingAlloc, alloc_counts, set_alloc_counting};
 pub use mapped::{SharedBytes, map_file};
 pub use usage::{ProcessUsage, process_usage};
+
+/// Un battement de l'horloge de l'écran, en secondes de l'horloge des
+/// médias ([`diag::media_time`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Beat {
+    /// Heure à laquelle l'image préparée maintenant sera affichée.
+    pub target: f64,
+    /// Heure du rafraîchissement qui vient d'avoir lieu (la synchronisation
+    /// verticale) : `target - vsync` est la durée d'une image de l'écran.
+    pub vsync: f64,
+    /// Heure à laquelle l'horloge nous a appelés.
+    pub called: f64,
+}
 
 #[cfg(target_os = "macos")]
 pub use macos::{
@@ -419,7 +437,7 @@ mod fallback {
     pub enum FrameClock {}
 
     impl FrameClock {
-        pub fn new(_tick: impl Fn(f64) + 'static) -> Option<Self> {
+        pub fn new(_tick: impl Fn(super::Beat) + 'static) -> Option<Self> {
             None
         }
 

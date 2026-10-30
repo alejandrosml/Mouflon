@@ -76,7 +76,10 @@ all = { level = "warn", priority = -1 }
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-strip = true
+# Les noms des fonctions restent dans le programme (pas leurs détails de
+# débogage) : les rapports de plantage de macOS, `sample` et les piles
+# relevées pendant les essais disent où l'on était (≈ +2 Mo).
+strip = "debuginfo"
 
 [profile.profilage]
 # La version publiée, mais avec ses symboles : pour relever où passe le temps

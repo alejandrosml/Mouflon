@@ -176,6 +176,10 @@ pub struct Timings {
     pub acquire: Duration,
     /// Envoi à l'écran.
     pub present: Duration,
+    /// La plus longue attente d'une image d'écran, pour une fenêtre.
+    pub worst_acquire: Duration,
+    /// Images d'écran refusées (surface à refaire, perdue, délai dépassé…).
+    pub misses: u32,
 }
 
 impl std::fmt::Debug for Gpu {
@@ -569,10 +573,16 @@ impl Gpu {
             return done;
         };
         let started = Instant::now();
-        let frames: Vec<(usize, wgpu::SurfaceTexture)> = direct
-            .into_iter()
-            .filter_map(|i| Some((i, Self::acquire(&self.context, jobs[i].surface)?)))
-            .collect();
+        let mut frames: Vec<(usize, wgpu::SurfaceTexture)> = Vec::with_capacity(direct.len());
+        for i in direct {
+            let asked = Instant::now();
+            let frame = Self::acquire(&self.context, jobs[i].surface);
+            self.timings.worst_acquire = self.timings.worst_acquire.max(asked.elapsed());
+            match frame {
+                Some(frame) => frames.push((i, frame)),
+                None => self.timings.misses += 1,
+            }
+        }
         let acquired = Instant::now();
         self.timings.acquire += acquired - started;
         let Some(&(first, _)) = frames.first() else {

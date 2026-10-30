@@ -2054,6 +2054,9 @@ pub struct Flock {
     collisions: bool,
     /// Change quand un animal arrive, s'en va ou part (voir [`Flock::generation`]).
     generation: u64,
+    /// L'animal qui attend, immobile (son menu est ouvert) : voir
+    /// [`Flock::hold_still`].
+    still: Option<u32>,
 }
 
 /// Élans donnés à deux animaux qui se rentrent dedans, ou rien.
@@ -2239,6 +2242,23 @@ impl Flock {
         self.collisions = on;
     }
 
+    /// Cet animal attend, immobile, sans que le temps passe pour lui (on a
+    /// ouvert son menu : il reste sous le curseur) ; les autres continuent.
+    /// `None` : il reprend où il en était.
+    pub fn hold_still(&mut self, id: Option<u32>) {
+        self.still = id;
+        if let Some(pet) = id.and_then(|id| self.pets.iter_mut().find(|p| p.id == id)) {
+            // Plus rien à interpoler : il est dessiné là où il est.
+            pet.prev_pos = pet.pos;
+        }
+    }
+
+    /// L'animal qui attend, s'il y en a un.
+    #[must_use]
+    pub fn still(&self) -> Option<u32> {
+        self.still
+    }
+
     #[must_use]
     pub fn collisions(&self) -> bool {
         self.collisions
@@ -2252,7 +2272,9 @@ impl Flock {
         self.accumulator += elapsed.clamp(0.0, 0.1);
         while self.accumulator >= TICK {
             for pet in &mut self.pets {
-                pet.step(TICK, world, input);
+                if self.still != Some(pet.id) {
+                    pet.step(TICK, world, input);
+                }
             }
             if self.collisions {
                 self.collide(world, input);
@@ -2269,6 +2291,9 @@ impl Flock {
     fn collide(&mut self, world: &World, input: &Input) {
         for i in 0..self.pets.len() {
             for j in i + 1..self.pets.len() {
+                if self.is_still(i) || self.is_still(j) {
+                    continue;
+                }
                 let Some((push_i, push_j)) = bump(&self.pets[i], &self.pets[j]) else {
                     continue;
                 };
@@ -2284,7 +2309,11 @@ impl Flock {
     fn meet(&mut self, world: &World, input: &Input) {
         for i in 0..self.pets.len() {
             for j in 0..self.pets.len() {
-                if i == j || !meeting(&self.pets[i], &self.pets[j]) {
+                if i == j
+                    || self.is_still(i)
+                    || self.is_still(j)
+                    || !meeting(&self.pets[i], &self.pets[j])
+                {
                     continue;
                 }
                 let (a, b) = if i < j {
@@ -2368,10 +2397,20 @@ impl Flock {
         }
     }
 
-    /// Activité la plus élevée du troupeau.
+    /// L'animal de ce rang attend-il, immobile ?
+    fn is_still(&self, index: usize) -> bool {
+        self.still.is_some() && self.still == self.pets.get(index).map(|p| p.id)
+    }
+
+    /// Activité la plus élevée du troupeau (l'animal qui attend, immobile,
+    /// n'en a pas).
     #[must_use]
     pub fn activity(&self) -> Option<Activity> {
-        self.pets.iter().map(Pet::activity).max()
+        self.pets
+            .iter()
+            .filter(|p| self.still != Some(p.id))
+            .map(Pet::activity)
+            .max()
     }
 
     /// Images par seconde qu'il faut aux animaux qui bougent (voir
@@ -2380,7 +2419,7 @@ impl Flock {
     pub fn smooth_rate(&self) -> f32 {
         self.pets
             .iter()
-            .filter(|p| p.activity() == Activity::Moving)
+            .filter(|p| self.still != Some(p.id) && p.activity() == Activity::Moving)
             .map(Pet::smooth_rate)
             .fold(0.0, f32::max)
     }
@@ -3374,6 +3413,36 @@ mod tests {
         advance(&mut flock, &world, 1.5);
         let ids: Vec<u32> = flock.pets().iter().map(Pet::id).collect();
         assert_eq!(ids, vec![latest]);
+    }
+
+    #[test]
+    fn the_pet_whose_menu_is_open_waits_while_the_others_walk() {
+        let world = world();
+        let mut flock = Flock::new();
+        let waiting = flock.spawn(def(), 1, &world, None);
+        let walker = flock.spawn(def(), 2, &world, None);
+        put(&mut flock, &world, waiting, 300.0, 1.0, "walk");
+        put(&mut flock, &world, walker, 900.0, 1.0, "walk");
+        advance(&mut flock, &world, 0.1);
+        flock.hold_still(Some(waiting));
+        assert_eq!(flock.still(), Some(waiting));
+        let x = |flock: &Flock, id: u32| {
+            flock
+                .pets()
+                .iter()
+                .find(|p| p.id() == id)
+                .unwrap()
+                .view(0.5)
+                .ground
+                .x
+        };
+        let (before, other) = (x(&flock, waiting), x(&flock, walker));
+        advance(&mut flock, &world, 0.5);
+        assert_eq!(x(&flock, waiting), before, "il attend, sans trembler");
+        assert!(x(&flock, walker) > other + 10.0, "l'autre marche");
+        flock.hold_still(None);
+        advance(&mut flock, &world, 0.5);
+        assert!(x(&flock, waiting) > before + 10.0, "il repart");
     }
 
     #[test]

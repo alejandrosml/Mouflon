@@ -13,12 +13,16 @@ use objc2::{
 };
 use objc2_app_kit::NSScreen;
 use objc2_foundation::{NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
-use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
+use objc2_quartz_core::{CACurrentMediaTime, CADisplayLink, CAFrameRateRange};
 
-/// Ce que l'horloge appelle à chaque battement, avec l'heure (en secondes)
-/// à laquelle l'image préparée sera affichée.
+use crate::Beat;
+
+/// Ce que l'horloge appelle à chaque battement : l'heure à laquelle l'image
+/// préparée sera affichée, celle du rafraîchissement qui vient d'avoir
+/// lieu, et celle de l'appel (le retard de l'appel dit si le fil principal
+/// était pris).
 struct Ivars {
-    tick: Box<dyn Fn(f64)>,
+    tick: Box<dyn Fn(Beat)>,
 }
 
 define_class!(
@@ -33,7 +37,11 @@ define_class!(
     impl FrameTarget {
         #[unsafe(method(tick:))]
         fn tick(&self, link: &CADisplayLink) {
-            (self.ivars().tick)(link.targetTimestamp());
+            (self.ivars().tick)(Beat {
+                target: link.targetTimestamp(),
+                vsync: link.timestamp(),
+                called: CACurrentMediaTime(),
+            });
         }
     }
 
@@ -41,7 +49,7 @@ define_class!(
 );
 
 impl FrameTarget {
-    fn new(mtm: MainThreadMarker, tick: Box<dyn Fn(f64)>) -> Retained<Self> {
+    fn new(mtm: MainThreadMarker, tick: Box<dyn Fn(Beat)>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(Ivars { tick });
         // SAFETY: `init` de NSObject, sur un objet alloué dont les variables
         // d'instance sont prêtes.
@@ -72,7 +80,7 @@ impl std::fmt::Debug for FrameClock {
 impl FrameClock {
     /// Crée l'horloge, arrêtée. `None` hors du fil principal, sans écran ou
     /// avant macOS 14 (l'app se rythme alors avec une minuterie).
-    pub fn new(tick: impl Fn(f64) + 'static) -> Option<Self> {
+    pub fn new(tick: impl Fn(Beat) + 'static) -> Option<Self> {
         let mtm = MainThreadMarker::new()?;
         if !available!(macos = 14.0) {
             return None;

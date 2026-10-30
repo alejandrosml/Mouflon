@@ -1,12 +1,51 @@
-//! Essais de fluidité : `MOUFLON_ESSAI=300` lance Mouflon pour 300 secondes
+//! Essais de fluidité : `MOUFLON_ESSAI=180` lance Mouflon pour 180 secondes
 //! et écrit un journal complet (`MOUFLON_JOURNAL`, par défaut
-//! `mouflon-essai.log` dans le dossier courant) : chaque image (temps, parties,
-//! état de chaque animal), chaque événement (collisions, atterrissages, sons,
-//! fenêtres, menu…), un résumé toutes les dix secondes et un bilan à la fin.
+//! `mouflon-essai.log` dans le dossier courant), lu par
+//! `tools/essai/analyse.py`. Le plus simple : `tools/essai/Essai de 3
+//! minutes.command`, qui observe aussi le système autour.
 //!
 //! Options : `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` (animaux du
 //! lancement, plusieurs fois le même si on veut) et
 //! `MOUFLON_ESSAI_COLLISIONS=1` (mode collisions pendant l'essai).
+//!
+//! # Le journal
+//!
+//! Une ligne par chose notée ; le premier mot dit laquelle, le deuxième est
+//! l'heure, en secondes depuis le début de l'essai (sauf l'en-tête).
+//!
+//! - En-tête : `ESSAI`, `VERSION`, `DEBUT` (heure du Mac, pour caler les
+//!   relevés faits à côté), `SYSTEME`, `PROCESSUS`, `ECRAN_DETAIL`,
+//!   `REGLAGES`, `GPU`, `ECRAN`, `PRECHARGEMENT`.
+//! - `F` : une image. `ecart` depuis la précédente et `prep` (temps de
+//!   préparation), en ms ; `clk` (réveillée par l'horloge de l'écran) ou
+//!   `tmr` (par la minuterie) ; `cad` (images par seconde voulues), `ecr`
+//!   (durée d'une image de l'écran). Pour `clk` : `vs` (de la
+//!   synchronisation verticale à l'appel de l'horloge), `q` (de l'appel au
+//!   début de l'image), `mv` (rafraîchissements sautés), `co` (battements
+//!   fondus, arrivés avant que le précédent soit traité). Pour `tmr` :
+//!   `tard` (retard de la minuterie). Puis le temps de chaque partie :
+//!   `rel` relevés, `sim` simulation, `son` sons, `fen` fenêtres ouvertes ou
+//!   fermées, `dep` fenêtres déplacées (`dmax` : le plus long déplacement),
+//!   `cur` zones cliquables, `des` dessin, `att` attente d'une image d'écran
+//!   (`amax` : la plus longue, `rate` : images refusées), `env` envoi, `r`
+//!   fenêtres redessinées ; `al` et `ko` : allocations du fil principal ;
+//!   `ev` : événements des fenêtres reçus depuis l'image précédente. Enfin,
+//!   après des `|`, chaque animal : numéro, comportement, image, position,
+//!   vitesse, appui (`s` sol, `a` air, `t` tenu), roulis.
+//! - `E` : un événement (collision, son, fenêtre, menu, notification du
+//!   système, mode de la boucle d'événements, gestionnaire lent…).
+//! - `B` : un retard ou un blocage du fil principal (voir
+//!   `mouflon_platform::diag`), suivi de ses piles les plus vues (`BP`) ;
+//!   `BD` : le fil des diagnostics lui-même en retard (tout le processus
+//!   attendait un cœur).
+//! - Toutes les dix secondes : `S` (images, à-coups, parties, mémoire,
+//!   processeur), `SH` (horloge de l'écran, événements, gestionnaires), et
+//!   du fil des diagnostics `SP` (processus), `SF` (chaque fil), `SS`
+//!   (système), `SB` (boucle d'événements, petits retards et leurs piles
+//!   `BPP`), `SA` (allocations), et du fil de relevé `SW` (relevés des
+//!   fenêtres).
+//! - `PANIQUE` : l'app a planté (message et endroit).
+//! - `BILAN` : le bilan de fin.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -72,6 +111,14 @@ pub struct Phases {
     pub present: Duration,
     /// Fenêtres redessinées.
     pub renders: u32,
+    /// Zones cliquables des fenêtres changées (au gré du curseur).
+    pub hittest: Duration,
+    /// Le plus long déplacement d'une fenêtre.
+    pub worst_move: Duration,
+    /// La plus longue attente d'une image d'écran.
+    pub worst_acquire: Duration,
+    /// Images d'écran refusées (surface à refaire, perdue…).
+    pub misses: u32,
 }
 
 impl Phases {
@@ -85,13 +132,18 @@ impl Phases {
         self.acquire += other.acquire;
         self.present += other.present;
         self.renders += other.renders;
+        self.hittest += other.hittest;
+        self.worst_move = self.worst_move.max(other.worst_move);
+        self.worst_acquire = self.worst_acquire.max(other.worst_acquire);
+        self.misses += other.misses;
     }
 
     /// Forme courte pour le journal : millisecondes de chaque partie.
     fn compact(&self) -> String {
         let ms = |d: Duration| d.as_secs_f32() * 1000.0;
-        format!(
-            "rel {:.2} sim {:.2} son {:.2} fen {:.2} dep {:.2} des {:.2} att {:.2} env {:.2} r {}",
+        let mut out = format!(
+            "rel {:.2} sim {:.2} son {:.2} fen {:.2} dep {:.2} des {:.2} att {:.2} env {:.2} r {} \
+             cur {:.2} dmax {:.2} amax {:.2}",
             ms(self.watch),
             ms(self.sim),
             ms(self.sounds),
@@ -101,7 +153,14 @@ impl Phases {
             ms(self.acquire),
             ms(self.present),
             self.renders,
-        )
+            ms(self.hittest),
+            ms(self.worst_move),
+            ms(self.worst_acquire),
+        );
+        if self.misses > 0 {
+            let _ = write!(out, " rate {}", self.misses);
+        }
+        out
     }
 }
 
@@ -111,18 +170,77 @@ impl std::fmt::Display for Phases {
         write!(
             f,
             "relevés {:.1}, simulation {:.1}, sons {:.1}, fenêtres {:.1}, déplacements {:.1}, \
-             dessin {:.1}, attente de l'écran {:.1}, envoi {:.1} ({} rendu(s))",
+             zones cliquables {:.1}, dessin {:.1}, attente de l'écran {:.1}, envoi {:.1} \
+             ({} rendu(s))",
             ms(self.watch),
             ms(self.sim),
             ms(self.sounds),
             ms(self.windows),
             ms(self.moves),
+            ms(self.hittest),
             ms(self.paint),
             ms(self.acquire),
             ms(self.present),
             self.renders,
         )
     }
+}
+
+/// Ce que l'horloge de l'écran dit d'une image (millisecondes).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BeatTiming {
+    /// De la synchronisation verticale à l'appel de l'horloge : le retard
+    /// du fil principal à prendre le battement.
+    pub latency: f32,
+    /// De l'appel de l'horloge au début de l'image : le passage par la
+    /// boucle d'événements.
+    pub queue: f32,
+    /// Rafraîchissements de l'écran sautés depuis le battement précédent.
+    pub missed: u32,
+    /// Battements arrivés avant que le précédent ait été traité (fondus).
+    pub coalesced: u32,
+}
+
+/// Une image, pour le journal.
+#[derive(Clone, Copy, Debug)]
+pub struct FrameRecord {
+    /// Quand on a commencé à la préparer.
+    pub started: Instant,
+    /// Réveillée par l'horloge de l'écran : ce qu'elle en dit.
+    pub beat: Option<BeatTiming>,
+    /// Réveillée par la minuterie : son retard sur l'heure prévue (ms).
+    pub timer_late: Option<f32>,
+    /// Images par seconde voulues pour elle (0 : l'horloge était arrêtée,
+    /// rien ne bougeait).
+    pub cadence: f64,
+    /// Durée d'une image de l'écran, en ms (0 : inconnue).
+    pub refresh: f64,
+    pub phases: Phases,
+    /// Allocations du fil principal pendant l'image, et leurs octets.
+    pub allocs: (u64, u64),
+    /// Événements des fenêtres reçus depuis l'image précédente.
+    pub events: u32,
+}
+
+/// Ce que la boucle d'événements a reçu depuis le dernier résumé.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Counters {
+    pub cursor_moves: u32,
+    pub clicks: u32,
+    /// Le curseur entre dans la fenêtre d'un animal.
+    pub hovers: u32,
+    pub redraws: u32,
+    /// Autres événements des fenêtres (déplacées, redimensionnées…).
+    pub other_window: u32,
+    /// Battements de l'horloge de l'écran reçus.
+    pub beats: u32,
+    /// Autres événements de l'app (menus, réglages, dessins prêts…).
+    pub user: u32,
+    /// Passages de la boucle avant de s'endormir.
+    pub waits: u32,
+    /// Gestionnaires lents (hors images) et le plus lent, en ms.
+    pub slow_handlers: u32,
+    pub slowest_handler: f32,
 }
 
 /// Un animal à une image : ce que le journal en garde.
@@ -191,6 +309,8 @@ pub struct FrameStats {
     images: usize,
     /// Ressources du processus au résumé précédent.
     usage: Option<(Instant, platform::ProcessUsage)>,
+    /// Ce que la boucle d'événements a reçu depuis le dernier résumé.
+    pub counters: Counters,
 }
 
 #[derive(Debug, Default)]
@@ -201,6 +321,16 @@ struct Period {
     worst_work: f32,
     late: u32,
     phases: Phases,
+    /// Images réveillées par l'horloge, battements fondus, rafraîchissements
+    /// sautés, plus grands retards d'appel et de passage (ms).
+    beats: u32,
+    coalesced: u32,
+    missed: u32,
+    worst_latency: f32,
+    worst_queue: f32,
+    worst_timer: f32,
+    allocs: u64,
+    alloc_bytes: u64,
 }
 
 impl FrameStats {
@@ -222,7 +352,21 @@ impl FrameStats {
             images: 0,
             // Point de départ du temps de calcul du premier résumé.
             usage: platform::process_usage().map(|usage| (begun, usage)),
+            counters: Counters::default(),
         }
+    }
+
+    /// De quoi écrire dans le journal depuis un autre fil (diagnostics,
+    /// relevé des fenêtres), s'il y en a un.
+    #[must_use]
+    pub fn sender(&self) -> Option<Sender<String>> {
+        self.journal.as_ref().map(|j| j.sender.clone())
+    }
+
+    /// Début de l'essai.
+    #[must_use]
+    pub fn begun(&self) -> Instant {
+        self.begun
     }
 
     /// Avec un journal complet : le fichier `MOUFLON_JOURNAL`, ou
@@ -262,27 +406,25 @@ impl FrameStats {
         }
     }
 
-    /// Une image commencée à `started` (et finie maintenant), et l'état de
-    /// chaque animal à ce moment.
-    /// Note une image : `started`, quand on a commencé à la préparer ;
-    /// `beat`, réveillée par l'horloge de l'écran ; `cadence`, les images par
-    /// seconde voulues pour elle (0 : l'horloge était arrêtée, rien ne bougeait) ;
-    /// `refresh`, la durée d'une image de l'écran en millisecondes (0 : inconnue).
-    pub fn record<'a>(
-        &mut self,
-        started: Instant,
-        beat: bool,
-        (cadence, refresh): (f64, f64),
-        phases: Phases,
-        pets: impl Iterator<Item = PetLine<'a>>,
-    ) {
+    /// Note une image (finie maintenant) et l'état de chaque animal à ce moment.
+    pub fn record<'a>(&mut self, frame: &FrameRecord, pets: impl Iterator<Item = PetLine<'a>>) {
+        let FrameRecord {
+            started,
+            beat,
+            timer_late,
+            cadence,
+            refresh,
+            phases,
+            allocs,
+            events,
+        } = *frame;
         let gap = self
             .last
             .map(|last| started.duration_since(last).as_secs_f32() * 1000.0);
         self.last = Some(started);
         let work = started.elapsed().as_secs_f32() * 1000.0;
         self.work.push(work);
-        if beat {
+        if beat.is_some() {
             self.beats += 1;
         }
         let at = started.duration_since(self.begun).as_secs_f32();
@@ -301,12 +443,28 @@ impl FrameStats {
             self.slow.truncate(SLOW_KEPT);
         }
 
-        // L'image dans le journal : temps, parties, puis chaque animal.
+        // L'image dans le journal : temps, horloge, parties, puis chaque animal.
         let mut line = format!(
-            "F {at:.4} ecart {:.2} prep {work:.2} {} cad {cadence:.0} ecr {refresh:.1} {}",
+            "F {at:.4} ecart {:.2} prep {work:.2} {} cad {cadence:.0} ecr {refresh:.1}",
             gap.unwrap_or(0.0),
-            if beat { "clk" } else { "tmr" },
+            if beat.is_some() { "clk" } else { "tmr" },
+        );
+        if let Some(beat) = beat {
+            let _ = write!(
+                line,
+                " vs {:.2} q {:.2} mv {} co {}",
+                beat.latency, beat.queue, beat.missed, beat.coalesced
+            );
+        }
+        if let Some(late) = timer_late {
+            let _ = write!(line, " tard {late:.2}");
+        }
+        let _ = write!(
+            line,
+            " {} al {} ko {:.1} ev {events}",
             phases.compact(),
+            allocs.0,
+            allocs.1 as f64 / 1024.0
         );
         let mut changes = Vec::new();
         for pet in pets {
@@ -355,6 +513,18 @@ impl FrameStats {
             period.late += 1;
         }
         period.phases.add(&phases);
+        if let Some(beat) = beat {
+            period.beats += 1;
+            period.coalesced += beat.coalesced;
+            period.missed += beat.missed;
+            period.worst_latency = period.worst_latency.max(beat.latency);
+            period.worst_queue = period.worst_queue.max(beat.queue);
+        }
+        if let Some(late) = timer_late {
+            period.worst_timer = period.worst_timer.max(late);
+        }
+        period.allocs += allocs.0;
+        period.alloc_bytes += allocs.1;
         if started.duration_since(period_start) >= SUMMARY_EVERY {
             let frames = period.frames.max(1);
             let mean = |d: Duration| d.as_secs_f32() * 1000.0 / frames as f32;
@@ -380,9 +550,40 @@ impl FrameStats {
                 self.images as f64 / 1e6,
                 usage_since_last(&mut self.usage, started),
             );
+            let c = std::mem::take(&mut self.counters);
+            let clock = format!(
+                "SH {at:.4} horloge {} fondus {} sautes {} appel_max_ms {:.1} passage_max_ms {:.1} \
+                 minuterie_max_ms {:.1} dmax {:.1} amax {:.1} rates {} allocs_principal {} \
+                 ko_principal {:.0} souris {} clics {} survols {} redessins {} fenetres {} \
+                 battements {} app {} attentes {} lents {} plus_lent_ms {:.1}",
+                period.beats,
+                period.coalesced,
+                period.missed,
+                period.worst_latency,
+                period.worst_queue,
+                period.worst_timer,
+                period.phases.worst_move.as_secs_f32() * 1000.0,
+                period.phases.worst_acquire.as_secs_f32() * 1000.0,
+                period.phases.misses,
+                period.allocs,
+                period.alloc_bytes as f64 / 1024.0,
+                c.cursor_moves,
+                c.clicks,
+                c.hovers,
+                c.redraws,
+                c.other_window,
+                c.beats,
+                c.user,
+                c.waits,
+                c.slow_handlers,
+                c.slowest_handler,
+            );
             *period = Period::default();
             match &self.journal {
-                Some(journal) => journal.write(line),
+                Some(journal) => {
+                    journal.write(line);
+                    journal.write(clock);
+                }
                 None => log::info!("{line}"),
             }
         }
@@ -473,6 +674,21 @@ impl FrameStats {
         }
         report
     }
+}
+
+/// Une panique de l'app est notée au journal (`PANIQUE`), avant le message
+/// habituel ; le fil du journal a le temps de l'écrire.
+pub fn install_panic_hook(sender: Sender<String>, begun: Instant) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let at = begun.elapsed().as_secs_f64();
+        let message = info.to_string().replace('\n', " ⏎ ");
+        if sender.send(format!("PANIQUE {at:.4} {message}")).is_ok() {
+            // Le journal s'écrit au plus tard toutes les 500 ms.
+            std::thread::sleep(Duration::from_millis(700));
+        }
+        previous(info);
+    }));
 }
 
 /// Ressources du processus depuis le résumé précédent, `last` (lues sans
@@ -634,6 +850,30 @@ mod tests {
         assert_eq!(usage_line(&bare, None, start), "memoire_mo 120");
     }
 
+    fn frame(
+        started: Instant,
+        beat: bool,
+        cadence: f64,
+        refresh: f64,
+        phases: Phases,
+    ) -> FrameRecord {
+        FrameRecord {
+            started,
+            beat: beat.then_some(BeatTiming {
+                latency: 0.5,
+                queue: 0.25,
+                missed: 0,
+                coalesced: 0,
+            }),
+            timer_late: (!beat).then_some(1.5),
+            cadence,
+            refresh,
+            phases,
+            allocs: (3, 2048),
+            events: 2,
+        }
+    }
+
     fn pet(behavior: &str, frame: u32) -> PetLine<'_> {
         PetLine {
             id: 0,
@@ -655,10 +895,13 @@ mod tests {
         let mut stats = FrameStats::new(start);
         for i in 0..5u64 {
             stats.record(
-                start + Duration::from_millis(i * 8),
-                i > 0,
-                (120.0, 8.3),
-                Phases::default(),
+                &frame(
+                    start + Duration::from_millis(i * 8),
+                    i > 0,
+                    120.0,
+                    8.3,
+                    Phases::default(),
+                ),
                 [pet("marche", i as u32 / 2)].into_iter(),
             );
         }
@@ -677,13 +920,16 @@ mod tests {
         let start = Instant::now() - Duration::from_secs(1);
         let mut stats = FrameStats::new(start);
         stats.record(
-            start,
-            false,
-            (60.0, 0.0),
-            Phases {
-                sounds: Duration::from_millis(900),
-                ..Phases::default()
-            },
+            &frame(
+                start,
+                false,
+                60.0,
+                0.0,
+                Phases {
+                    sounds: Duration::from_millis(900),
+                    ..Phases::default()
+                },
+            ),
             std::iter::empty(),
         );
         let report = stats.report();
@@ -698,10 +944,7 @@ mod tests {
         let mut stats = FrameStats::new(start).with_journal_at(path.clone());
         stats.raw("ESSAI test");
         stats.record(
-            start,
-            true,
-            (30.0, 8.3),
-            Phases::default(),
+            &frame(start, true, 30.0, 8.3, Phases::default()),
             [pet("marche", 3)].into_iter(),
         );
         stats.note("heurt 0 1");
@@ -709,7 +952,11 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert!(text.starts_with("ESSAI test\n"), "{text}");
-        assert!(text.contains("clk cad 30 ecr 8.3 "), "{text}");
+        assert!(
+            text.contains("clk cad 30 ecr 8.3 vs 0.50 q 0.25 mv 0 co 0 rel "),
+            "{text}"
+        );
+        assert!(text.contains(" al 3 ko 2.0 ev 2 | "), "{text}");
         assert!(text.contains("| 0 marche 3 10.0,20.0 0,0 s 0.00"), "{text}");
         assert!(text.contains("E ") && text.contains("heurt 0 1"), "{text}");
         assert!(text.contains("BILAN 1 images"), "{text}");

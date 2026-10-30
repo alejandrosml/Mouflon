@@ -33,7 +33,7 @@ pub fn set_ui_handler(handler: impl Fn(UiEvent) + 'static) {
     HANDLER.with(|slot| *slot.borrow_mut() = Some(Box::new(handler)));
 }
 
-fn emit(event: UiEvent) {
+pub(super) fn emit(event: UiEvent) {
     HANDLER.with(|slot| {
         if let Some(handler) = slot.borrow().as_ref() {
             handler(event);
@@ -100,6 +100,13 @@ define_class!(
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: Option<&AnyObject>) {
             emit(UiEvent::Quit);
+        }
+
+        // SAFETY: appelée par la boucle d'événements (`performSelector:…`),
+        // sans objet.
+        #[unsafe(method(popUp:))]
+        fn pop_up(&self, _sender: Option<&AnyObject>) {
+            super::popup::show_pending();
         }
     }
 );

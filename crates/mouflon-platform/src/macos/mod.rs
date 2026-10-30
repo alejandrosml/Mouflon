@@ -2,6 +2,7 @@
 
 mod actions;
 mod clock;
+pub(crate) mod diag;
 mod form;
 mod login;
 mod popup;

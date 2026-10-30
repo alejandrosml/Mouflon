@@ -87,7 +87,8 @@ state (a change made in one is seen at once in the others):
   several), say goodbye to all of them or to one of a kind, get them to play
   together, pause, mute them; *Settings…* (⌘,), *About Mouflon*, *Quit*.
 - **A right click on a pet** (or Control-click): say goodbye to that one, add
-  another of its kind, change the size, mute, pause, open the settings.
+  another of its kind, change the size, mute, pause, open the settings. It
+  waits under its menu; the others go on with their lives.
 - **The settings window**: size, sounds, collisions between pets, walking only
   on the frontmost app, walking under the Dock, opening Mouflon at login, and
   the pets folder, each option with a line saying what it does.
@@ -111,20 +112,39 @@ the others, and it is the one that appears.
 cargo run --release -- path/to/esheep64
 ```
 
-To check that the animation is smooth, `MOUFLON_ESSAI=300` runs Mouflon for
-five minutes and writes a full journal (`mouflon-essai.log` in the current
-folder, or the file named by `MOUFLON_JOURNAL`): every image (gap, time spent
-in each part, state of each pet), every event (collisions, landings, sounds,
-windows, menu), a summary every ten seconds (memory, CPU, wakeups) and a
-report at the end. `MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses the
-pets of the trial and `MOUFLON_ESSAI_COLLISIONS=1` turns collisions on. The CI
-runs such a trial on every Mac build. `tools/essai/analyse.py` reads the
-journal and lists what went wrong: hitches and their cause, the slowest
-images, animations short of images for a fast movement, position jumps, each
-collision step by step, the memory and CPU used.
+To check that the animation is smooth, double-click `tools/essai/Essai de 3
+minutes.command` on a Mac (with the app built in `dist/`): Mouflon runs for
+three minutes while you play with the pets, then quits, the Terminal window
+closes and a notification tells you it is done. Everything goes to
+`essais/<date>/`:
+
+- the journal of the trial (`journal.log`): every image (gap, time spent in
+  each part, what the screen's clock said, allocations), every event
+  (collisions, landings, sounds, windows, menus, notifications of the system
+  such as sleep, spaces or the frontmost app), the stack of the main thread
+  whenever an image is late or the event loop stays busy (sampled every 4 ms
+  by a watchdog thread), and every ten seconds the resources of the process
+  (CPU, performance cores, energy, instructions, time waiting for a core,
+  wakeups, disk, memory, page faults, context switches, system calls), of
+  each of its threads and of the system (load, memory pressure, swap,
+  thermal state, Low Power Mode);
+- around it, `sample` (where the CPU time goes), `top` (the other apps),
+  `log stream` (messages of the system about Mouflon), `vm_stat`, `pmset`
+  and `footprint`, with the time of each step (`reperes.txt`).
+
+`tools/essai/analyse.py essais/<date>/` reads it all and lists what went
+wrong: hitches and their likely cause, stalls of the main thread and where it
+was, the slowest images, animations short of images, position jumps, each
+collision step by step, the resources, and what the Mac was doing around the
+longest hitches. The CI runs the same trial on every Mac build.
+
+Without the script: `MOUFLON_ESSAI=180` runs a trial of 180 seconds
+(`MOUFLON_JOURNAL` names the journal, `mouflon-essai.log` by default),
+`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` chooses its pets and
+`MOUFLON_ESSAI_COLLISIONS=1` turns collisions on.
 
 ```sh
-MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
+MOUFLON_ESSAI=180 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 python3 tools/essai/analyse.py mouflon-essai.log
 ```
 
@@ -220,7 +240,7 @@ To draw your own character: [docs/rig.md](docs/rig.md); to tune its behaviors:
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
-| `tools/essai` | reads the journal of a trial (`MOUFLON_ESSAI`) and lists what went wrong (Python script) | — |
+| `tools/essai` | the three-minute trial (a double-clickable script) and the reading of its journal and surroundings (Python script) | — |
 
 All the app's code is Rust. Only the boundary with macOS contains `unsafe`, in
 `mouflon-platform`, with a justification for each block. The rest of the
@@ -352,7 +372,8 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
   sons ; « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ».
 - **Un clic droit sur un animal** (ou Contrôle-clic) : lui dire au revoir, en
   ajouter un autre de son espèce, changer la taille, couper les sons, mettre
-  en pause, ouvrir les réglages.
+  en pause, ouvrir les réglages. Il attend sous son menu ; les autres
+  continuent leur vie.
 - **La fenêtre des réglages** : taille, sons, collisions entre animaux, marche
   sur la seule app au premier plan, marche sous le Dock, ouverture de Mouflon à
   l'ouverture de session et dossier des animaux, chaque option avec une ligne
@@ -378,22 +399,41 @@ argument : il est chargé en plus des autres, et c'est lui qui apparaît.
 cargo run --release -- chemin/vers/esheep64
 ```
 
-Pour vérifier que l'animation est fluide, `MOUFLON_ESSAI=300` lance Mouflon
-pour cinq minutes et écrit un journal complet (`mouflon-essai.log` dans le
-dossier courant, ou le fichier que nomme `MOUFLON_JOURNAL`) : chaque image
-(écart, temps passé dans chaque partie, état de chaque animal), chaque
-événement (collisions, atterrissages, sons, fenêtres, menu), un résumé toutes
-les dix secondes (mémoire, processeur, réveils) et un bilan à la fin.
-`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` choisit les animaux de l'essai et
-`MOUFLON_ESSAI_COLLISIONS=1` met le mode collisions. L'intégration continue
-fait un tel essai à chaque construction pour Mac. `tools/essai/analyse.py` lit
-le journal et dit ce qui cloche : les à-coups et leur cause, les images les
-plus longues à préparer, les animations qui manquent d'images pour un
-mouvement rapide, les sauts de position, chaque collision pas à pas, la
-mémoire et le processeur utilisés.
+Pour vérifier que l'animation est fluide, double-clique sur `tools/essai/Essai
+de 3 minutes.command` sur un Mac (avec l'app construite dans `dist/`) :
+Mouflon tourne trois minutes pendant que tu joues avec les animaux, puis
+quitte, la fenêtre du Terminal se ferme et une notification te prévient. Tout
+va dans `essais/<date>/` :
+
+- le journal de l'essai (`journal.log`) : chaque image (écart, temps passé
+  dans chaque partie, ce qu'a dit l'horloge de l'écran, allocations), chaque
+  événement (collisions, atterrissages, sons, fenêtres, menus, notifications
+  du système comme la veille, les bureaux ou l'app au premier plan), la pile
+  du fil principal dès qu'une image tarde ou que la boucle d'événements reste
+  occupée (relevée toutes les 4 ms par un fil de surveillance), et toutes les
+  dix secondes les ressources du processus (processeur, cœurs performants,
+  énergie, instructions, attente d'un cœur, réveils, disque, mémoire, fautes
+  de page, changements de contexte, appels système), de chacun de ses fils et
+  du système (charge, pression mémoire, échange, état thermique, économie
+  d'énergie) ;
+- autour, `sample` (où passe le temps de calcul), `top` (les autres apps),
+  `log stream` (les messages du système sur Mouflon), `vm_stat`, `pmset` et
+  `footprint`, avec l'heure de chaque étape (`reperes.txt`).
+
+`tools/essai/analyse.py essais/<date>/` lit le tout et dit ce qui cloche : les
+à-coups et leur cause probable, les blocages du fil principal et où il en
+était, les images les plus longues à préparer, les animations qui manquent
+d'images, les sauts de position, chaque collision pas à pas, les ressources,
+et ce que faisait le Mac autour des plus longs à-coups. La CI fait le même
+essai à chaque construction pour Mac.
+
+Sans le script : `MOUFLON_ESSAI=180` lance un essai de 180 secondes
+(`MOUFLON_JOURNAL` nomme le journal, `mouflon-essai.log` par défaut),
+`MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote` choisit ses animaux et
+`MOUFLON_ESSAI_COLLISIONS=1` met le mode collisions.
 
 ```sh
-MOUFLON_ESSAI=300 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
+MOUFLON_ESSAI=180 MOUFLON_ESSAI_COLLISIONS=1 cargo run --release
 python3 tools/essai/analyse.py mouflon-essai.log
 ```
 
@@ -492,7 +532,7 @@ ses comportements : [docs/format.md](docs/format.md).
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |
-| `tools/essai` | lit le journal d'un essai (`MOUFLON_ESSAI`) et dit ce qui cloche (script Python) | — |
+| `tools/essai` | l'essai de trois minutes (un script à double-cliquer) et la lecture de son journal et de ses alentours (script Python) | — |
 
 Tout le code de l'app est en Rust. Seule la frontière avec macOS contient de
 l'`unsafe`, dans `mouflon-platform`, avec une justification pour chaque bloc.

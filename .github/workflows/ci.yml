@@ -62,41 +62,20 @@ jobs:
           name: Mouflon-macos-arm64
           path: dist/*.zip
 
-      # Essai de cinq minutes : deux Lainou et deux Pelote en mode collisions ;
-      # à mi-parcours, une Lainou s'en va et une autre arrive. L'app note
-      # chaque image et chaque événement dans un journal, puis quitte. Un
-      # plantage, même en quittant (ou un blocage : 7 minutes au plus), fait
+      # Essai de trois minutes, le même que sur un Mac (`tools/essai/Essai de
+      # 3 minutes.command`) : une Lainou et une Pelote en mode collisions ; à
+      # mi-parcours, l'une s'en va et une autre arrive. L'app note chaque
+      # image, chaque événement, la pile du fil principal quand une image
+      # tarde, les ressources du processus, de ses fils et du système ;
+      # autour, `sample`, `top`, `log stream`, `vm_stat`, `pmset`, et
+      # `footprint` vers la fin. Tout va dans essais/<date>/, avec l'analyse
+      # (`analyse.txt`). Un plantage, même en quittant (ou un blocage), fait
       # échouer la construction ; l'app, déjà envoyée, reste téléchargeable.
-      # Vers la fin de l'essai, la mémoire de l'app par catégories du système
-      # (images, GPU, surfaces des fenêtres…) : `memoire.txt`. Le relevé
-      # arrête l'app un instant, d'où un à-coup vers 290 s.
-      - name: Essai de cinq minutes
+      - name: Essai de trois minutes
         run: |
-          set -o pipefail
-          export RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info
-          ( sleep 290
-            pid=$(pgrep -x mouflon) && { footprint "$pid" || vmmap -summary "$pid"; } > memoire.txt 2>&1 ) &
-          MOUFLON_ESSAI=300 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
-            MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=essai-journal.log \
-            perl -e 'alarm 420; exec @ARGV' \
-            dist/Mouflon.app/Contents/MacOS/mouflon 2>&1 | tee essai.log
-          grep -q "essai terminé" essai.log
-
-      # Profil du processeur : vingt secondes d'un court essai (mêmes animaux),
-      # relevées par `sample` sur un programme qui garde ses symboles, pour voir
-      # où passe le temps de calcul, fil par fil (`profil.txt`). Après l'essai,
-      # qu'il ne dérange pas ; un échec ici ne fait pas échouer la construction.
-      - name: Profil du processeur
-        continue-on-error: true
-        run: |
-          cargo build --profile profilage --locked --target aarch64-apple-darwin -p mouflon-app
-          ( sleep 25
-            pid=$(pgrep -x mouflon) && sudo sample "$pid" 20 1 -mayDie -file profil.txt ) &
-          MOUFLON_ESSAI=60 MOUFLON_ESSAI_ANIMAUX=lainou,lainou,pelote,pelote \
-            MOUFLON_ESSAI_COLLISIONS=1 MOUFLON_JOURNAL=profil-journal.log \
-            perl -e 'alarm 180; exec @ARGV' \
-            target/aarch64-apple-darwin/profilage/mouflon > profil-sortie.log 2>&1
-          wait
+          MOUFLON_ESSAI_CI=1 perl -e 'alarm 480; exec @ARGV' \
+            bash "tools/essai/Essai de 3 minutes.command" | tee essai-console.log
+          grep -q "essai terminé" essais/*/sortie.log
 
       # Vitrine : la fenêtre des réglages en images, en plusieurs langues
       # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
@@ -125,11 +104,8 @@ jobs:
         with:
           name: essai-journal
           path: |
-            essai.log
-            essai-journal.log
-            memoire.txt
-            profil.txt
-            profil-journal.log
+            essai-console.log
+            essais/
 
       - name: Publier la version
         if: startsWith(github.ref, 'refs/tags/')
