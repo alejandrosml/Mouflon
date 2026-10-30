@@ -356,6 +356,9 @@ struct ChildRequest {
     facing: f32,
     depth: u8,
     skin: u32,
+    /// `randS` du parent : dans desktopPet, il vaut pareil pour toute la
+    /// scène (le bain dure autant que la plongée du mouton dans la baignoire).
+    rand_s: f32,
 }
 
 impl Pet {
@@ -415,8 +418,8 @@ impl Pet {
         if !self.def.behaviors[spawn.next].children.is_empty() {
             self.facing = -1.0;
         }
-        let mut left = self.eval(&spawn.x).trunc() as f32;
-        let top = self.eval(&spawn.y).trunc() as f32;
+        let mut left = self.eval_position(&spawn.x);
+        let top = self.eval_position(&spawn.y);
         if self.facing > 0.0 {
             left = frame.w - left - p.width;
         }
@@ -481,6 +484,7 @@ impl Pet {
         let mut pet = Self::bare(id, def, rng, request.pos);
         pet.child_depth = request.depth;
         pet.skin = request.skin;
+        pet.rand_s = request.rand_s;
         pet.facing = request.facing;
         pet.anim.flip = request.facing;
         pet.update_screen(world);
@@ -1465,14 +1469,15 @@ impl Pet {
             let (frame, _) = self.screen.unwrap_or_default();
             let flipped = self.facing > 0.0;
             for c in &behavior.children {
-                let x = self.eval(if flipped { &c.x_flipped } else { &c.x }).trunc() as f32;
-                let y = self.eval(&c.y).trunc() as f32;
+                let x = self.eval_position(if flipped { &c.x_flipped } else { &c.x });
+                let y = self.eval_position(&c.y);
                 self.children.push(ChildRequest {
                     behavior: c.next,
                     pos: Vec2::new(frame.x + x + p.width * 0.5, frame.y + y + p.height),
                     facing: self.facing,
                     depth: self.child_depth + 1,
                     skin: self.skin,
+                    rand_s: self.rand_s,
                 });
             }
         }
@@ -1482,16 +1487,16 @@ impl Pet {
         self.screen = world.screen_at(self.pos).map(|s| (s.frame, s.usable));
     }
 
-    /// Évalue une expression desktopPet avec les mesures de l'écran et de l'animal.
+    /// Évalue une expression desktopPet avec les mesures de l'écran et de
+    /// l'animal, en pixels du fichier d'origine (voir [`PetDef::unit`]) : ses
+    /// positions et ses nombres de pas restent ceux prévus pour des images à
+    /// leur taille d'origine, quelle que soit la taille d'affichage.
     fn eval(&mut self, expr: &Expr) -> f64 {
         let (frame, usable) = self.screen.unwrap_or_default();
         let p = self.def.physics;
+        let unit = f64::from(self.def.unit).max(1e-6);
         let behavior = &self.def.behaviors[self.behavior];
         let offset = behavior.clip.as_ref().map_or(0.0, |c| c.offset_y);
-        let scale = match &behavior.motion {
-            Motion::Script(s) => f64::from(s.scale),
-            _ => 1.0,
-        };
         let image_x = f64::from(self.pos.x - p.width * 0.5 - frame.x);
         let image_y = f64::from(self.pos.y - p.height + offset - frame.y);
         let rand_s = f64::from(self.rand_s);
@@ -1499,20 +1504,26 @@ impl Pet {
         let random = f64::from(self.rng.next_u32() % 100);
         expr.eval(&mut |name| {
             Some(match name {
-                "screenW" => f64::from(frame.w),
-                "screenH" => f64::from(frame.h),
-                "areaW" => f64::from(usable.right() - frame.x),
-                "areaH" => f64::from(usable.bottom() - frame.y),
-                "imageW" => f64::from(p.width),
-                "imageH" => f64::from(p.height),
-                "imageX" => image_x,
-                "imageY" => image_y,
+                "screenW" => f64::from(frame.w) / unit,
+                "screenH" => f64::from(frame.h) / unit,
+                "areaW" => f64::from(usable.right() - frame.x) / unit,
+                "areaH" => f64::from(usable.bottom() - frame.y) / unit,
+                "imageW" => f64::from(p.width) / unit,
+                "imageH" => f64::from(p.height) / unit,
+                "imageX" => image_x / unit,
+                "imageY" => image_y / unit,
                 "random" => random,
                 "randS" => rand_s,
-                "scale" => scale,
+                // Le zoom de desktopPet : ses images sont ici à leur taille d'origine.
+                "scale" => 1.0,
                 _ => return None,
             })
         })
+    }
+
+    /// Une position desktopPet (pixels entiers du fichier), en points.
+    fn eval_position(&mut self, expr: &Expr) -> f32 {
+        self.eval(expr).trunc() as f32 * self.def.unit
     }
 
     fn choose(&mut self, list: &[Transition], world: &World, input: &Input) -> Option<usize> {

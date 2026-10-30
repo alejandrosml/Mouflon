@@ -596,6 +596,11 @@ pub struct PetDef {
     /// Points d'apparition ; vide : l'animal tombe du haut de l'écran.
     pub spawns: Vec<SpawnPoint>,
     pub rules: Rules,
+    /// Points par pixel du fichier d'origine. Les expressions desktopPet
+    /// (positions, nombres de pas) sont écrites pour des images affichées à
+    /// leur taille d'origine : elles se calculent dans cette unité, puis se
+    /// mettent à la taille d'affichage. 1 pour un animal Mouflon.
+    pub unit: f32,
     /// Sons de l'animal (voir [`Behavior::sounds`]).
     pub sounds: Vec<Sound>,
     by_name: HashMap<String, usize>,
@@ -709,6 +714,7 @@ impl PetDef {
             reflexes,
             spawns: Vec::new(),
             rules: Rules::Mouflon,
+            unit: 1.0,
             sounds: Vec::new(),
             by_name,
             default_ground,
@@ -782,6 +788,7 @@ impl PetDef {
             Appearance::Rig { height, .. } => *height *= k,
             Appearance::Sprites(sheet) => sheet.scale *= k,
         }
+        def.unit *= k;
         let p = &mut def.physics;
         for length in [
             &mut p.gravity,
