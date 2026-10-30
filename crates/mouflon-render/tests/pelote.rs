@@ -4,9 +4,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use mouflon_core::{Input, Pet, Rect, Screen, Support, TICK, World, load_pet};
+use mouflon_core::{Input, Pet, Rect, Screen, Shadow, Support, TICK, World, load_pet};
 use mouflon_render::display::Command;
-use mouflon_render::{DisplayList, Frame, Look, PetArt, Style, paint_pet};
+use mouflon_render::{DisplayList, Frame, Look, PetArt, SpriteKey, Style, paint_pet};
 
 #[test]
 fn pelote_loads_at_80_points_and_paints_both_ways() {
@@ -68,4 +68,55 @@ fn pelote_loads_at_80_points_and_paints_both_ways() {
             .count();
         assert_eq!(images, 1, "une image par animal");
     }
+}
+
+/// Pelote ne se redessine que quand son image change à l'œil : ni pour une
+/// inclinaison qui ne bouge pas (au plafond, contre un mur), ni pour une ombre
+/// trop loin pour se voir.
+#[test]
+fn pelote_is_redrawn_only_when_its_image_changes() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/pelote/pet.toml");
+    let def = Arc::new(load_pet(&path).expect("pet.toml de Pelote"));
+    let art = PetArt::load(&def).expect("planche de Pelote");
+    let world = World::new(vec![Screen {
+        frame: Rect::new(0.0, 0.0, 1280.0, 800.0),
+        usable: Rect::new(0.0, 25.0, 1280.0, 700.0),
+        scale: 2.0,
+    }]);
+    let mut pet = Pet::spawn(0, Arc::clone(&def), 5, &world, Some(600.0));
+    for _ in 0..(6.0 / TICK) as usize {
+        pet.step(TICK, &world, &Input::default());
+    }
+    assert!(pet.force("walk"));
+    let mut view = pet.view(1.0);
+    let key = |view: &mouflon_core::PetView<'_>| SpriteKey::of(&art, view).expect("en images");
+
+    // Au sol, un reste d'inclinaison sous le seuil du repos : l'image se pose
+    // au pixel près de toute façon.
+    assert!(matches!(view.support, Support::Ground { .. }));
+    view.pose.lean = 0.001;
+    let still = key(&view);
+    view.pose.lean = 0.002;
+    assert_eq!(key(&view), still, "toujours au repos");
+
+    // Au plafond : penché d'un rien, toujours pareil.
+    view.support = Support::Air;
+    view.pose.lean = 0.0076;
+    let tilted = key(&view);
+    view.pose.lean = 0.00762;
+    assert_eq!(key(&view), tilted, "même inclinaison à l'œil");
+    view.pose.lean = 0.02;
+    assert_ne!(key(&view), tilted, "inclinaison qui se voit");
+
+    // Une ombre à 600 points sous l'animal ne se voit pas : qu'elle s'éloigne
+    // ou se rapproche d'un point ne change rien ; à 100 points, si.
+    let mut shadow_at = |distance: f32| {
+        view.shadow = Some(Shadow {
+            y: view.ground.y + distance,
+            distance,
+        });
+        key(&view)
+    };
+    assert_eq!(shadow_at(600.0), shadow_at(601.0));
+    assert_ne!(shadow_at(100.0), shadow_at(101.0));
 }

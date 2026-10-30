@@ -17,6 +17,6 @@ pub mod svg;
 pub mod vello_scene;
 
 pub use display::DisplayList;
-pub use paint::{Canvas, Frame, Look, PetArt, SpriteMotion, Style, paint_pet};
+pub use paint::{Canvas, Frame, Look, PetArt, SpriteKey, SpriteMotion, Style, paint_pet};
 pub use rig::{Part, Rig};
 pub use vello;

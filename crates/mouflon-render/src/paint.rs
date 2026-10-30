@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use mouflon_core::{
-    Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Support, Vec2 as CoreVec2,
+    Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Shadow, Support,
+    Vec2 as CoreVec2,
 };
 use vello::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use vello::peniko::{Color, Extend, Fill, Mix};
@@ -170,6 +171,18 @@ pub fn paint_pet(
     paint_particles(view.particles, world, style, out);
 }
 
+/// L'ombre que Mouflon dessine sous l'animal, s'il en dessine une, avec sa
+/// force : 1 au sol, de moins en moins en l'air, rien au-delà de 288 points.
+fn drawn_shadow(art: &PetArt, view: &PetView<'_>) -> Option<(Shadow, f32)> {
+    let shadow = view.shadow?;
+    // Les images dessinent déjà leur ombre au sol : la nôtre ne sert qu'en l'air.
+    if art.drawn.shadow && matches!(view.support, Support::Ground { .. }) {
+        return None;
+    }
+    let near = (1.0 - (shadow.distance.max(0.0) / 320.0).min(1.0)).powi(2);
+    (near >= 0.01).then_some((shadow, near))
+}
+
 fn paint_shadow(
     art: &PetArt,
     view: &PetView<'_>,
@@ -177,15 +190,9 @@ fn paint_shadow(
     style: &Style,
     out: &mut DisplayList,
 ) {
-    let Some(shadow) = view.shadow else { return };
-    // Les images dessinent déjà leur ombre au sol : la nôtre ne sert qu'en l'air.
-    if art.drawn.shadow && matches!(view.support, Support::Ground { .. }) {
+    let Some((shadow, near)) = drawn_shadow(art, view) else {
         return;
-    }
-    let near = (1.0 - (shadow.distance.max(0.0) / 320.0).min(1.0)).powi(2);
-    if near < 0.01 {
-        return;
-    }
+    };
     let strength = if style.dark { 0.42 } else { 0.27 } * view.opacity.clamp(0.0, 1.0);
     let body_width = art.body.0 / 0.46;
     let w = f64::from(body_width * (0.5 + 0.36 * near) * (1.0 + 0.2 * view.pose.squash.max(0.0)));
@@ -479,11 +486,69 @@ impl SpriteMotion {
         }
     }
 
-    /// Image au repos : on la dessine nette, au pixel près, et inutile de la
-    /// redessiner tant qu'elle ne change pas.
+    /// Image au repos : on la dessine nette, au pixel près.
     #[must_use]
     pub fn is_rest(&self) -> bool {
         self.squash.abs() < 0.004 && self.angle.abs() < 0.003 && self.mirror.abs() > 0.999
+    }
+
+    /// Le mouvement au millième près : deux mouvements de même clé se
+    /// dessinent à moins d'un cinquième de pixel l'un de l'autre, même pour
+    /// une image de 320 pixels. Au repos, l'image se pose au pixel près quel
+    /// que soit ce qui reste du mouvement : une seule clé.
+    #[must_use]
+    pub fn key(&self) -> [i32; 3] {
+        let thousandths = |v: f64| (v * 1000.0).round() as i32;
+        if self.is_rest() {
+            return [thousandths(self.mirror.signum()), 0, 0];
+        }
+        [
+            thousandths(self.mirror),
+            thousandths(self.squash),
+            thousandths(self.angle),
+        ]
+    }
+}
+
+/// Ce qui change, à l'œil, l'image d'un animal en sprites. Son déplacement
+/// passe par la position de sa fenêtre : on ne le redessine que quand cette
+/// clé change, quelques fois par seconde au lieu de 120.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpriteKey {
+    frame: Option<u32>,
+    /// Décalage vertical de l'image, au quart de point.
+    offset: i32,
+    opacity: u8,
+    mirrored: bool,
+    /// L'ombre, tant qu'elle se voit : sa distance à l'animal au demi-point
+    /// (elle reste au sol quand la fenêtre bouge), son écrasement au millième.
+    shadow: Option<[i32; 2]>,
+    /// Le mouvement ajouté par Mouflon : une inclinaison qui ne change pas
+    /// (au plafond, contre un mur) ne fait rien redessiner.
+    motion: [i32; 3],
+}
+
+impl SpriteKey {
+    /// La clé de l'image de `view`, ou rien quand l'animal se redessine à
+    /// chaque image (dessin vectoriel, particules).
+    #[must_use]
+    pub fn of(art: &PetArt, view: &PetView<'_>) -> Option<Self> {
+        if !matches!(art.look, Look::Sprites(_)) || !view.particles.is_empty() {
+            return None;
+        }
+        Some(Self {
+            frame: view.sprite_frame,
+            offset: (view.sprite_offset_y * 4.0).round() as i32,
+            opacity: (view.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
+            mirrored: view.facing > 0.0,
+            shadow: drawn_shadow(art, view).map(|(shadow, _)| {
+                [
+                    (shadow.distance * 2.0).round() as i32,
+                    (view.pose.squash.max(0.0) * 1000.0).round() as i32,
+                ]
+            }),
+            motion: SpriteMotion::of(view, art).key(),
+        })
     }
 }
 

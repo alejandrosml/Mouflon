@@ -12,7 +12,7 @@ use mouflon_core::{
     WindowRect, World, exact_dock,
 };
 use mouflon_platform as platform;
-use mouflon_render::{Canvas, DisplayList, Frame, Look, PetArt, SpriteMotion, Style, paint_pet};
+use mouflon_render::{Canvas, DisplayList, Frame, PetArt, SpriteKey, Style, paint_pet};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -87,37 +87,6 @@ struct PetWindow {
     /// Ce qu'on y dessine à cette image (gardé d'une image à l'autre pour ne
     /// pas réallouer) : toutes les fenêtres partent ensuite au GPU d'un coup.
     list: DisplayList,
-}
-
-/// Ce qui change l'image d'un animal en sprites. Le déplacement passe par la
-/// position de la fenêtre : on ne redessine que quand l'image elle-même change,
-/// quelques fois par seconde au lieu de 120.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SpriteKey {
-    frame: Option<u32>,
-    offset: i32,
-    opacity: u8,
-    mirrored: bool,
-    shadow: Option<i32>,
-}
-
-impl SpriteKey {
-    fn of(art: &PetArt, view: &PetView<'_>) -> Option<Self> {
-        // En mouvement (écrasement, balancement…) ou avec des particules : chaque image change.
-        if !matches!(art.look, Look::Sprites(_))
-            || !view.particles.is_empty()
-            || !SpriteMotion::of(view, art).is_rest()
-        {
-            return None;
-        }
-        Some(Self {
-            frame: view.sprite_frame,
-            offset: (view.sprite_offset_y * 4.0).round() as i32,
-            opacity: (view.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
-            mirrored: view.facing > 0.0,
-            shadow: view.shadow.map(|s| (s.distance * 2.0).round() as i32),
-        })
-    }
 }
 
 #[derive(Debug, Default)]
