@@ -8,7 +8,7 @@ chaque partie, état de chaque animal) et chaque événement. Ce script en tire
 ce qui cloche : les à-coups (une image qui arrive trop tard pendant qu'un
 animal bouge) avec ce qui les accompagne, les images longues à préparer, les
 animations trop lentes (peu d'images par seconde), les sauts de position,
-le déroulé de chaque collision, la mémoire et le processeur.
+le déroulé de chaque collision, la mémoire, le processeur et les réveils.
 """
 
 import re
@@ -229,6 +229,26 @@ def main():
         print(f"  {t:8.2f} s n° {pid} : {steps}")
         if gaps:
             print(f"            écarts pendant 1,5 s : max {max(gaps):.1f} ms, médian {statistics.median(gaps):.1f} ms")
+
+    # Ressources, résumé après résumé : début, médiane, maximum et fin.
+    fields = {"memoire_mo": "mémoire résidente (Mo)", "empreinte_mo": "empreinte mémoire (Mo)",
+              "cpu": "processeur (% d'un cœur)", "reveils_s": "réveils par seconde",
+              "mo_gpu": "images sur le GPU (Mo)"}
+    series = defaultdict(list)
+    for _, text in summaries:
+        tokens = text.split()
+        for key, value in zip(tokens, tokens[1:]):
+            if key in fields:
+                try:
+                    series[key].append(float(value))
+                except ValueError:
+                    pass
+    if series:
+        print("\nRESSOURCES (début, médiane, maximum, fin) :")
+        for key, label in fields.items():
+            v = series.get(key)
+            if v:
+                print(f"  {label:<26} {v[0]:7.1f} {statistics.median(v):7.1f} {max(v):7.1f} {v[-1]:7.1f}")
 
     print("\nRÉSUMÉS (toutes les dix secondes) :")
     for t, text in summaries:

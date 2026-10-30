@@ -16,6 +16,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use mouflon_platform as platform;
+
 /// Durée d'essai demandée (variable d'environnement `MOUFLON_ESSAI`, en secondes).
 #[must_use]
 pub fn trial() -> Option<Duration> {
@@ -177,6 +179,8 @@ pub struct FrameStats {
     period: Period,
     /// Images des animaux sur le GPU : nombre et octets.
     textures: (usize, usize),
+    /// Ressources du processus au résumé précédent.
+    usage: Option<(Instant, platform::ProcessUsage)>,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +209,8 @@ impl FrameStats {
             journal: None,
             period: Period::default(),
             textures: (0, 0),
+            // Point de départ du temps de calcul du premier résumé.
+            usage: platform::process_usage().map(|usage| (begun, usage)),
         }
     }
 
@@ -360,7 +366,7 @@ impl FrameStats {
                 period.phases.renders,
                 self.textures.0,
                 self.textures.1 as f64 / 1e6,
-                process_usage(),
+                usage_since_last(&mut self.usage, started),
             );
             *period = Period::default();
             match &self.journal {
@@ -452,21 +458,44 @@ impl FrameStats {
     }
 }
 
-/// Mémoire et processeur de Mouflon, d'après `ps` (essais seulement).
-fn process_usage() -> String {
-    let pid = std::process::id().to_string();
-    std::process::Command::new("ps")
-        .args(["-o", "rss=,%cpu=", "-p", &pid])
-        .output()
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .and_then(|text| {
-            let mut parts = text.split_whitespace();
-            let rss: f32 = parts.next()?.parse().ok()?;
-            let cpu: f32 = parts.next()?.replace(',', ".").parse().ok()?;
-            Some(format!("memoire_mo {:.0} cpu {cpu:.0}", rss / 1024.0))
-        })
-        .unwrap_or_default()
+/// Ressources du processus depuis le résumé précédent, `last` (lues sans
+/// lancer de programme : le fil principal n'attend pas).
+fn usage_since_last(last: &mut Option<(Instant, platform::ProcessUsage)>, now: Instant) -> String {
+    let Some(usage) = platform::process_usage() else {
+        return String::new();
+    };
+    let line = usage_line(&usage, *last, now);
+    *last = Some((now, usage));
+    line
+}
+
+/// Mémoire (résidente, puis comptée par le système) et, depuis le relevé
+/// précédent, part d'un cœur occupée et réveils par seconde.
+fn usage_line(
+    usage: &platform::ProcessUsage,
+    before: Option<(Instant, platform::ProcessUsage)>,
+    now: Instant,
+) -> String {
+    const MIB: f64 = 1024.0 * 1024.0;
+    let mut out = format!("memoire_mo {:.0}", usage.resident as f64 / MIB);
+    if let Some(footprint) = usage.footprint {
+        let _ = write!(out, " empreinte_mo {:.0}", footprint as f64 / MIB);
+    }
+    if let Some((then, before)) = before {
+        let wall = now.duration_since(then).as_secs_f64();
+        if wall > 0.0 {
+            let cpu = usage.cpu.saturating_sub(before.cpu).as_secs_f64();
+            let _ = write!(out, " cpu {:.0}", 100.0 * cpu / wall);
+            if let (Some(now), Some(then)) = (usage.wakeups, before.wakeups) {
+                let _ = write!(
+                    out,
+                    " reveils_s {:.0}",
+                    now.saturating_sub(then) as f64 / wall
+                );
+            }
+        }
+    }
+    out
 }
 
 /// Fichier du journal, écrit sur un fil à part : l'animation n'attend
@@ -557,6 +586,36 @@ fn percentile(sorted: &[f32], p: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_line_gives_the_share_of_a_core_and_wakeups_per_second() {
+        let start = Instant::now();
+        let before = platform::ProcessUsage {
+            resident: 100 << 20,
+            footprint: Some(80 << 20),
+            cpu: Duration::from_millis(500),
+            wakeups: Some(1000),
+        };
+        let after = platform::ProcessUsage {
+            resident: 120 << 20,
+            footprint: Some(90 << 20),
+            cpu: Duration::from_millis(2500),
+            wakeups: Some(1500),
+        };
+        let line = usage_line(
+            &after,
+            Some((start, before)),
+            start + Duration::from_secs(10),
+        );
+        assert_eq!(line, "memoire_mo 120 empreinte_mo 90 cpu 20 reveils_s 50");
+        // Premier relevé, système qui ne donne ni empreinte ni réveils.
+        let bare = platform::ProcessUsage {
+            footprint: None,
+            wakeups: None,
+            ..after
+        };
+        assert_eq!(usage_line(&bare, None, start), "memoire_mo 120");
+    }
 
     fn pet(behavior: &str, frame: u32) -> PetLine<'_> {
         PetLine {

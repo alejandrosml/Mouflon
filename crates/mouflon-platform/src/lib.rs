@@ -116,6 +116,9 @@ pub enum StatusItem {}
 
 #[cfg(target_os = "macos")]
 mod macos;
+mod usage;
+
+pub use usage::{ProcessUsage, process_usage};
 
 #[cfg(target_os = "macos")]
 pub use macos::{
