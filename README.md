@@ -289,6 +289,11 @@ All the app's code is Rust. Only the boundary with macOS contains `unsafe`, in
 repository is data (pets in TOML, SVG and PNG, translations, documentation),
 a build script in bash and a Python script that prepares in-between images.
 
+Where the architecture is going (one transparent window per screen with
+Core Animation layers, a display thread, system queries in a helper
+process, thousands of pets) and why, measured on a real Mac:
+[docs/architecture.md](docs/architecture.md) (in French).
+
 ### Off-screen preview
 
 ```sh
@@ -629,6 +634,11 @@ l'`unsafe`, dans `mouflon-platform`, avec une justification pour chaque bloc.
 Le reste du dépôt est fait de données (animaux en TOML, SVG et PNG,
 traductions, documentation), d'un script de construction en bash et d'un
 script Python qui prépare les images intermédiaires.
+
+Où va l'architecture (une fenêtre transparente par écran avec des calques
+Core Animation, un fil d'affichage, les appels système dans un processus
+auxiliaire, des milliers de moutons) et pourquoi, mesures du vrai Mac à
+l'appui : [docs/architecture.md](docs/architecture.md).
 
 ### Aperçu hors écran
 
