@@ -258,14 +258,19 @@ def read_top(trial, path):
                 columns = line.split()
                 continue
             if current is not None and columns and re.match(r"^\s*\d+", line):
+                # Le nom d'une app peut contenir des espaces : les colonnes
+                # après lui se comptent depuis la fin de la ligne.
                 parts = line.split()
-                try:
-                    cpu = float(parts[columns.index("%CPU")])
-                except (ValueError, IndexError):
+                tail = len(columns) - 2
+                if len(parts) < tail + 2:
                     continue
-                name = " ".join(parts[1:len(parts) - (len(columns) - 2)])
-                power = parts[columns.index("POWER") - len(columns)] if "POWER" in columns else "?"
-                current.append((cpu, name, power))
+                values = dict(zip(columns[2:], parts[len(parts) - tail:]))
+                try:
+                    cpu = float(values.get("%CPU", "x"))
+                except ValueError:
+                    continue
+                name = " ".join(parts[1:len(parts) - tail])
+                current.append((cpu, name, values.get("POWER", "?")))
     return [(t, procs) for t, procs in blocks if t is not None]
 
 
@@ -614,6 +619,11 @@ def report_around(trial, hitches, folder):
         section("REPÈRES DU SCRIPT :")
         for t, what in marks:
             print(f"  {t:8.1f} s : {what}")
+    before = read_top(trial, os.path.join(folder, "top-avant.txt"))
+    if before and any(cpu > 0 for _, procs in before for cpu, _, _ in procs):
+        section("AVANT LE LANCEMENT (top, % d'un cœur) :")
+        busy = sorted(before[-1][1], reverse=True)[:8]
+        print("  " + ", ".join(f"{name} {cpu:.0f}" for cpu, name, _ in busy))
     if tops:
         section("LES APPS QUI CALCULENT LE PLUS (moyenne des relevés de top, % d'un cœur) :")
         totals, energy = defaultdict(float), defaultdict(float)

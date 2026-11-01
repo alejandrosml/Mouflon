@@ -99,7 +99,14 @@ fi
     echo "== écrans"; system_profiler SPDisplaysDataType 2>&1
     echo "== Mouflon"; ls -la "$BIN"; codesign -dv "$APP" 2>&1
 } > "$OUT/systeme-avant.txt" 2>&1
-top -l 1 -n 30 -o cpu -stats pid,command,cpu,mem,power,threads,state > "$OUT/top-avant.txt" 2>&1
+# Les apps qui calculent, sur une seconde : le premier relevé de `top` n'a
+# pas encore de mesure du processeur (tout y est à 0 %), on garde le second.
+# Avant le lancement, c'est la référence (WindowServer, entre autres).
+releve_top() {
+    top -l 2 -s 1 -n 30 -o cpu -stats pid,command,cpu,mem,power,threads,state 2>&1 \
+        | awk '/^Processes:/ { n++ } n >= 2'
+}
+releve_top > "$OUT/top-avant.txt"
 
 # Ce qui observe le Mac pendant l'essai.
 top -l 0 -s 2 -n 15 -o cpu -stats pid,command,cpu,power,threads,idlew,mem,state,csw \
@@ -191,7 +198,7 @@ repere "relevés arrêtés"
     echo "== vm_stat"; vm_stat
     echo "== sysctl"; sysctl vm.swapusage kern.memorystatus_vm_pressure_level 2>&1
 } > "$OUT/systeme-apres.txt" 2>&1
-top -l 1 -n 30 -o cpu -stats pid,command,cpu,mem,power,threads,state > "$OUT/top-apres.txt" 2>&1
+releve_top > "$OUT/top-apres.txt"
 # Un rapport de plantage de Mouflon pendant l'essai ?
 find "$HOME/Library/Logs/DiagnosticReports" -name 'mouflon*' -newer "$OUT/.debut" \
     -exec cp {} "$OUT/" \; 2>/dev/null
