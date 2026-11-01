@@ -382,6 +382,8 @@ pub struct Pet {
     voice: Rng,
     pos: Vec2,
     prev_pos: Vec2,
+    /// Ce dont son dessin montait au pas précédent (voir [`Pet::tilt_lift`]).
+    prev_lift: Vec2,
     vel: Vec2,
     prev_vel_x: f32,
     facing: f32,
@@ -552,6 +554,7 @@ impl Pet {
         }
         self.pos = Vec2::new(frame.x + left + p.width * 0.5, frame.y + top + p.height);
         self.prev_pos = self.pos;
+        self.prev_lift = Vec2::ZERO;
         self.vel = Vec2::ZERO;
         self.hold = None;
         self.support = Support::Air;
@@ -594,6 +597,7 @@ impl Pet {
         );
         self.pos = Vec2::new(x, arena.top() + def.physics.height + 2.0);
         self.prev_pos = self.pos;
+        self.prev_lift = Vec2::ZERO;
         self.vel = Vec2::ZERO;
         self.support = Support::Air;
         self.ground_ref = None;
@@ -700,6 +704,7 @@ impl Pet {
             voice,
             pos,
             prev_pos: pos,
+            prev_lift: Vec2::ZERO,
             vel: Vec2::ZERO,
             prev_vel_x: 0.0,
             facing,
@@ -1358,6 +1363,7 @@ impl Pet {
         }
         self.realistic = tracker.is_some();
         self.prev_pos = self.pos;
+        self.prev_lift = self.tilt_lift();
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
         self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
@@ -2330,6 +2336,19 @@ impl Pet {
         }
     }
 
+    /// Posé au sol encore penché (il se redresse après une culbute, en
+    /// physique réaliste) : il repose sur le coin le plus bas de son corps,
+    /// pas sur ses pattes. Son dessin monte d'autant, et redescend à mesure
+    /// qu'il se redresse ; sans cela, il s'enfonçait dans le sol, et sautait
+    /// d'un coup vers le bas en touchant terre.
+    fn tilt_lift(&self) -> Vec2 {
+        if !self.realistic || self.angle == 0.0 || !matches!(self.support, Support::Ground { .. }) {
+            return Vec2::ZERO;
+        }
+        let body = self.body();
+        Vec2::new(0.0, (body.extent_y() - body.half.y).max(0.0))
+    }
+
     /// Vue interpolée entre le pas précédent et le pas courant (`alpha` entre 0 et 1).
     #[must_use]
     pub fn view(&self, alpha: f32) -> PetView<'_> {
@@ -2373,7 +2392,10 @@ impl Pet {
             ground: match &self.hold {
                 Some(hold) if self.realistic => self.held_ground(hold.target, hold.offset),
                 Some(hold) => hold.target - hold.offset,
-                None => self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0)),
+                // Penché au sol, il repose sur un coin : son dessin monte
+                // d'autant, d'un pas à l'autre comme sa position.
+                None => (self.prev_pos - self.prev_lift)
+                    .lerp(self.pos - self.tilt_lift(), alpha.clamp(0.0, 1.0)),
             },
             facing: a.flip,
             pose: PoseSignals {

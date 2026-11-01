@@ -473,8 +473,12 @@ def report_allocs(trial):
 
 def report_animations(trial):
     time_in, changes, speed, previous = defaultdict(float), defaultdict(int), defaultdict(list), {}
+    # Les animaux sans images d'animation (dessin vectoriel, squelette : image
+    # notée -1) bougent à chaque image : on ne compte que les autres.
     for f in trial.frames:
         for pid, p in f["pets"].items():
+            if p["image"] == -1:
+                continue
             key = p["behavior"]
             time_in[key] += f["gap"] / 1000
             speed[key].append(abs(p["vx"]) + abs(p["vy"]))
@@ -482,7 +486,7 @@ def report_animations(trial):
             if last and last[0] == key and last[1] != p["image"]:
                 changes[key] += 1
             previous[pid] = (key, p["image"])
-    section("ANIMATIONS (temps, images par seconde, vitesse moyenne) — les plus lentes d'abord :")
+    section("ANIMATIONS EN IMAGES (temps, images par seconde, vitesse moyenne) — les plus lentes d'abord :")
     rows = []
     for key, t in time_in.items():
         if t >= 0.3:

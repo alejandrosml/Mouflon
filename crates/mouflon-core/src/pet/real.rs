@@ -880,6 +880,66 @@ mod tests {
         assert_eq!(landed.view(1.0).pose.roll, 0.0, "debout");
     }
 
+    /// Comme dans l'essai du 31 octobre : heurté en l'air, il retombe la
+    /// tête en bas en tournant. Posé, il se redresse sur le coin de son
+    /// corps : son dessin ne saute pas vers le bas en touchant terre, et ne
+    /// s'enfonce jamais dans le sol.
+    #[test]
+    fn landing_upside_down_it_rights_itself_without_a_jump() {
+        let world = world(None);
+        let mut flock = Flock::new();
+        flock.set_realistic(true);
+        let id = flock.spawn(def(), 6, &world, Some(700.0));
+        for _ in 0..(2.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let floor = pet(&flock, id).position().y;
+        let half = def().physics.height * 0.5;
+        {
+            let pet = flock.get_mut(id).unwrap();
+            pet.support = Support::Air;
+            pet.ground_ref = None;
+            pet.pos.y = floor - 160.0;
+            pet.prev_pos = pet.pos;
+            pet.vel = Vec2::new(-600.0, 300.0);
+            pet.angle = -3.9;
+            pet.spin = -2.0;
+        }
+        // Le milieu du dessin (autour duquel il tourne) et son point le plus bas.
+        let drawn = |flock: &Flock| {
+            let pet = pet(flock, id);
+            let view = pet.view(1.0);
+            let center = view.ground - Vec2::new(0.0, half);
+            let body = Obb {
+                center,
+                angle: view.pose.roll,
+                ..pet.body()
+            };
+            (center, center.y + body.extent_y(), pet.support())
+        };
+        let (mut last, _, _) = drawn(&flock);
+        let mut landed = false;
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            let (center, lowest, support) = drawn(&flock);
+            // Jamais plus que sa vitesse ne le permet (900 pt/s au plus ici).
+            let step = (center - last).length();
+            assert!(step < 900.0 * TICK + 1.0, "saut de {step} pt ({support:?})");
+            // Entre deux pas (l'écran dessine entre deux), à mi-chemin.
+            let between = pet(&flock, id).view(0.5).ground - Vec2::new(0.0, half);
+            let off = (between - (last + center) * 0.5).length();
+            assert!(off < 1.0, "à mi-chemin, {off} pt à côté ({support:?})");
+            assert!(lowest < floor + 1.5, "dans le sol de {} pt", lowest - floor);
+            landed |= matches!(support, Support::Ground { .. });
+            last = center;
+        }
+        assert!(landed);
+        // Redressé et posé sur ses pattes.
+        let pet = pet(&flock, id);
+        assert_eq!(pet.view(1.0).pose.roll, 0.0);
+        assert!((pet.view(1.0).ground.y - floor).abs() < 0.5);
+    }
+
     #[test]
     fn thrown_at_the_screen_edge_it_bounces_back() {
         let world = world(None);
