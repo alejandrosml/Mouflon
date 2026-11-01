@@ -30,7 +30,7 @@ use crate::sprites::{SpriteFrame, SpriteFrames};
 
 /// Version du format, de sa clé et de la réduction des images : à changer
 /// quand l'un d'eux change, pour que les anciens fichiers soient refaits.
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAGIC: [u8; 8] = *b"MFLNIMG\0";
 /// Côté d'une image au-delà duquel un fichier est jugé abîmé.
 const MAX_SIDE: u32 = 16_384;
@@ -146,7 +146,7 @@ pub fn save(path: &Path, key: u64, frames: &SpriteFrames) -> std::io::Result<()>
         for value in [b.width, b.height] {
             out.extend_from_slice(&value.to_le_bytes());
         }
-        for value in [frame.x, frame.y, frame.texel] {
+        for value in [frame.x, frame.y, frame.texel, frame.back] {
             out.extend_from_slice(&value.to_le_bytes());
         }
         out.extend_from_slice(&kind.to_le_bytes());
@@ -210,14 +210,15 @@ fn parse(shared: Bytes, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
     let mut table = Vec::with_capacity(count);
     for _ in 0..count {
         let (width, height) = (r.u32()?, r.u32()?);
-        let (x, y, texel) = (r.f32()?, r.f32()?, r.f32()?);
+        let (x, y, texel, back) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
         let (kind, len) = (r.u32()?, usize::try_from(r.u64()?).ok()?);
         let sane = (1..=MAX_SIDE).contains(&width)
             && (1..=MAX_SIDE).contains(&height)
             && x.is_finite()
             && y.is_finite()
             && texel.is_finite()
-            && texel > 0.0;
+            && texel > 0.0
+            && back.is_finite();
         let expected_len = match kind {
             0 => width as usize * height as usize * 4,
             1 => {
@@ -229,10 +230,10 @@ fn parse(shared: Bytes, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
         if !sane || len != expected_len {
             return None;
         }
-        table.push((width, height, x, y, texel, kind, len));
+        table.push((width, height, x, y, texel, back, kind, len));
     }
     let start = r.at;
-    let total: usize = table.iter().map(|t| t.6).sum();
+    let total: usize = table.iter().map(|t| t.7).sum();
     if bytes.len() != start.checked_add(total)? {
         return None;
     }
@@ -240,7 +241,7 @@ fn parse(shared: Bytes, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
     let mut at = start;
     let frames = table
         .into_iter()
-        .map(|(width, height, x, y, texel, kind, len)| {
+        .map(|(width, height, x, y, texel, back, kind, len)| {
             let blob = Blob::new(Arc::new(Slice {
                 bytes: Arc::clone(&shared),
                 range: at..at + len,
@@ -259,6 +260,7 @@ fn parse(shared: Bytes, key: u64, sheet: &SpriteSheet) -> Option<SpriteFrames> {
                 x,
                 y,
                 texel,
+                back,
             }
         })
         .collect();
@@ -379,7 +381,7 @@ mod tests {
         let back = load(&store, &file, k, &sheet).expect("relu");
         assert_eq!(back.frames.len(), packed.frames.len());
         for (a, b) in back.frames.iter().zip(&packed.frames) {
-            assert_eq!((a.x, a.y, a.texel), (b.x, b.y, b.texel));
+            assert_eq!((a.x, a.y, a.texel, a.back), (b.x, b.y, b.texel, b.back));
             assert_eq!(
                 (a.bitmap.width, a.bitmap.height),
                 (b.bitmap.width, b.bitmap.height)

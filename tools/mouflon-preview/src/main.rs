@@ -175,9 +175,13 @@ fn main() -> Result<(), Error> {
 
 /// Comme l'app : les animaux se touchent quand leurs dessins se touchent.
 fn give_reach(flock: &mut Flock, art: &PetArt) {
-    if let Some((front, back)) = art.reach() {
-        for pet in flock.pets_mut() {
+    let tops = art.tops();
+    for pet in flock.pets_mut() {
+        if let Some((front, back)) = art.reach() {
             pet.set_reach(front, back);
+        }
+        if let Some(tops) = &tops {
+            pet.set_tops(std::sync::Arc::clone(tops));
         }
     }
 }

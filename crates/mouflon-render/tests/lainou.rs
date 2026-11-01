@@ -126,3 +126,29 @@ fn lainou_loads_and_paints_both_ways() {
         "ombre portée en l'air"
     );
 }
+
+/// Le haut de son dessin, image par image : couché pour dormir, il est bien
+/// plus bas que debout (un autre animal posé sur son dos descend avec lui).
+#[test]
+fn lainou_sleeping_is_lower_than_standing() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/lainou/pet.toml");
+    let def = Arc::new(load_pet(&path).expect("pet.toml de Lainou"));
+    let art = PetArt::load(&def).expect("images de Lainou");
+    let tops = art.tops().expect("des images");
+    let top_of = |name: &str| {
+        let index = def.behavior_index(name).expect(name);
+        let clip = def.behaviors[index].clip.as_ref().expect("des images");
+        let values: Vec<f32> = clip
+            .frames
+            .iter()
+            .map(|&f| tops[f as usize])
+            .filter(|&t| t > 0.0)
+            .collect();
+        values.iter().sum::<f32>() / values.len() as f32
+    };
+    let (standing, sleeping) = (top_of("repos"), top_of("dort"));
+    eprintln!("debout {standing:.1} pt, endormi {sleeping:.1} pt");
+    // Sa case fait 96 points de haut, le mouton à peu près la moitié.
+    assert!(standing > 30.0 && standing < 60.0, "{standing}");
+    assert!(sleeping < standing * 0.85, "{sleeping} contre {standing}");
+}

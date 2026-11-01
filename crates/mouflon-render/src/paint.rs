@@ -192,6 +192,17 @@ impl PetArt {
         cache::save(&cache::path(&cache.dir, &def.meta.id, sheet), key, frames)
     }
 
+    /// Hauteur du haut de chaque image au-dessus du point d'appui (points),
+    /// pour un animal en images (voir [`SpriteFrames::tops`]) ; un dessin
+    /// animé par le moteur suit sa pose.
+    #[must_use]
+    pub fn tops(&self) -> Option<Arc<[f32]>> {
+        match &self.look {
+            Look::Sprites(frames) => Some(Arc::from(frames.tops())),
+            Look::Rig(_) | Look::Skeleton(_) => None,
+        }
+    }
+
     /// Place du dessin devant et derrière son point d'appui (points), pour
     /// un animal en images ; un dessin vectoriel suit sa largeur physique.
     #[must_use]

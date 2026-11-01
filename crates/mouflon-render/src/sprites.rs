@@ -31,6 +31,9 @@ pub struct SpriteFrame {
     pub y: f32,
     /// Pixels de la planche par pixel de l'image (plus de 1 : image réduite).
     pub texel: f32,
+    /// Haut de son dos depuis le haut de sa case (pixels de la planche) : là
+    /// où un autre animal se pose (voir [`Image::back_row`]). 0 : case vide.
+    pub back: f32,
 }
 
 /// Case à dessiner pour un sens donné.
@@ -174,6 +177,23 @@ impl SpriteFrames {
             frames,
             ..self.clone()
         }
+    }
+
+    /// Hauteur de son dos au-dessus du point d'appui (points), image par
+    /// image (par rang dans la planche) : là où un autre animal se pose.
+    /// 0 pour une image vide.
+    #[must_use]
+    pub fn tops(&self) -> Vec<f32> {
+        self.frames
+            .iter()
+            .map(|frame| {
+                if frame.bitmap.width <= 1 || frame.back <= 0.0 {
+                    0.0
+                } else {
+                    ((self.anchor.1 - frame.back) * self.scale).max(0.0)
+                }
+            })
+            .collect()
     }
 
     /// Place du dessin autour de son point d'appui, devant et derrière
@@ -566,7 +586,27 @@ impl Image<'_> {
             x: (visible.x0 - tile.x0) as f32,
             y: (visible.y0 - tile.y0) as f32,
             texel: 1.0,
+            back: self.back_row(visible) - tile.y0 as f32,
         }
+    }
+
+    /// Haut du dos dans `visible` : la médiane, sur la moitié centrale de
+    /// ses colonnes, de la première ligne bien opaque (pixels de l'image).
+    /// Ce qui dépasse un peu (les « z » du sommeil au-dessus de la tête, une
+    /// oreille, une queue dressée) n'y compte pas.
+    fn back_row(&self, visible: Area) -> f32 {
+        let width = visible.x1 - visible.x0;
+        let (c0, c1) = (visible.x0 + width / 4, visible.x0 + (width * 3).div_ceil(4));
+        let mut rows: Vec<usize> = (c0..c1.max(c0 + 1).min(visible.x1))
+            .filter_map(|x| {
+                (visible.y0..visible.y1).find(|&y| self.rgba[(y * self.width + x) * 4 + 3] >= 128)
+            })
+            .collect();
+        if rows.is_empty() {
+            return visible.y0 as f32;
+        }
+        let middle = rows.len() / 2;
+        *rows.select_nth_unstable(middle).1 as f32
     }
 }
 
@@ -577,6 +617,7 @@ fn empty_frame(texel: f32) -> SpriteFrame {
         x: 0.0,
         y: 0.0,
         texel,
+        back: 0.0,
     }
 }
 
@@ -696,6 +737,7 @@ impl Reduction {
         // Coin de l'image dans la case, en pixels de la planche.
         frame.x = (ox0 + visible.x0) as f32 * self.texel;
         frame.y = (oy0 + visible.y0) as f32 * self.texel;
+        frame.back = (oy0 as f32 + frame.back) * self.texel;
         frame.texel = self.texel;
         frame
     }

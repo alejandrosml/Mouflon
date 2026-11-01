@@ -139,6 +139,15 @@ const LEAVE_MAX: f32 = 6.0;
 /// Un animal qui tombe se pose sur une surface dont le bord est à moins de
 /// cette fraction de sa largeur (ses pattes la touchent encore).
 const LANDING_REACH: f32 = 0.15;
+/// Hauteur de son dos, debout, sans image pour le dire : cette part de sa
+/// hauteur.
+const BACK_HEIGHT: f32 = 0.92;
+/// Couché (dessin animé par le moteur), son dos descend de cette part de sa
+/// hauteur : ses pattes repliées sous lui.
+const LYING_DROP: f32 = 0.3;
+/// Vitesse à laquelle son dos suit le haut de son dessin (pt/s, pour un
+/// animal de 60 points).
+const BACK_RATE: f32 = 420.0;
 
 /// Besoin de rafraîchissement, pour adapter la cadence d'affichage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -432,6 +441,12 @@ pub struct Pet {
     /// (points) : les collisions partent quand les dessins se touchent.
     /// Sans elle, la moitié de la largeur de l'animal, des deux côtés.
     reach: Option<(f32, f32)>,
+    /// Hauteur du haut de son dessin au-dessus de ses pattes (points), image
+    /// par image (voir [`Pet::set_tops`]).
+    tops: Option<Arc<[f32]>>,
+    /// Hauteur de son dos, là où un autre se pose : le haut de son dessin,
+    /// suivi en douceur (couché, il descend ; debout, il remonte).
+    back_top: f32,
     /// Temps avant de pouvoir rencontrer un autre animal.
     meet_cooldown: f32,
     /// En train de dire au revoir.
@@ -689,6 +704,7 @@ impl Pet {
     }
 
     fn bare(id: u32, def: Arc<PetDef>, mut rng: Rng, pos: Vec2) -> Self {
+        let def_back_top = def.physics.height * BACK_HEIGHT;
         let voice = rng.fork(0x534F_554E_4453);
         let facing = if rng.chance(0.5) { 1.0 } else { -1.0 };
         let anim = Anim::new(facing, &mut rng);
@@ -733,6 +749,8 @@ impl Pet {
             wake_in: None,
             wind: 0.0,
             reach: None,
+            tops: None,
+            back_top: def_back_top,
             meet_cooldown: 0.0,
             leaving: None,
             anim,
@@ -1021,6 +1039,46 @@ impl Pet {
     /// dessins se touchent, pas avant ni après.
     pub fn set_reach(&mut self, front: f32, back: f32) {
         self.reach = (front > 0.0 && back > 0.0).then_some((front, back));
+    }
+
+    /// Donne la hauteur du haut de son dessin au-dessus de ses pattes
+    /// (points), pour chaque image de sa planche : un animal posé sur son dos
+    /// reste sur ce qu'on voit de lui, même couché ou endormi.
+    pub fn set_tops(&mut self, tops: Arc<[f32]>) {
+        self.tops = Some(tops);
+    }
+
+    /// Le haut de son dessin au-dessus de ses pattes, maintenant : celui de
+    /// son image (décalée comme elle est dessinée), ou, pour un dessin animé
+    /// par le moteur, sa hauteur debout, moins ce dont il se couche.
+    fn visible_top(&self) -> f32 {
+        let p = self.def.physics;
+        let standing = p.height * BACK_HEIGHT;
+        let behavior = &self.def.behaviors[self.behavior];
+        match (&self.tops, &behavior.clip) {
+            (Some(tops), Some(_)) => {
+                let Some((frame, offset)) = self.current_sprite() else {
+                    return standing;
+                };
+                match tops.get(frame as usize) {
+                    Some(&top) if top > 0.0 => (top - offset).max(p.height * 0.2),
+                    _ => standing,
+                }
+            }
+            _ => standing - p.height * LYING_DROP * self.anim.sit.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Suit le haut de son dessin : vite, mais sans saut (un animal posé
+    /// dessus descend avec lui quand il se couche).
+    fn follow_back_top(&mut self, dt: f32) {
+        let target = self.visible_top();
+        if !matches!(self.support, Support::Ground { .. }) {
+            self.back_top = target;
+            return;
+        }
+        let rate = BACK_RATE * (self.def.physics.height / 60.0).max(0.5);
+        self.back_top = approach(self.back_top, target, rate * dt);
     }
 
     /// Distance du point d'appui au bout de son dessin, du côté `side`
@@ -1364,6 +1422,7 @@ impl Pet {
         self.realistic = tracker.is_some();
         self.prev_pos = self.pos;
         self.prev_lift = self.tilt_lift();
+        self.follow_back_top(dt);
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
         self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
@@ -2349,37 +2408,43 @@ impl Pet {
         Vec2::new(0.0, (body.extent_y() - body.half.y).max(0.0))
     }
 
+    /// L'image de sa planche qu'il montre maintenant, et son décalage
+    /// vertical (points, vers le bas), s'il est fait d'images.
+    fn current_sprite(&self) -> Option<(u32, f32)> {
+        let behavior = &self.def.behaviors[self.behavior];
+        let clip = behavior.clip.as_ref()?;
+        let total = self.clip_total.max(1);
+        let looping = self.support == Support::Held
+            || behavior.motion == Motion::Fall
+            || behavior.duration != Duration::Clip;
+        let step = if looping {
+            self.clip_step
+        } else {
+            self.clip_step.min(total - 1)
+        };
+        let t = (self.clip_step as f32 / total as f32).min(1.0);
+        let offset = if self.support == Support::Held {
+            0.0
+        } else {
+            lerp(clip.offset_y, clip.offset_y_end, t)
+        };
+        Some((self.skinned(self.sprite_frame(clip, step, looping)), offset))
+    }
+
     /// Vue interpolée entre le pas précédent et le pas courant (`alpha` entre 0 et 1).
     #[must_use]
     pub fn view(&self, alpha: f32) -> PetView<'_> {
         let a = &self.anim;
         let behavior = &self.def.behaviors[self.behavior];
-        let (sprite_frame, sprite_offset_y, opacity) = match &behavior.clip {
-            Some(clip) => {
-                let total = self.clip_total.max(1);
-                // Tenu, lancé ou d'une durée propre, l'animation boucle ; sinon le
-                // dernier pas garde la dernière image.
-                let looping = self.support == Support::Held
-                    || behavior.motion == Motion::Fall
-                    || behavior.duration != Duration::Clip;
-                let step = if looping {
-                    self.clip_step
-                } else {
-                    self.clip_step.min(total - 1)
-                };
-                let t = (self.clip_step as f32 / total as f32).min(1.0);
-                (
-                    Some(self.skinned(self.sprite_frame(clip, step, looping))),
-                    if self.support == Support::Held {
-                        0.0
-                    } else {
-                        lerp(clip.offset_y, clip.offset_y_end, t)
-                    },
-                    lerp(clip.opacity_start, clip.opacity_end, t),
-                )
-            }
-            None => (None, 0.0, 1.0),
-        };
+        // Tenu, lancé ou d'une durée propre, l'animation boucle ; sinon le
+        // dernier pas garde la dernière image (voir `current_sprite`).
+        let (sprite_frame, sprite_offset_y) = self
+            .current_sprite()
+            .map_or((None, 0.0), |(frame, offset)| (Some(frame), offset));
+        let opacity = behavior.clip.as_ref().map_or(1.0, |clip| {
+            let t = (self.clip_step as f32 / self.clip_total.max(1) as f32).min(1.0);
+            lerp(clip.opacity_start, clip.opacity_end, t)
+        });
         let fade = self
             .leaving
             .and_then(|l| l.fade)

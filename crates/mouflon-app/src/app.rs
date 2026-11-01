@@ -994,6 +994,10 @@ impl App {
         if let Some((front, back)) = art.reach() {
             pet.set_reach(front, back);
         }
+        // Un autre se pose sur ce qu'on voit de lui, même couché.
+        if let Some(tops) = art.tops() {
+            pet.set_tops(tops);
+        }
         let canvas = art.canvas();
         let ground = pet.position();
         let origin = ground - canvas.anchor;
@@ -1368,10 +1372,13 @@ impl App {
             return;
         };
         pw.canvas = art.canvas();
-        if let Some((front, back)) = art.reach()
-            && let Some(pet) = self.flock.get_mut(pet)
-        {
-            pet.set_reach(front, back);
+        if let Some(pet) = self.flock.get_mut(pet) {
+            if let Some((front, back)) = art.reach() {
+                pet.set_reach(front, back);
+            }
+            if let Some(tops) = art.tops() {
+                pet.set_tops(tops);
+            }
         }
         pw.art = art;
         let requested = LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));

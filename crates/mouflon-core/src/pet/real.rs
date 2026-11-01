@@ -65,7 +65,8 @@ impl Pet {
                 kind: SurfaceKind::Window,
                 x0: self.pos.x - p.width * 0.32,
                 x1: self.pos.x + p.width * 0.32,
-                y: self.pos.y - p.height * 0.92,
+                // Le haut de ce qu'on voit de lui : couché, son dos est plus bas.
+                y: self.pos.y - self.back_top,
             },
             vel: self.vel + self.carry,
         })
@@ -1024,6 +1025,75 @@ mod tests {
         }
         let moved = pet(&flock, above).position().x - x0;
         assert!(moved.abs() > 20.0, "il n'a pas bougé ({moved})");
+    }
+
+    /// Comme dans l'essai du 1er novembre : Poete s'est posé sur le dos de
+    /// Lainou endormi, à la hauteur d'un Lainou debout, et y est resté une
+    /// demi-minute en l'air au-dessus de lui. Le dos suit ce qu'on voit de
+    /// l'animal : couché, il est bas ; debout, il remonte, et l'autre avec.
+    #[test]
+    fn a_pet_on_a_sleeping_pet_rests_on_what_shows_of_it() {
+        let lainou = bundled("lainou");
+        let world = world(None);
+        let mut flock = Flock::new();
+        flock.set_realistic(true);
+        flock.set_collisions(true);
+        let below = flock.spawn(Arc::clone(&lainou), 7, &world, Some(600.0));
+        let above = flock.spawn(def(), 8, &world, Some(200.0));
+        for _ in 0..(2.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        // Ses images, toutes couchées : 30 points de haut.
+        let frames = lainou.sprites().map_or(0, |s| s.tile_count()) as usize * 4;
+        let lying = 30.0;
+        {
+            let pet = flock.get_mut(below).unwrap();
+            pet.set_tops(Arc::from(vec![lying; frames]));
+            assert!(pet.force("dort"));
+        }
+        for _ in 0..(1.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let x = pet(&flock, below).position().x;
+        {
+            let pet_above = flock.get_mut(above).unwrap();
+            pet_above.support = Support::Air;
+            pet_above.ground_ref = None;
+            pet_above.pos = Vec2::new(x, 300.0);
+            pet_above.prev_pos = pet_above.pos;
+            pet_above.vel = Vec2::ZERO;
+        }
+        for _ in 0..(1.5 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let rider = pet(&flock, above);
+        assert_eq!(
+            rider.support(),
+            Support::Ground {
+                surface: pet_surface(below)
+            }
+        );
+        let feet = pet(&flock, below).position().y;
+        let gap = feet - rider.position().y;
+        assert!(
+            (gap - lying).abs() < 3.0,
+            "posé à {gap} pt au-dessus de ses pattes"
+        );
+        // Il se relève : son dos remonte, l'autre avec, sans saut.
+        let standing = lainou.physics.height * 0.92;
+        flock
+            .get_mut(below)
+            .unwrap()
+            .set_tops(Arc::from(vec![standing; frames]));
+        let mut last = pet(&flock, above).position().y;
+        for _ in 0..(1.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            let y = pet(&flock, above).position().y;
+            assert!((y - last).abs() < 8.0, "saut de {} pt", (y - last).abs());
+            last = y;
+        }
+        let gap = pet(&flock, below).position().y - pet(&flock, above).position().y;
+        assert!((gap - standing).abs() < 3.0, "{gap}");
     }
 
     #[test]
