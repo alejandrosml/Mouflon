@@ -170,6 +170,9 @@ const ECHO_DELAY: (f32, f32) = (0.4, 5.0);
 /// Après avoir imité, il n'imite plus pendant ceci (secondes) : pas de
 /// va-et-vient sans fin entre deux voisins.
 const ECHO_COOLDOWN: f32 = 25.0;
+/// Un animal occupé (un animal en images au milieu de sa séquence) imite à
+/// la fin de ce qu'il fait, s'il la termine dans ce délai (secondes).
+const ECHO_PATIENCE: f32 = 8.0;
 
 /// Ce qu'un animal imite d'un voisin : un comportement (rang dans sa propre
 /// définition), quand, et dans quel sens (on suit celui qui part).
@@ -178,6 +181,8 @@ struct Echo {
     behavior: usize,
     delay: f32,
     facing: f32,
+    /// Temps qui reste pour l'imiter (voir [`ECHO_PATIENCE`]).
+    patience: f32,
 }
 
 /// Durée d'affichage d'une image intermédiaire, au plus (secondes).
@@ -1609,26 +1614,49 @@ impl Pet {
             && !self.finished
     }
 
-    /// Le moment venu, il imite ce qu'a fait un voisin, s'il est libre de le
-    /// faire : debout, à marcher, à brouter ou à regarder autour de lui.
-    /// Ce qu'il imite ne se propage pas plus loin.
+    /// Le moment venu, il imite ce qu'a fait un voisin : tout de suite s'il
+    /// est debout, à marcher, à brouter ou à regarder autour de lui ; un
+    /// animal en images, à la fin de ce qu'il joue (voir
+    /// [`Pet::take_echo`]). Ce qu'il imite ne se propage pas plus loin.
     fn step_echo(&mut self, dt: f32) {
         self.echo_cooldown = (self.echo_cooldown - dt).max(0.0);
         let Some(echo) = &mut self.echo else {
             return;
         };
         echo.delay -= dt;
-        if echo.delay > 0.0 {
+        echo.patience -= dt;
+        if echo.patience <= 0.0 {
+            self.echo = None;
             return;
         }
-        let echo = *echo;
-        self.echo = None;
         let free = matches!(
             self.def.behaviors[self.behavior].motion,
             Motion::Stand | Motion::Look | Motion::Graze | Motion::Walk { .. }
         );
-        if !free || !self.can_react() || self.is_asleep() || self.hold.is_some() {
-            return;
+        if echo.delay <= 0.0 && free {
+            let echo = *echo;
+            self.echo = None;
+            self.follow(echo);
+        }
+    }
+
+    /// Au bout de ce qu'il faisait, il imite son voisin plutôt que de
+    /// choisir sa suite (un animal au format de Mouflon, pas desktopPet,
+    /// dont les scènes s'enchaînent d'elles-mêmes).
+    fn take_echo(&mut self) -> bool {
+        match self.echo {
+            Some(echo) if echo.delay <= 0.0 && self.def.rules != Rules::DesktopPet => {
+                self.echo = None;
+                self.follow(echo)
+            }
+            _ => false,
+        }
+    }
+
+    /// Il imite son voisin, s'il le peut. Renvoie `true` s'il l'a fait.
+    fn follow(&mut self, echo: Echo) -> bool {
+        if !self.can_react() || self.is_asleep() || self.hold.is_some() {
+            return false;
         }
         self.echo_cooldown = ECHO_COOLDOWN;
         if matches!(
@@ -1640,6 +1668,7 @@ impl Pet {
         }
         self.enter(echo.behavior);
         self.began = None;
+        true
     }
 
     /// En broutant, un mouton fait un pas ou deux tête basse pour gagner
@@ -2174,6 +2203,9 @@ impl Pet {
             } else {
                 self.respawn(world);
             }
+            return;
+        }
+        if self.take_echo() {
             return;
         }
         match self.choose(&behavior.next, world, input) {
@@ -3769,6 +3801,7 @@ impl Flock {
                         behavior: index,
                         delay,
                         facing,
+                        patience: ECHO_PATIENCE,
                     });
                 }
             }
@@ -4763,6 +4796,50 @@ mod tests {
     }
 
     #[test]
+    fn image_pets_follow_at_the_end_of_what_they_play() {
+        // Un Lainou part : ses voisins le suivent à la fin de leur séquence
+        // en cours ; un animal desktopPet, dont les scènes s'enchaînent
+        // d'elles-mêmes, ne suit pas.
+        let lainou = bundled("lainou");
+        let mut followed = 0;
+        for round in 0..12u64 {
+            let (mut flock, world) = resting_flock(&lainou, 4, "repos");
+            for pet in flock.pets_mut() {
+                pet.rng = Rng::new(round * 7919 + u64::from(pet.id()) * 31 + 1);
+                pet.facing = -1.0;
+            }
+            let leader = flock.pets()[0].id();
+            {
+                let pet = flock.get_mut(leader).unwrap();
+                pet.facing = 1.0;
+                assert!(pet.force("marche"));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for _ in 0..(9.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+                // (Ceux qui partent d'eux-mêmes en entraînent d'autres aussi :
+                // le sens est vérifié avec le Mannequin.)
+                for p in flock.pets() {
+                    if p.id() != leader && p.behavior_name() == "marche" && p.echo_cooldown > 0.0 {
+                        seen.insert(p.id());
+                    }
+                }
+            }
+            followed += seen.len();
+        }
+        assert!(followed >= 3, "{followed} suiveurs");
+        let pelote = bundled("pelote");
+        let mut pet = Pet::spawn(0, pelote, 1, &world(), Some(300.0));
+        pet.echo = Some(Echo {
+            behavior: 0,
+            delay: 0.0,
+            facing: 1.0,
+            patience: ECHO_PATIENCE,
+        });
+        assert!(!pet.take_echo());
+    }
+
+    #[test]
     fn a_grazing_sheep_steps_to_the_next_tuft_without_lifting_its_head() {
         let mannequin = bundled("mannequin");
         let world = world();
@@ -5108,6 +5185,8 @@ mod tests {
         // hors de l'écran, jamais bloqués, et toujours de quoi vivre.
         for collisions in [false, true] {
             let (def, seconds_in) = long_life_with("lainou", 8.0, 40.0, collisions, true);
+            // En mode collisions, ils culbutent au lieu de se saluer.
+            let meetings = ["salue", "fete", "surpris"];
             let never: Vec<&str> = never_played(&def, &seconds_in)
                 .into_iter()
                 .filter(|n| {
@@ -5121,7 +5200,7 @@ mod tests {
                             | "etourdi"
                             | "dos_au_vent"
                             | "fonce"
-                    )
+                    ) && !(collisions && meetings.contains(n))
                 })
                 .collect();
             assert!(never.len() <= 4, "jamais joués : {never:?}");

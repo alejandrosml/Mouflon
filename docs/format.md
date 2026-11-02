@@ -125,11 +125,14 @@ tilt = 0.12                   # penché en avant (radians) : un animal en images
 Un comportement contagieux (`contagious`, de 0 à 1) se propage : chaque
 voisin de la même famille (`category`), à moins de quatre largeurs et à la
 même hauteur, qui a un comportement du même nom l'imite avec cette chance,
-dans les cinq secondes, s'il est debout, à marcher, à brouter ou à regarder
-autour de lui. Il part alors du même côté : un mouton qui part entraîne les
-autres, un bâillement en appelle un autre, l'alerte gagne le troupeau. Celui
-qui vient d'imiter n'imite plus pendant 25 secondes, et ce qu'il imite ne se
-propage pas plus loin.
+dans les cinq secondes s'il est debout, à marcher, à brouter ou à regarder
+autour de lui, sinon à la fin de ce qu'il fait (un animal en images ne coupe
+pas sa séquence ; il attend au plus huit secondes). Il part alors du même
+côté : un mouton qui part entraîne les autres, un bâillement en appelle un
+autre, l'alerte gagne le troupeau. Celui qui vient d'imiter n'imite plus
+pendant 25 secondes, et ce qu'il imite ne se propage pas plus loin. Les
+animaux desktopPet, dont les scènes s'enchaînent d'elles-mêmes, n'imitent
+pas.
 
 Les poids sont relatifs : `weight = 4` contre `weight = 1` donne quatre
 chances sur cinq. Une transition dont la condition est fausse est ignorée.

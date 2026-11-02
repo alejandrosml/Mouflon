@@ -214,8 +214,9 @@ calme, moins.
 
 **Dans Mouflon** : un comportement `contagious` se propage aux voisins de la
 même famille, à moins de quatre largeurs et à la même hauteur, avec la
-chance indiquée, dans un délai de 0,4 à 5 s, s'ils sont libres (debout, à
-marcher, à brouter, à regarder autour d'eux). Un mouton qui part entraîne
+chance indiquée, dans un délai de 0,4 à 5 s s'ils sont libres (debout, à
+marcher, à brouter, à regarder autour d'eux), sinon à la fin de ce qu'ils
+font (un animal en images ne coupe pas sa séquence). Un mouton qui part entraîne
 ses voisins du même côté (`walk`, une chance sur quatre) ; quand l'un
 détale, les autres détalent (`run`, 0,45) ; l'alerte (`look`, 0,25), le
 bâillement (`yawn`, 0,15) et les sauts d'agneau (`pronk`, 0,3) se
