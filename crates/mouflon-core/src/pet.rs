@@ -2526,6 +2526,10 @@ pub struct Flock {
     last_cursor: Option<Vec2>,
     /// Les paires d'animaux assez proches pour se toucher (voir [`near`]).
     near: near::Near,
+    /// Les axes du corps de chaque animal et les demi-côtés du rectangle
+    /// droit qui le contient, le temps des chocs d'un pas (voir
+    /// [`Flock::collide_bodies`]).
+    axes: Vec<([Vec2; 2], Vec2)>,
 }
 
 /// Distance d'un point au segment `[a, b]`.
@@ -3034,17 +3038,45 @@ impl Flock {
     /// main qui le tient. Deux animaux au sol se heurtent comme en physique
     /// classique (`collide`), et l'un sur le dos de l'autre y est posé.
     fn collide_bodies(&mut self, pairs: &[(u32, u32)], world: &World, input: &Input) {
+        if pairs.is_empty() {
+            return;
+        }
         let still = self.still;
+        // Les axes de chaque corps et les demi-côtés du rectangle droit qui
+        // le contient, une fois pour tout le pas : un choc déplace les corps
+        // et change leur rotation, jamais leur angle. Dans une foule, un
+        // corps en l'air en frôle des dizaines d'autres ; deux rectangles
+        // droits qui ne se touchent pas évitent la séparation des axes.
+        let mut axes = std::mem::take(&mut self.axes);
+        axes.clear();
+        axes.extend(self.pets.iter().map(|pet| {
+            let body = pet.body();
+            let [ax, ay] = body.axes();
+            let extent = Vec2::new(
+                body.half.x * ax.x.abs() + body.half.y * ay.x.abs(),
+                body.half.x * ax.y.abs() + body.half.y * ay.y.abs(),
+            );
+            ([ax, ay], extent)
+        }));
         for &(i, j) in pairs {
             let (a, b) = self.pair_mut(i, j);
             if !physical_pair(a, b) || still == Some(a.id) || still == Some(b.id) {
                 continue;
             }
-            let Some(contact) = crate::physics::obb_contact(&a.body(), &b.body()) else {
+            let ((axes_a, extent_a), (axes_b, extent_b)) = (axes[i as usize], axes[j as usize]);
+            let (body_a, body_b) = (a.body(), b.body());
+            let apart = body_b.center - body_a.center;
+            let reach = extent_a + extent_b;
+            if apart.x.abs() > reach.x + 1e-3 || apart.y.abs() > reach.y + 1e-3 {
+                continue;
+            }
+            let Some(contact) = crate::physics::obb_contact_with(&body_a, axes_a, &body_b, axes_b)
+            else {
                 continue;
             };
             bodies_hit(a, b, contact, world, input);
         }
+        self.axes = axes;
     }
 
     /// Deux animaux qui se rentrent dedans partent chacun à la renverse.

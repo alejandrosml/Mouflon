@@ -369,19 +369,30 @@ impl Pet {
         let low_to = body.center.y + ey;
         let lowest = body.lowest_point();
         let margin = p.width * LANDING_REACH;
-        let mut landing: Option<(Surface, Vec2)> = None;
-        for s in world.surfaces() {
-            if !s.contains_x(lowest.x, margin) || Some(s.id) == self.own_back() {
+        // La plus haute des surfaces franchies, la première de la liste en
+        // cas d'égalité ; seules comptent celles de ses colonnes.
+        let surfaces = world.surfaces();
+        let mut landing: Option<(usize, Vec2)> = None;
+        for i in world.near_surfaces(lowest.x - margin, lowest.x + margin) {
+            let s = &surfaces[i];
+            if low_to < s.y - 0.01
+                || !s.contains_x(lowest.x, margin)
+                || Some(s.id) == self.own_back()
+            {
                 continue;
             }
-            let v = tracker.velocity(s.id);
-            if low_from <= s.y - v.y * dt + 0.5
-                && low_to >= s.y - 0.01
-                && landing.is_none_or(|(best, _)| s.y < best.y)
-            {
-                landing = Some((*s, v));
+            if landing.is_some_and(|(best, _)| {
+                let b = &surfaces[best];
+                b.y < s.y || (b.y == s.y && best <= i)
+            }) {
+                continue;
+            }
+            let v = tracker.velocity_at(i);
+            if low_from <= s.y - v.y * dt + 0.5 {
+                landing = Some((i, v));
             }
         }
+        let mut landing = landing.map(|(i, v)| (surfaces[i], v));
         if landing.is_none()
             && low_to > arena.bottom() + 1.0
             && let Some(floor) = world.floor_under(body.center.x).copied()

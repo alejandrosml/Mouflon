@@ -220,7 +220,7 @@ pub struct Obb {
 impl Obb {
     /// Ses axes : un seul sinus pour les deux, aucun debout (le plus
     /// souvent, au sol).
-    fn axes(&self) -> [Vec2; 2] {
+    pub(crate) fn axes(&self) -> [Vec2; 2] {
         if self.angle == 0.0 {
             return [Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
         }
@@ -308,16 +308,41 @@ pub struct Contact {
 /// l'axe (un côté de l'un ou de l'autre) où ils se chevauchent le moins.
 #[must_use]
 pub fn obb_contact(a: &Obb, b: &Obb) -> Option<Contact> {
-    // Leurs cercles ne se touchent pas : leurs rectangles non plus.
-    // (ra + rb)² = ra² + rb² + 2 ra rb, avec une seule racine ; un peu de
-    // marge : jamais écarté à tort par un arrondi.
+    // Leurs cercles ne se touchent pas : leurs rectangles non plus (sans
+    // calculer leurs axes).
+    if apart_circles(a, b) {
+        return None;
+    }
+    separating_axes(a, a.axes(), b, b.axes())
+}
+
+/// Leurs cercles ne se touchent pas. (ra + rb)² = ra² + rb² + 2 ra rb,
+/// avec une seule racine ; un peu de marge : jamais écarté à tort par un
+/// arrondi.
+fn apart_circles(a: &Obb, b: &Obb) -> bool {
     let (ra2, rb2) = (a.radius_squared(), b.radius_squared());
     let reach = ra2 + rb2 + 2.0 * (ra2 * rb2).sqrt() + 0.1;
     let apart = b.center - a.center;
-    if apart.dot(apart) > reach {
+    apart.dot(apart) > reach
+}
+
+/// [`obb_contact`], leurs axes ([`Obb::axes`]) déjà connus : dans une
+/// foule, chaque corps en rencontre beaucoup d'autres au même pas.
+#[must_use]
+pub(crate) fn obb_contact_with(
+    a: &Obb,
+    axes_a: [Vec2; 2],
+    b: &Obb,
+    axes_b: [Vec2; 2],
+) -> Option<Contact> {
+    if apart_circles(a, b) {
         return None;
     }
-    let (axes_a, axes_b) = (a.axes(), b.axes());
+    separating_axes(a, axes_a, b, axes_b)
+}
+
+/// La séparation des axes elle-même.
+fn separating_axes(a: &Obb, axes_a: [Vec2; 2], b: &Obb, axes_b: [Vec2; 2]) -> Option<Contact> {
     let mut best: Option<(f32, Vec2)> = None;
     for axis in axes_a.into_iter().chain(axes_b) {
         let (a0, a1) = a.project_with(axes_a, axis);
@@ -403,6 +428,8 @@ pub struct Tracker {
     world: World,
     /// Vitesse des dos des animaux (les fenêtres ont la leur, les sols aucune).
     backs: crate::world::IdMap<Vec2>,
+    /// La vitesse de chaque surface du monde lissé, par rang.
+    ranked: Vec<Vec2>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -565,13 +592,31 @@ impl Tracker {
                 .find(|t| t.id == id)
                 .map(|t| t.shown - t.known)
         });
+        // La vitesse de chaque surface, par rang : celle de sa fenêtre, ou
+        // aucune pour un sol ; puis les dos, avec la leur.
+        self.ranked.clear();
+        for s in self.world.surfaces() {
+            self.ranked.push(match s.kind {
+                SurfaceKind::Window => self.window_velocity(s.id >> 8),
+                _ => Vec2::ZERO,
+            });
+        }
         self.backs.clear();
         for back in backs {
             self.world.push_surface(back.surface);
             self.backs.insert(back.surface.id, back.vel);
+            self.ranked.push(back.vel);
         }
         // Une seule fois pour toutes les fenêtres et tous les dos.
         self.world.reindex();
+    }
+
+    /// Vitesse de la surface de ce rang dans le monde lissé (voir
+    /// [`Tracker::velocity`]) : sans rien chercher, pour un animal en l'air
+    /// qui passe en revue les surfaces de ses colonnes.
+    #[must_use]
+    pub(crate) fn velocity_at(&self, rank: usize) -> Vec2 {
+        self.ranked.get(rank).copied().unwrap_or(Vec2::ZERO)
     }
 }
 

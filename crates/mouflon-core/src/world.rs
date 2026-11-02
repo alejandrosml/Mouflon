@@ -224,12 +224,35 @@ impl SurfaceIndex {
     /// Rangs des surfaces qui peuvent contenir les abscisses de `x0` à `x1`
     /// (avec des doublons quand une surface couvre plusieurs colonnes).
     fn near(&self, x0: f32, x1: f32) -> impl Iterator<Item = usize> + '_ {
+        self.near_ranks(x0, x1).iter().map(|&i| i as usize)
+    }
+
+    fn near_ranks(&self, x0: f32, x1: f32) -> &[u32] {
         let (c0, c1) = self.columns(x0, x1, self.column_count());
         let (from, to) = (
             self.starts.get(c0).copied().unwrap_or(0) as usize,
             self.starts.get(c1 + 1).copied().unwrap_or(0) as usize,
         );
-        self.items[from..to.max(from)].iter().map(|&i| i as usize)
+        &self.items[from..to.max(from)]
+    }
+}
+
+/// Les rangs des surfaces qui peuvent couvrir des abscisses (voir
+/// [`World::near_surfaces`]).
+#[derive(Clone, Debug)]
+pub(crate) enum NearSurfaces<'a> {
+    Indexed(std::slice::Iter<'a, u32>),
+    All(std::ops::Range<usize>),
+}
+
+impl Iterator for NearSurfaces<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            Self::Indexed(ranks) => ranks.next().map(|&i| i as usize),
+            Self::All(ranks) => ranks.next(),
+        }
     }
 }
 
@@ -485,6 +508,18 @@ impl World {
     pub fn surface_below(&self, p: Vec2, margin: f32) -> Option<&Surface> {
         let keep = |s: &Surface| s.contains_x(p.x, margin) && s.y >= p.y - 0.5;
         self.highest_near(p.x - margin, p.x + margin, keep)
+    }
+
+    /// Les rangs (dans [`World::surfaces`]) des surfaces qui peuvent couvrir
+    /// les abscisses de `x0` à `x1` : celles de leurs colonnes si l'index
+    /// est à jour (une surface sur plusieurs colonnes revient pour chacune),
+    /// sinon toutes. Avec un millier de dos d'animaux parmi les surfaces, un
+    /// animal en l'air n'en regarde ainsi qu'une poignée.
+    pub(crate) fn near_surfaces(&self, x0: f32, x1: f32) -> NearSurfaces<'_> {
+        match self.index() {
+            Some(index) => NearSurfaces::Indexed(index.near_ranks(x0, x1).iter()),
+            None => NearSurfaces::All(0..self.surfaces.len()),
+        }
     }
 
     /// La plus haute des surfaces gardées par `keep`, parmi celles qui

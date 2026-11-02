@@ -124,6 +124,40 @@ fn heaviest() {
     measured(&mut flock, &world, &input);
 }
 
+/// Mille animaux sans collisions (ce que fait l'app par défaut), en
+/// physique réaliste, étalés sur deux écrans : une foule calme, pour un
+/// profileur.
+#[test]
+#[ignore = "pour un profileur"]
+fn calm_heaviest() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets");
+    let defs: Vec<Arc<_>> = ["lainou", "pelote", "aquarelle", "mannequin"]
+        .iter()
+        .map(|name| Arc::new(load_pet(&root.join(name).join("pet.toml")).expect("animal")))
+        .collect();
+    let world = world();
+    let input = Input {
+        cursor: Some(Vec2::new(800.0, 500.0)),
+        local_hour: 15.0,
+        ..Input::default()
+    };
+    let mut flock = Flock::new();
+    flock.set_realistic(true);
+    for i in 0..1000 {
+        let x = 20.0 + (i as f32 * 4.3) % 4200.0;
+        flock.spawn(
+            Arc::clone(&defs[i % defs.len()]),
+            i as u64 * 7919 + 3,
+            &world,
+            Some(x),
+        );
+    }
+    for _ in 0..(10.0 / TICK) as usize {
+        flock.advance(TICK, &world, &input);
+    }
+    measured(&mut flock, &world, &input);
+}
+
 /// Les pas mesurés, après la mise en route (le profileur ne regarde que là :
 /// `--toggle-collect=*measured*`).
 #[inline(never)]
@@ -197,7 +231,10 @@ fn crowded() {
             .iter()
             .filter(|p| p.support() == mouflon_core::Support::Air)
             .count();
-        println!("foule serrée : {count:5} animaux, {per_step:7.3} ms par pas, {air} en l'air");
+        println!(
+            "foule serrée : {count:5} animaux ({} dans le troupeau), {per_step:7.3} ms par pas, {air} en l'air",
+            flock.pets().len()
+        );
     }
 }
 
