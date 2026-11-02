@@ -8,11 +8,19 @@ Le but : une fluidité parfaite du lancement à la fermeture, sans aucun
 ralentissement quel que soit le nombre de moutons, la mémoire étant la
 seule limite. On reste en Rust.
 
-## 0. Où on en est (2 novembre 2026)
+## 0. Où on en est (2 novembre 2026, au soir)
 
-Les étapes 1 à 4 sont faites, la 5 en bonne partie, la 6 commencée (voir le
-tableau de la partie 4). Ce que mesurent les essais de la CI (machine
-virtuelle à trois cœurs, écran à 60 Hz, collisions et physique réaliste) :
+Les étapes 1 à 5 sont faites, la 6 bien avancée (voir le tableau de la
+partie 4). Sur le vrai Mac, l'essai de trois minutes du 2 novembre (13 h 14,
+treize animaux en taille 2, collisions et physique réaliste) : **0,49 %
+d'images en retard, aucune par la faute de Mouflon** (ce sont des
+rafraîchissements que l'horloge de l'écran a sautés), contre 10 à 18 % le
+1er novembre. Il a aussi relevé 31 sauts de position : tous avaient une
+cause dans la simulation, toutes corrigées depuis (`261a69e`, voir plus
+bas).
+
+Ce que mesurent les essais de la CI (machine virtuelle à trois cœurs, écran
+à 60 Hz, collisions et physique réaliste) :
 
 | | une fenêtre par animal (31 oct.) | calques, fil principal (`41db34e`) | calques, fil de l'affichage (`8308f87`) |
 |---|---|---|---|
@@ -49,9 +57,30 @@ Ce qui a été fait, en bref :
   l'un va de côté ; des corps, dont l'un est en l'air), les surfaces rangées
   par colonnes, et un essai de charge (20, 100, 500, 1 000 animaux).
 
-Ce qui reste : alléger la simulation des moutons calmes (une foule serrée de
-mille moutons coûte encore 5 ms de simulation par image sur la machine de
-la CI) ; retirer Vello du programme ; des tests pour chaque partie de l'app.
+- **la foule, moins chère** : les chocs entre corps coûtent un tiers de ce
+  qu'ils coûtaient, un animal calme un tiers de moins par pas, et chaque
+  paire passe d'abord par les tests les moins chers. Mille animaux étalés
+  sur deux écrans : 0,62 ms de simulation par pas (7 % d'un cœur) ; mille
+  en tas sur un petit écran : 1,4 ms ;
+- **Vello a quitté le programme** (`b4978ce`) : tout est morceaux d'image,
+  le rendu direct (GPU) compris ;
+- **les budgets des essais** (`d4527a5`) : `analyse.py --budget` échoue
+  au-delà d'une image en mouvement sur deux mille en retard par la faute de
+  Mouflon, et la CI avec lui. Premiers essais : zéro ;
+- **rien ne saute à l'écran** (`261a69e`) : un corps que la simulation
+  replace d'un coup (séparé d'un autre, ramené dans l'écran, arrêté au bout
+  d'un rebord) garde son dessin, qui le rejoint en glissant (au plus
+  1 000 pt/s) ; deux corps qui se chevauchaient déjà au début d'un pas
+  passent l'un devant l'autre au lieu d'être chassés de côté, d'un corps
+  dans le suivant ; les animaux qui viennent d'apparaître ne heurtent
+  personne avant de s'être posés ; une chute desktopPet s'arrête toujours
+  au sol. Cent animaux sur l'écran d'un MacBook et trois cents sur un petit
+  écran : aucun saut, et un cinquième seulement en l'air au lieu des deux
+  tiers (`tests/tas.rs`).
+
+Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
+(la barre des menus, la galerie), et un essai sur le vrai Mac avec beaucoup
+plus d'animaux.
 
 ## 1. Ce que disent les essais
 
@@ -213,15 +242,17 @@ Le même arbre se dessine de deux façons :
   l'aperçu hors écran, la CI, et plus tard Windows et Linux là où le
   système n'offre pas de compositeur à calques.
 
-Vello disparaît du programme.
+Vello a disparu du programme (`b4978ce`).
 
 ### 3.5 Des milliers de moutons
 
 - **Plus de boucle sur toutes les paires** : une grille (des cases d'environ
   128 points) ne compare que les voisins. Les rebords des fenêtres sont
   rangés par position.
-- **Les moutons calmes coûtent moins** : un mouton qui dort ou broute
-  avance sa simulation moins souvent (son dessin reste fluide).
+- **Les moutons calmes coûtent moins** : chaque pas d'un mouton qui dort ou
+  broute a été allégé (un tiers de moins). Avancer leur simulation moins
+  souvent n'a pas été nécessaire : le cœur reste simple et déterministe,
+  au même pas pour tous.
 - **Mémoire par mouton constante et petite** : un calque et son état ; les
   images sont par espèce et par taille.
 - **Un essai de charge** ajoute des moutons par paliers (20, 100, 500,
@@ -257,7 +288,10 @@ Des budgets vérifiés par l'analyse de chaque essai :
 - mémoire : moins de 100 Mo plus les images vivantes, sans surface
   d'affichage par mouton.
 
-La CI échouera si un essai montre un retard causé par Mouflon.
+La CI échoue si un essai montre plus d'une image en mouvement sur deux
+mille en retard par la faute de Mouflon (`analyse.py --budget`) : un
+à-coup est le sien quand son fil travaillait sans que la machine retienne
+le processus.
 
 ## 4. Le chemin, par étapes
 
@@ -268,10 +302,11 @@ Chaque étape donne une version à essayer sur le vrai Mac.
 | 0 | sauts à l'atterrissage, moutons posés en l'air sur un dos | — | fait |
 | 1 | processus auxiliaire pour les appels système, journal des fenêtres sous les moutons | une demi-journée | fait (`ac180e5`) |
 | 2 | scène : une fenêtre par écran et des calques pour les animaux en images (images partagées, cache des images vivantes, survol, prise, menus, dépôt) | deux jours | fait (`de49997`, à l'endroit depuis `8308f87`) |
-| 3 | tout en morceaux : dessins vectoriels, squelettes, ombres, particules, surprises ; fin des fenêtres par animal et de Vello | un à deux jours | fait, sauf Vello |
+| 3 | tout en morceaux : dessins vectoriels, squelettes, ombres, particules, surprises ; fin des fenêtres par animal et de Vello | un à deux jours | fait (Vello : `b4978ce`) |
 | 4 | fil d'affichage : simulation et calques hors du fil principal | un jour | fait (`8308f87`) |
-| 5 | des milliers de moutons : grille, simulation allégée au calme, essai de charge | un jour | balayage, surfaces par colonnes, essai de charge ; reste le calme |
-| 6 | découpage de l'app, tests de chaque partie, documentation | un à deux jours | commencé (affichage, fenêtres des écrans, relevé à part) |
+| 5 | des milliers de moutons : grille, simulation allégée au calme, essai de charge | un jour | fait (balayage, surfaces par colonnes, chocs et calme allégés, essai de charge) |
+| 6 | découpage de l'app, tests de chaque partie, documentation | un à deux jours | bien avancé (affichage, fenêtres des écrans, relevé à part, scène testée, budgets des essais) |
+| 7 | les sauts de position de l'essai du 2 novembre : dessins qui glissent, tas qui se calment | — | fait (`261a69e`) |
 
 Soit une semaine et demie de sessions, avec un essai réel entre les étapes.
 
