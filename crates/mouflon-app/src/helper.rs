@@ -56,6 +56,8 @@ impl Requests {
 #[derive(Debug, Default)]
 pub struct Surveyor {
     seq: u64,
+    /// L'app pour qui l'on relève, quand ce n'est pas ce processus.
+    app: Option<i32>,
     /// Suivre les fenêtres qui bougent par l'Accessibilité (dans le
     /// processus auxiliaire seulement : les signaux arrivent sur sa boucle).
     follow: bool,
@@ -68,10 +70,13 @@ pub struct Surveyor {
 }
 
 impl Surveyor {
+    /// `app` : le processus de l'app quand on relève pour elle d'un autre
+    /// processus (le sien est toujours écarté).
     #[must_use]
-    pub fn new(follow: bool) -> Self {
+    pub fn new(follow: bool, app: Option<i32>) -> Self {
         Self {
             follow,
+            app,
             ..Self::default()
         }
     }
@@ -79,8 +84,13 @@ impl Surveyor {
     /// Un relevé. `nudged` : demandé par le signal d'une fenêtre qui bouge.
     pub fn poll(&mut self, requests: &Requests, nudged: bool) -> Survey {
         let started = Instant::now();
-        let windows = platform::windows();
+        let mut windows = platform::windows();
         let windows_took = started.elapsed();
+        // Les fenêtres de l'app elle-même (celle qui a lancé ce processus)
+        // ne sont pas des rebords.
+        if let Some(app) = self.app {
+            windows.retain(|w| w.pid != app);
+        }
         let frontmost = platform::frontmost_pid();
         let activity = platform::user_activity();
         let with_dock = requests.dock.load(Ordering::SeqCst);
@@ -185,7 +195,12 @@ pub fn run() {
         let nudged = Rc::clone(&nudged);
         platform::set_window_moves_handler(move || nudged.set(true));
     }
-    let mut surveyor = Surveyor::new(true);
+    // L'app est le processus qui nous a lancés.
+    #[cfg(unix)]
+    let app = Some(std::os::unix::process::parent_id() as i32);
+    #[cfg(not(unix))]
+    let app = None;
+    let mut surveyor = Surveyor::new(true, app);
     let mut out = std::io::stdout().lock();
     let mut text = String::new();
     let mut last: Option<Instant> = None;

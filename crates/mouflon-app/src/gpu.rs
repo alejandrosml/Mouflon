@@ -973,6 +973,79 @@ mod tests {
         assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
     }
 
+    /// Tout en morceaux d'image (ombres et disques cuits, voir
+    /// `mouflon_render::pieces`) : la même image que la liste d'origine,
+    /// à quelques pixels près (les images cuites sont lissées).
+    #[test]
+    fn pieces_draw_like_the_list() {
+        let mut context = GpuContext::new();
+        let Some(dev_id) = pollster::block_on(context.device(None)) else {
+            eprintln!("pas de GPU ici : comparaison sautée");
+            return;
+        };
+        let handle = &context.devices[dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let mut quick = Quick::new(device);
+        let mut lists = sample_lists(false);
+        let canvas = mouflon_render::saucer::saucer_canvas();
+        for beam in [0.0, 1.0] {
+            let view = mouflon_core::SaucerView {
+                pos: Vec2::new(500.0, 300.0),
+                tilt: 0.1,
+                beam,
+                beam_len: 180.0,
+                lights: 0.4,
+            };
+            let mut list = DisplayList::new(
+                (f64::from(canvas.width) * 2.0) as u32,
+                (f64::from(canvas.height) * 2.0) as u32,
+            );
+            let frame = Frame {
+                origin: view.pos - canvas.anchor,
+                scale: 2.0,
+            };
+            mouflon_render::saucer::paint_saucer(&view, &frame, &Style::default(), &mut list);
+            lists.push((format!("soucoupe, faisceau {beam}"), list));
+        }
+        let mut pieces = mouflon_render::pieces::Pieces::default();
+        let mut worst = (0u8, 0.0f64, 0.0f64);
+        for (name, list) in lists {
+            mouflon_render::pieces::flatten(&list, &mut pieces);
+            assert!(!pieces.rasterized, "{name} : dessiné d'un bloc");
+            let mut flat = DisplayList::new(list.width, list.height);
+            pieces.write_list(&mut flat);
+            let images = [&list, &flat].map(|list| {
+                let texture = target(device, list);
+                let view = texture.create_view(&Default::default());
+                let mut encoder = device.create_command_encoder(&Default::default());
+                quick.render(device, queue, &mut encoder, &view, FORMAT, list);
+                queue.submit([encoder.finish()]);
+                read(device, queue, &texture)
+            });
+            if let Ok(dir) = std::env::var("MOUFLON_COMPARAISON") {
+                let file = format!("{dir}/{}", name.replace([' ', '×', ','], "-"));
+                for (suffix, pixels) in [("liste", &images[0]), ("morceaux", &images[1])] {
+                    let bitmap = mouflon_render::display::Bitmap::from_rgba(
+                        list.width,
+                        list.height,
+                        pixels.clone(),
+                    );
+                    let png = mouflon_render::sprites::encode_png_rgba(&bitmap);
+                    std::fs::write(format!("{file}-{suffix}.png"), png).expect("png");
+                }
+            }
+            let (max, mean, far) = compare(&images[0], &images[1]);
+            eprintln!(
+                "{name} : écart max {max}, moyen {mean:.4}, {:.3} % au-delà de 6",
+                far * 100.0
+            );
+            worst = (worst.0.max(max), worst.1.max(mean), worst.2.max(far));
+        }
+        eprintln!("pire : {worst:?}");
+        assert!(worst.1 < 0.35, "écart moyen {}", worst.1);
+        assert!(worst.2 < 0.01, "trop de pixels différents : {}", worst.2);
+    }
+
     /// Paramètres passés avec chaque commande (« immediates ») ou par un
     /// tampon uniforme : exactement la même image.
     #[test]

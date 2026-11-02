@@ -699,7 +699,13 @@ impl App {
     /// Applique le dernier relevé des fenêtres (sans rien redemander au système).
     fn refresh_windows(&mut self, now: Instant) {
         let mut windows = Vec::new();
+        let me = platform::current_pid();
         for w in &self.os_windows {
+            // Les fenêtres de Mouflon ne sont jamais des rebords (le relevé
+            // les écarte déjà).
+            if w.pid == me {
+                continue;
+            }
             // Calque transparent posé sur tout un écran (le clavier d'accessibilité
             // en a deux) : ni sol, ni obstacle.
             let overlay = w.is_floating()

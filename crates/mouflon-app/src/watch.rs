@@ -361,7 +361,7 @@ fn write_commands(shared: &Shared, mut stdin: ChildStdin) {
 /// Le relevé sur un fil de l'app, quand le processus auxiliaire manque.
 fn in_process(shared: &Shared, mut timing: Option<&mut Timing>) {
     let requests = Requests::default();
-    let mut surveyor = Surveyor::new(false);
+    let mut surveyor = Surveyor::new(false, None);
     let mut last: Option<Instant> = None;
     while !shared.stop.load(Ordering::SeqCst) {
         let urgent = {
