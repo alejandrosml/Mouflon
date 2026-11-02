@@ -4,11 +4,11 @@
 //! Tout est déterministe pour une graine donnée : la même scène rejoue
 //! exactement le même mouvement, ce qui rend les tests et l'aperçu fiables.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 use std::sync::Arc;
 
 use crate::def::{
-    Appearance, Condition, Duration, Motion, PetDef, Pose, Rules, SpawnPoint, SpriteClip,
+    Appearance, Condition, Duration, Gesture, Motion, PetDef, Pose, Rules, SpawnPoint, SpriteClip,
     Transition,
 };
 use crate::expr::Expr;
@@ -36,13 +36,39 @@ const SMOOTH_SPEED: f32 = 1000.0;
 /// sur l'autre) : on les sépare.
 const OVERLAP_BEFORE: f32 = 0.15;
 
-const BLINK_TIME: f32 = 0.13;
+/// Un clignement (secondes) : la paupière se ferme vite, reste close un
+/// instant, se rouvre deux fois plus lentement (voir [`lid`]).
+const BLINK_TIME: f32 = 0.27;
 /// Cadence qui suffit à un animal qui va son petit train (images par
 /// seconde) : à moins de [`SLOW_RATE`] points par seconde, sa fenêtre avance
 /// d'un point au plus d'une image à l'autre.
 pub const SLOW_RATE: f32 = 60.0;
-/// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois celle du pas).
-pub const RUN_STRIDE: f32 = 1.2;
+/// Allongement de la foulée au galop (la foulée de course vaut 1 + ceci fois
+/// celle du pas) : au galop, un mouton garde à peu près la même cadence
+/// (2,3 à 2,7 foulées par seconde) et allonge ses bonds.
+pub const RUN_STRIDE: f32 = 0.9;
+/// Allongement de la foulée au trot (voir [`RUN_STRIDE`]) : un mouton trotte
+/// à petits pas rapides (2 à 2,4 foulées par seconde), à peine plus longs
+/// qu'au pas.
+pub const TROT_STRIDE: f32 = 0.15;
+/// Foulée du pas, en longueurs de patte (voir `Physics::stride`).
+const STRIDE_PER_LEG: f32 = 1.6;
+/// Ouverture de la bouche pendant un son de sa voix (secondes).
+const VOICE_TIME: f32 = 0.75;
+/// Mâchonnements par seconde : en broutant (1,3 à 1,7 par bouchée, une
+/// bouchée par seconde) et en ruminant (83 à 99 par minute) ; voir
+/// `docs/animation-animale.md`.
+const CHEW_RATE: f32 = 1.6;
+/// En broutant : une station d'herbe (secondes), puis un pas en avant qui
+/// dure ceci, à cette vitesse (en foulées par seconde).
+const GRAZE_STATION: f32 = 8.5;
+const GRAZE_STEP_TIME: f32 = 1.0;
+const GRAZE_STEP_SPEED: f32 = 0.4;
+/// Rumination : chaque bol est mâché un moment, puis avalé ; une courte
+/// pause, et le suivant remonte (secondes ; chez le mouton, une minute de
+/// mastication et 10 à 15 s de pause, raccourcies ici).
+const BOLUS_CHEW: (f32, f32) = (9.0, 16.0);
+const BOLUS_PAUSE: (f32, f32) = (1.6, 3.0);
 /// L'horloge d'un animal (voir [`PoseSignals::clock`]) repart de zéro toutes
 /// les heures : elle garde sa précision.
 pub const CLOCK_LOOP: f32 = 3600.0;
@@ -134,6 +160,25 @@ const BUMP_COOLDOWN: f32 = 3.5;
 
 /// Pause entre deux rencontres d'un même animal (secondes).
 const MEET_COOLDOWN: f32 = 2.5;
+
+/// Un voisin imite un comportement contagieux s'il est à moins de ceci
+/// (fois la largeur de l'animal), à la même hauteur.
+const ECHO_REACH: f32 = 4.0;
+/// Délai avant d'imiter (secondes) : un mouton suit celui qui part avant
+/// lui dans les 12 secondes (95 % des cas) ; plus vite ici.
+const ECHO_DELAY: (f32, f32) = (0.4, 5.0);
+/// Après avoir imité, il n'imite plus pendant ceci (secondes) : pas de
+/// va-et-vient sans fin entre deux voisins.
+const ECHO_COOLDOWN: f32 = 25.0;
+
+/// Ce qu'un animal imite d'un voisin : un comportement (rang dans sa propre
+/// définition), quand, et dans quel sens (on suit celui qui part).
+#[derive(Clone, Copy, Debug)]
+struct Echo {
+    behavior: usize,
+    delay: f32,
+    facing: f32,
+}
 
 /// Durée d'affichage d'une image intermédiaire, au plus (secondes).
 const INBETWEEN_TIME: f32 = 0.08;
@@ -243,6 +288,31 @@ pub struct PoseSignals {
     /// Horloge propre à l'animal (secondes, en boucle sur [`CLOCK_LOOP`]) :
     /// elle fait tourner les animations qui ne suivent pas ses pas.
     pub clock: f32,
+    /// Trot (0–1) : entre le pas et le galop, les pattes vont par paires
+    /// diagonales.
+    pub trot: f32,
+    /// Longueur de la foulée en cours, en fois celle du pas (0 : d'après
+    /// `run` seulement, `1 + RUN_STRIDE × run`).
+    pub stride_scale: f32,
+    /// Bouche : 0 fermée, 1 grande ouverte (il mâche, bêle, bâille).
+    pub jaw: f32,
+    /// Le geste en cours, son ampleur (0–1, elle monte et retombe en
+    /// douceur) et depuis quand il dure (secondes).
+    pub gesture: Option<Gesture>,
+    pub gesture_amount: f32,
+    pub gesture_time: f32,
+    /// Oreilles : > 0 couchées en arrière (énervé, il fonce), < 0 dressées
+    /// vers l'avant (aux aguets).
+    pub ears_back: f32,
+    /// Tête basse (0–1) : il fonce ; > 0 un peu, énervé ou calme.
+    pub head_low: f32,
+    /// Pattes raides en l'air (0–1) : un saut d'agneau.
+    pub stiff: f32,
+    /// Oreilles passives, pendantes (0–1) : au calme, en mangeant.
+    pub ears_droop: f32,
+    /// Oreilles asymétriques (radians, l'une monte, l'autre descend) : la
+    /// surprise.
+    pub ear_split: f32,
 }
 
 impl PoseSignals {
@@ -357,6 +427,26 @@ struct Anim {
     ear_timer: f32,
     tail: Spring,
     tail_timer: f32,
+    trot: f32,
+    stride_scale: f32,
+    /// Le geste en cours, son ampleur et depuis quand il dure.
+    gesture: Option<Gesture>,
+    gesture_amount: f32,
+    gesture_time: f32,
+    /// Bouche : ouverture, phase des mâchonnements, voix qui reste.
+    jaw: f32,
+    chew_phase: f32,
+    voice_left: f32,
+    /// Posture : oreilles couchées, tête basse, pattes raides, oreilles
+    /// pendantes, oreilles asymétriques.
+    ears_back: f32,
+    head_low: f32,
+    stiff: f32,
+    ears_droop: f32,
+    ear_split: f32,
+    /// Rumination : temps qui reste à mâcher le bol (négatif : la pause
+    /// avant le suivant).
+    bolus_left: f32,
 }
 
 impl Anim {
@@ -399,6 +489,20 @@ impl Anim {
             roll: 0.0,
             roll_left: 0.0,
             roll_rate: 0.0,
+            trot: 0.0,
+            stride_scale: 1.0,
+            gesture: None,
+            gesture_amount: 0.0,
+            gesture_time: 0.0,
+            jaw: 0.0,
+            chew_phase: 0.0,
+            voice_left: 0.0,
+            ears_back: 0.0,
+            head_low: 0.0,
+            stiff: 0.0,
+            ears_droop: 0.0,
+            ear_split: 0.0,
+            bolus_left: 12.0,
         }
         .with_clock()
     }
@@ -409,6 +513,103 @@ impl Anim {
     fn with_clock(mut self) -> Self {
         self.clock = self.breath_phase / TAU * 60.0;
         self
+    }
+}
+
+/// Un geste (voir [`Gesture`]) : il démarre avec son comportement, monte en
+/// 0,12 s et retombe pendant les 0,18 dernières secondes ; interrompu, il
+/// s'éteint vite. `since` et `left` : temps écoulé et restant du comportement.
+fn step_gesture(a: &mut Anim, doing: Option<Gesture>, since: f32, left: f32, dt: f32) {
+    // Un nouveau comportement (le même geste encore, ou un autre) repart de zéro.
+    if doing.is_some() && (doing != a.gesture || since < a.gesture_time) {
+        a.gesture = doing;
+        a.gesture_time = 0.0;
+    }
+    let Some(gesture) = a.gesture else {
+        return;
+    };
+    a.gesture_time += dt;
+    let target = if doing == Some(gesture) {
+        smoothstep(0.0, 0.12, a.gesture_time) * smoothstep(0.0, 0.18, left.max(0.0))
+    } else {
+        0.0
+    };
+    a.gesture_amount = if target >= a.gesture_amount {
+        target
+    } else {
+        damp(a.gesture_amount, target, 14.0, dt)
+    };
+    if doing.is_none() && a.gesture_amount < 0.005 {
+        a.gesture = None;
+        a.gesture_amount = 0.0;
+    }
+}
+
+/// La bouche : il mâchonne en broutant et en ruminant, l'ouvre en faisant
+/// entendre sa voix, en bêlant et en bâillant.
+fn step_mouth(a: &mut Anim, chewing: bool, rng: &mut Rng, dt: f32) {
+    let grazing = a.graze > 0.3;
+    // Il rumine bol après bol : il mâche, avale, une pause, le suivant.
+    let mut pausing = false;
+    if chewing && !grazing {
+        if a.bolus_left > 0.0 {
+            a.bolus_left -= dt;
+            if a.bolus_left <= 0.0 {
+                // Avalé : une pause, puis le bol suivant remonte.
+                a.bolus_left = -rng.range(BOLUS_PAUSE.0, BOLUS_PAUSE.1);
+            }
+        } else {
+            a.bolus_left += dt;
+            if a.bolus_left >= 0.0 {
+                a.bolus_left = rng.range(BOLUS_CHEW.0, BOLUS_CHEW.1);
+            }
+        }
+        pausing = a.bolus_left < 0.0;
+    }
+    let chewing = chewing && !pausing;
+    if grazing || chewing {
+        // Un peu irrégulier : la mâchoire d'un ruminant ne bat pas comme un métronome.
+        let rate = CHEW_RATE * (1.0 + 0.12 * (a.chew_phase * 0.31).sin());
+        a.chew_phase = wrap_phase(a.chew_phase + TAU * rate * dt, TAU * 16.0);
+    }
+    let chew = if grazing || chewing {
+        0.22 * (0.5 - 0.5 * a.chew_phase.cos())
+    } else {
+        0.0
+    };
+    a.voice_left = (a.voice_left - dt).max(0.0);
+    let voice = if a.voice_left > 0.0 {
+        // Ouverte d'un coup, un léger vibrato, puis refermée.
+        let t = 1.0 - a.voice_left / VOICE_TIME;
+        let shape = smoothstep(0.0, 0.12, t) * (1.0 - smoothstep(0.7, 1.0, t));
+        shape * (0.62 + 0.08 * (t * TAU * 5.5).sin())
+    } else {
+        0.0
+    };
+    let gesture = match a.gesture {
+        Some(Gesture::Yawn) => {
+            // Lente à s'ouvrir, grande ouverte, puis refermée.
+            let t = a.gesture_time;
+            a.gesture_amount * smoothstep(0.15, 0.7, t)
+        }
+        Some(Gesture::Bleat) => {
+            a.gesture_amount * (0.6 + 0.08 * (a.gesture_time * TAU * 5.5).sin())
+        }
+        _ => 0.0,
+    };
+    let target = chew.max(voice).max(gesture);
+    a.jaw = damp(a.jaw, target, 22.0, dt);
+}
+
+/// La paupière au fil d'un clignement (`t` de 0 à 1) : fermée en 0,08 s,
+/// close 0,03 s, rouverte en 0,16 s.
+fn lid(t: f32) -> f32 {
+    if t < 0.3 {
+        smoothstep(0.0, 0.3, t)
+    } else if t < 0.41 {
+        1.0
+    } else {
+        1.0 - smoothstep(0.41, 1.0, t)
     }
 }
 
@@ -462,6 +663,13 @@ pub struct Pet {
     bump_cooldown: f32,
     /// Pause avant de pouvoir sursauter de nouveau (secondes).
     startle_cooldown: f32,
+    /// Un comportement contagieux qu'il vient de commencer (rang), que ses
+    /// voisins peuvent imiter (voir [`Flock::echo`]).
+    began: Option<usize>,
+    /// Ce qu'il imitera d'un voisin, et quand.
+    echo: Option<Echo>,
+    /// Il vient d'imiter : il n'imite plus pendant ce temps (secondes).
+    echo_cooldown: f32,
     /// Dans combien de temps il s'endort (l'utilisateur est parti).
     nap_in: Option<f32>,
     /// Dans combien de temps il se réveille (l'utilisateur est revenu).
@@ -801,6 +1009,9 @@ impl Pet {
             bump_cooldown: 0.0,
             temper: Temper::Even,
             startle_cooldown: 0.0,
+            began: None,
+            echo: None,
+            echo_cooldown: 0.0,
             nap_in: None,
             wake_in: None,
             wind: 0.0,
@@ -919,7 +1130,9 @@ impl Pet {
             // Physique réaliste : il se redresse, ou une fenêtre l'emporte.
             || self.angle != 0.0
             || self.spin != 0.0
-            || self.carry.length() > 0.5;
+            || self.carry.length() > 0.5
+            // Un geste (s'ébrouer, gratter le sol…) bouge vite.
+            || self.anim.gesture_amount > 0.02;
         let sprites = self.def.behaviors[self.behavior].clip.is_some();
         // Les bulles de sommeil montent lentement : elles n'exigent pas la pleine cadence.
         let dust = self.particles.iter().any(|p| p.kind == ParticleKind::Dust);
@@ -1396,6 +1609,55 @@ impl Pet {
             && !self.finished
     }
 
+    /// Le moment venu, il imite ce qu'a fait un voisin, s'il est libre de le
+    /// faire : debout, à marcher, à brouter ou à regarder autour de lui.
+    /// Ce qu'il imite ne se propage pas plus loin.
+    fn step_echo(&mut self, dt: f32) {
+        self.echo_cooldown = (self.echo_cooldown - dt).max(0.0);
+        let Some(echo) = &mut self.echo else {
+            return;
+        };
+        echo.delay -= dt;
+        if echo.delay > 0.0 {
+            return;
+        }
+        let echo = *echo;
+        self.echo = None;
+        let free = matches!(
+            self.def.behaviors[self.behavior].motion,
+            Motion::Stand | Motion::Look | Motion::Graze | Motion::Walk { .. }
+        );
+        if !free || !self.can_react() || self.is_asleep() || self.hold.is_some() {
+            return;
+        }
+        self.echo_cooldown = ECHO_COOLDOWN;
+        if matches!(
+            self.def.energy(echo.behavior),
+            crate::Energy::Walk | crate::Energy::Dash
+        ) {
+            // Il part du même côté que l'autre.
+            self.facing = echo.facing;
+        }
+        self.enter(echo.behavior);
+        self.began = None;
+    }
+
+    /// En broutant, un mouton fait un pas ou deux tête basse pour gagner
+    /// l'herbe suivante (une station toutes les 7 à 11 s) : sa vitesse du
+    /// moment (les animaux en images ont leurs propres images).
+    fn graze_step(&self) -> f32 {
+        if matches!(self.def.appearance, Appearance::Sprites(_)) || self.behavior_time < 2.5 {
+            return 0.0;
+        }
+        // Chacun à son rythme, sans tirage au hasard.
+        let t = self.behavior_time + (self.id % 7) as f32 * 1.13;
+        if t % GRAZE_STATION > GRAZE_STATION - GRAZE_STEP_TIME {
+            self.def.stride() * GRAZE_STEP_SPEED
+        } else {
+            0.0
+        }
+    }
+
     /// Le pointeur vient de le frôler à toute vitesse, entre `from` et `to`.
     fn startle(&mut self, from: Vec2, to: Vec2, world: &World, input: &Input) {
         if self.startle_cooldown > 0.0 || !self.can_react() || self.is_asleep() {
@@ -1415,6 +1677,12 @@ impl Pet {
         self.events.push(PetEvent::Startled);
         self.squash_kick(0.6);
         self.anim.ear.kick(-5.0);
+        // La surprise : les oreilles asymétriques, un instant.
+        self.anim.ear_split = if self.id.is_multiple_of(2) {
+            0.45
+        } else {
+            -0.45
+        };
         let def = Arc::clone(&self.def);
         if let Some(next) = self.choose(&def.reflexes.startle, world, input) {
             self.enter(next);
@@ -1507,6 +1775,7 @@ impl Pet {
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
         self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
         self.step_moods(dt, world, input);
+        self.step_echo(dt);
         if let Some(leaving) = &mut self.leaving {
             leaving.time += dt;
             if leaving.fade.is_none() && leaving.time >= LEAVE_MAX {
@@ -1589,9 +1858,11 @@ impl Pet {
         let p = self.def.physics;
         let surface = *surface;
         let motion = &self.def.behaviors[self.behavior].motion;
-        let desired = match *motion {
-            Motion::Walk { speed } | Motion::Run { speed } => speed * self.facing,
-            _ => 0.0,
+        let grazing = *motion == Motion::Graze;
+        let desired = if grazing {
+            self.graze_step() * self.facing
+        } else {
+            motion.speed().map_or(0.0, |speed| speed * self.facing)
         };
         let accel = if desired == 0.0 {
             p.ground_friction
@@ -1625,7 +1896,10 @@ impl Pet {
         let heading_out = ((nose > surface.x1 && self.vel.x > 0.0)
             || (nose < surface.x0 && self.vel.x < 0.0))
             && next_floor(nose).is_none();
-        if !self.walking_off && desired != 0.0 && heading_out {
+        if grazing && heading_out {
+            // Il broute au bord : il ne va pas plus loin.
+            self.vel.x = 0.0;
+        } else if !self.walking_off && desired != 0.0 && heading_out {
             self.on_edge(world, input, &surface);
         } else if !surface.contains_x(self.pos.x, 0.0)
             && let Some(next) = next_floor(self.pos.x)
@@ -1819,10 +2093,7 @@ impl Pet {
         let nose = self.pos.x + self.facing * reach;
         let outward =
             (nose > surface.x1 && self.facing > 0.0) || (nose < surface.x0 && self.facing < 0.0);
-        let moving = matches!(
-            def.behaviors[self.behavior].motion,
-            Motion::Walk { .. } | Motion::Run { .. }
-        );
+        let moving = def.behaviors[self.behavior].motion.speed().is_some();
         if outward && moving {
             // Il a choisi de continuer : il va tomber du rebord.
             self.walking_off = true;
@@ -1831,7 +2102,10 @@ impl Pet {
             let lo = (surface.x0 + reach).min(surface.x0 + surface.width() * 0.5);
             let hi = (surface.x1 - reach).max(surface.x1 - surface.width() * 0.5);
             self.snap_x(self.pos.x.clamp(lo, hi));
-            if !matches!(def.behaviors[self.behavior].motion, Motion::Jump { .. }) {
+            if !matches!(
+                def.behaviors[self.behavior].motion,
+                Motion::Jump { .. } | Motion::Pronk { .. }
+            ) {
                 self.vel.x = 0.0;
             }
         }
@@ -1929,6 +2203,9 @@ impl Pet {
             if cue.frame == frame && self.voice.chance(cue.chance) {
                 let clips = def.sounds.get(cue.sound).map_or(0, |s| s.clips.len());
                 if clips > 0 {
+                    if def.sounds[cue.sound].mouth {
+                        self.anim.voice_left = VOICE_TIME;
+                    }
                     let clip = self.voice.next_u32() as usize % clips;
                     self.events.push(PetEvent::Sound {
                         sound: cue.sound,
@@ -1970,6 +2247,7 @@ impl Pet {
         let behavior = &def.behaviors[index];
         self.behavior = index;
         self.behavior_time = 0.0;
+        self.began = (behavior.contagious > 0.0).then_some(index);
         self.clip_step = 0;
         self.clip_timer = 0.0;
         self.clip_total = match &behavior.clip {
@@ -2002,7 +2280,7 @@ impl Pet {
                 // Petit sursaut pendant le demi-tour : il se lit mieux qu'un retournement à plat.
                 self.squash_kick(-1.1);
             }
-            &Motion::Jump { vx, vy } if grounded => {
+            &(Motion::Jump { vx, vy } | Motion::Pronk { vx, vy }) if grounded => {
                 self.vel = Vec2::new(vx * self.facing, -vy);
                 self.support = Support::Air;
                 self.ground_ref = None;
@@ -2122,6 +2400,9 @@ impl Pet {
             Condition::Present => !input.away(),
             Condition::Morning => (6.0..11.0).contains(&input.local_hour),
             Condition::Evening => (18.0..22.0).contains(&input.local_hour),
+            Condition::Temper(temper) => self.temper == temper,
+            // Le vent souffle contre son museau (signes opposés).
+            Condition::IntoWind => self.wind * self.facing < -0.1 * crate::surprise::GUST_PEAK,
         }
     }
 
@@ -2138,6 +2419,24 @@ impl Pet {
         let sprites = matches!(self.def.appearance, Appearance::Sprites(_));
         let drawn = self.def.drawn();
         let realistic = self.realistic;
+        // Ce que fait le comportement en cours, pour les gestes, la bouche et
+        // la posture (les animaux dessinés en vecteurs ou en squelette).
+        let doing = match behavior.motion {
+            Motion::Gesture(gesture) if grounded => Some(gesture),
+            _ => None,
+        };
+        let since = self.behavior_time;
+        let left = self.behavior_length - self.behavior_time;
+        let chewing = behavior.chew && grounded;
+        let charging = matches!(behavior.motion, Motion::Charge { .. }) && grounded;
+        let pronking = matches!(behavior.motion, Motion::Pronk { .. }) && pose == Pose::Air;
+        let tilt = behavior.tilt;
+        let temper = self.temper;
+        // Les allures se choisissent d'après la vitesse rapportée à la
+        // longueur des pattes (comme le nombre de Froude, voir
+        // `docs/animation-animale.md`) : agrandi, un animal garde les siennes.
+        let legs = (self.def.stride() / STRIDE_PER_LEG).max(1.0);
+        let stride_walk = self.def.stride();
         // Physique réaliste : l'inertie des oreilles et de la queue quand le
         // corps accélère (une fenêtre qui l'emporte, un choc…).
         let inertia = if realistic && dt > 0.0 {
@@ -2166,29 +2465,32 @@ impl Pet {
 
         // Démarche calée sur la distance parcourue : les pattes ne glissent pas.
         let speed = if grounded { vel.x.abs() } else { 0.0 };
-        // Au galop, la foulée s'allonge (des bonds plutôt que des pas pressés).
-        let stride = self.def.stride() * (1.0 + RUN_STRIDE * a.run);
+        // Au trot puis au galop, la foulée s'allonge (des bonds plutôt que
+        // des pas pressés).
+        a.stride_scale = 1.0 + TROT_STRIDE * a.trot * (1.0 - a.run) + RUN_STRIDE * a.run;
+        let stride = stride_walk * a.stride_scale;
         a.gait_phase = wrap_phase(a.gait_phase + speed / stride * TAU * dt, TAU);
-        a.walk = damp(
-            a.walk,
-            if grounded {
-                smoothstep(2.0, 36.0, speed)
-            } else {
-                0.0
-            },
-            10.0,
-            dt,
-        );
-        a.run = damp(
-            a.run,
-            if grounded {
-                smoothstep(80.0, 150.0, speed)
-            } else {
-                0.0
-            },
-            6.0,
-            dt,
-        );
+        // Pas, trot, galop : en longueurs de patte par seconde. Les animaux
+        // en images ont leurs allures dans leurs images.
+        let rel = speed / legs;
+        let (walk, trot, run) = if !grounded {
+            (0.0, 0.0, 0.0)
+        } else if sprites {
+            (
+                smoothstep(2.0, 36.0, speed),
+                0.0,
+                smoothstep(80.0, 150.0, speed),
+            )
+        } else {
+            (
+                smoothstep(0.05, 0.6, rel),
+                smoothstep(2.6, 3.4, rel),
+                smoothstep(4.6, 6.0, rel),
+            )
+        };
+        a.walk = damp(a.walk, walk, 10.0, dt);
+        a.trot = damp(a.trot, trot, 7.0, dt);
+        a.run = damp(a.run, run, 6.0, dt);
 
         let weight = |w: Pose| if pose == w { 1.0 } else { 0.0 };
         a.sit = damp(a.sit, weight(Pose::Sit) + weight(Pose::Sleep), 5.0, dt);
@@ -2197,8 +2499,9 @@ impl Pet {
         a.air = damp(a.air, weight(Pose::Air), 12.0, dt);
         a.graze = damp(a.graze, weight(Pose::Graze), 2.6, dt);
         if a.graze > 0.02 {
-            // Deux coups de dents par seconde, un peu irréguliers.
-            let rate = TAU * (1.9 + 0.5 * (a.nibble_phase * 0.37).sin());
+            // Une bouchée par seconde (0,93 à 0,96 s chez la brebis), un peu
+            // irrégulière.
+            let rate = TAU * (1.05 + 0.15 * (a.nibble_phase * 0.37).sin());
             a.nibble_phase = wrap_phase(a.nibble_phase + rate * dt, TAU * 8.0);
         }
         let rise = if pose == Pose::Air {
@@ -2217,7 +2520,7 @@ impl Pet {
         a.squash.value = a.squash.value.clamp(-0.3, 0.38);
 
         let accel_x = (vel.x - *prev_vel_x) / dt;
-        let mut lean = (accel_x * *facing * 0.00025).clamp(-0.16, 0.16) + a.run * 0.08;
+        let mut lean = (accel_x * *facing * 0.00025).clamp(-0.16, 0.16) + a.run * 0.08 + tilt;
         if pose == Pose::Air {
             lean += (vel.x * *facing * 0.00028).clamp(-0.35, 0.35);
         }
@@ -2232,19 +2535,69 @@ impl Pet {
             + (inertia * 0.00018).clamp(-0.45, 0.45);
         // Au calme, une oreille frémit de temps en temps et la queue bat un
         // coup (les dessins vectoriels seulement : les images ont les leurs).
-        if grounded && a.sleep < 0.5 && !sprites {
+        // L'humeur en change le rythme : un énervé fouette de la queue et
+        // remue les oreilles bien plus souvent qu'un calme.
+        let (ear_pace, tail_pace, tail_force) = match temper {
+            Temper::Even => (1.0, 1.0, 1.0),
+            Temper::Calm => (1.6, 1.8, 0.8),
+            Temper::Lively => (0.6, 0.6, 1.0),
+            Temper::Rowdy => (0.45, 0.35, 1.4),
+        };
+        if grounded && a.sleep > 0.5 && !sprites {
+            // Endormi, une oreille tressaille de temps en temps (le sommeil
+            // paradoxal).
+            a.ear_timer -= dt;
+            if a.ear_timer <= 0.0 {
+                let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                a.ear.kick(side * rng.range(1.2, 2.2));
+                a.ear_timer = rng.range(5.0, 14.0);
+            }
+        } else if grounded && !sprites {
             a.ear_timer -= dt;
             if a.ear_timer <= 0.0 {
                 let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
                 a.ear.kick(side * rng.range(2.5, 4.5));
-                a.ear_timer = rng.range(2.5, 8.0);
+                a.ear_timer = rng.range(2.5, 8.0) * ear_pace;
             }
             a.tail_timer -= dt;
             if a.tail_timer <= 0.0 {
                 let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
-                a.tail.kick(side * rng.range(5.0, 8.0));
-                a.tail_timer = rng.range(2.0, 9.0) / (1.0 + a.walk);
+                a.tail.kick(side * rng.range(5.0, 8.0) * tail_force);
+                a.tail_timer = rng.range(2.0, 9.0) / (1.0 + a.walk) * tail_pace;
             }
+        }
+        if !sprites {
+            step_gesture(a, doing, since, left, dt);
+            step_mouth(a, chewing, rng, dt);
+            // Posture, d'après ce que disent les oreilles d'un mouton (voir
+            // `docs/animation-animale.md`) : dressées, la colère (un
+            // énervé) ; en arrière, la peur (tenu en l'air, pris dans le
+            // vent) ou l'élan (il fonce, tête basse) ; pendantes, le calme
+            // et le repas. Pattes raides d'un agneau qui saute.
+            let (ears, head, droop): (f32, f32, f32) = if charging {
+                (0.9, 1.0, 0.0)
+            } else {
+                match temper {
+                    Temper::Rowdy => (-0.35, 0.15, 0.0),
+                    Temper::Calm => (0.0, 0.08, 0.45),
+                    Temper::Lively => (-0.15, 0.0, 0.0),
+                    Temper::Even => (0.0, 0.0, 0.1),
+                }
+            };
+            let gust = (wind.abs() / crate::surprise::GUST_PEAK).min(1.0);
+            let ears = if pose == Pose::Dangle {
+                0.75
+            } else {
+                ears + 0.6 * gust
+            };
+            let eating = a.graze > 0.3 || chewing;
+            let droop = (droop + if eating { 0.5 } else { 0.0 }).min(1.0);
+            let awake = 1.0 - a.sleep;
+            a.ears_back = damp(a.ears_back, ears * awake, 6.0, dt);
+            a.head_low = damp(a.head_low, head * awake, 5.0, dt);
+            a.ears_droop = damp(a.ears_droop, droop * awake * (1.0 - a.dangle), 3.0, dt);
+            a.ear_split = damp(a.ear_split, 0.0, 1.2, dt);
+            a.stiff = damp(a.stiff, if pronking { 1.0 } else { 0.0 }, 14.0, dt);
         }
         a.ear.step(dt);
         a.tail.target = (inertia * 0.00025).clamp(-0.6, 0.6);
@@ -2279,17 +2632,20 @@ impl Pet {
         } else if a.blink_left > 0.0 {
             a.blink_left -= dt;
             let t = 1.0 - (a.blink_left / BLINK_TIME).clamp(0.0, 1.0);
-            a.blink = (t * PI).sin();
+            a.blink = lid(t);
             if a.blink_left <= 0.0 {
                 a.blink = 0.0;
                 if a.double_blink {
                     a.double_blink = false;
-                    a.blink_timer = 0.1;
+                    a.blink_timer = 0.2;
                 } else {
-                    a.blink_timer = rng.range(2.2, 6.5);
+                    a.blink_timer = rng.range(2.5, 8.0);
                     a.double_blink = rng.chance(0.2);
                 }
             }
+        } else if !sprites && (a.flip - *facing).abs() > 1.5 {
+            // Il fait demi-tour : il cligne en tournant la tête.
+            a.blink_left = BLINK_TIME;
         } else {
             a.blink = damp(a.blink, 0.0, 14.0, dt);
             a.blink_timer -= dt;
@@ -2298,7 +2654,9 @@ impl Pet {
             }
         }
 
-        let period = lerp(3.6, 5.4, a.sleep);
+        // Une vingtaine de respirations par minute au repos (16 à 34 chez
+        // le mouton), plus lentes dans le sommeil.
+        let period = lerp(3.0, 4.4, a.sleep);
         a.breath_phase = wrap_phase(a.breath_phase + TAU * dt / period, TAU);
         a.clock = wrap_phase(a.clock + dt, CLOCK_LOOP);
 
@@ -2631,6 +2989,17 @@ impl Pet {
                 nibble: (a.nibble_phase).sin(),
                 rise: a.rise,
                 clock: a.clock,
+                trot: a.trot,
+                stride_scale: a.stride_scale,
+                jaw: a.jaw,
+                gesture: a.gesture,
+                gesture_amount: a.gesture_amount,
+                gesture_time: a.gesture_time,
+                ears_back: a.ears_back,
+                head_low: a.head_low,
+                stiff: a.stiff,
+                ears_droop: a.ears_droop,
+                ear_split: a.ear_split,
             },
             shadow: self.shadow,
             sprite_frame,
@@ -2674,6 +3043,9 @@ pub struct Flock {
     last_cursor: Option<Vec2>,
     /// Les paires d'animaux assez proches pour se toucher (voir [`near`]).
     near: near::Near,
+    /// Ceux qui viennent de commencer un comportement contagieux, le temps
+    /// d'un pas (voir [`Flock::echo`]).
+    echo_sources: Vec<(usize, usize)>,
     /// Les axes du corps de chaque animal et les demi-côtés du rectangle
     /// droit qui le contient, le temps des chocs d'un pas (voir
     /// [`Flock::collide_bodies`]).
@@ -3103,6 +3475,7 @@ impl Flock {
                     self.meet(world, input);
                 }
             }
+            self.echo();
             self.adopt_children(world);
             self.accumulator -= TICK;
         }
@@ -3355,6 +3728,52 @@ impl Flock {
             }
         }
         self.near = near;
+    }
+
+    /// Les comportements contagieux : un voisin de la même famille, assez
+    /// près, les imite parfois un peu plus tard (un mouton qui part entraîne
+    /// les autres, un bâillement en appelle un autre, l'alerte se propage).
+    fn echo(&mut self) {
+        let mut sources = std::mem::take(&mut self.echo_sources);
+        sources.clear();
+        sources.extend(
+            self.pets
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, pet)| pet.began.take().map(|b| (i, b))),
+        );
+        for &(i, b) in &sources {
+            let source = &self.pets[i];
+            let def = Arc::clone(&source.def);
+            let behavior = &def.behaviors[b];
+            let (pos, facing) = (source.pos, source.facing);
+            let reach = ECHO_REACH * def.physics.width;
+            let height = def.physics.height;
+            let family = def.meta.category();
+            for (j, pet) in self.pets.iter_mut().enumerate() {
+                if j == i
+                    || pet.echo.is_some()
+                    || pet.echo_cooldown > 0.0
+                    || (pet.pos.x - pos.x).abs() > reach
+                    || (pet.pos.y - pos.y).abs() > height
+                    || pet.def.meta.category() != family
+                {
+                    continue;
+                }
+                let Some(index) = pet.def.behavior_index(&behavior.name) else {
+                    continue;
+                };
+                if pet.rng.chance(behavior.contagious) {
+                    let delay = pet.rng.range(ECHO_DELAY.0, ECHO_DELAY.1);
+                    pet.echo = Some(Echo {
+                        behavior: index,
+                        delay,
+                        facing,
+                    });
+                }
+            }
+        }
+        self.echo_sources = sources;
     }
 
     /// Deux animaux différents du troupeau (leurs rangs), à changer ensemble.
@@ -4239,6 +4658,168 @@ mod tests {
         Arc::new(crate::format::load_pet(&path).unwrap())
     }
 
+    #[test]
+    fn every_sheep_knows_what_to_do_with_the_wind_and_its_temper() {
+        // Le vent dans le museau : tous les moutons lui tournent le dos.
+        for name in ["mannequin", "aquarelle", "lainou", "pelote"] {
+            let def = bundled(name);
+            assert!(
+                def.reflexes
+                    .wind
+                    .iter()
+                    .any(|t| t.when == [Condition::IntoWind]),
+                "{name}"
+            );
+        }
+        // Les animaux d'exemple montrent tous les gestes, et des choix selon
+        // le tempérament ; leurs comportements contagieux sont bien lus.
+        for name in ["mannequin", "aquarelle"] {
+            let def = bundled(name);
+            for gesture in Gesture::ALL {
+                assert!(
+                    def.behaviors
+                        .iter()
+                        .any(|b| b.motion == Motion::Gesture(gesture)),
+                    "{name} : {gesture:?}"
+                );
+            }
+            for temper in [Temper::Calm, Temper::Lively, Temper::Rowdy] {
+                assert!(
+                    def.behaviors
+                        .iter()
+                        .flat_map(|b| &b.next)
+                        .any(|t| t.when == [Condition::Temper(temper)]),
+                    "{name} : {temper:?}"
+                );
+            }
+            let walk = &def.behaviors[def.behavior_index("walk").unwrap()];
+            assert!(walk.contagious > 0.0 && walk.contagious < 1.0);
+            let ruminate = &def.behaviors[def.behavior_index("ruminate").unwrap()];
+            assert!(ruminate.chew && ruminate.motion == Motion::Sit);
+        }
+    }
+
+    #[test]
+    fn an_angry_lainou_charges_head_down() {
+        // Énervé, il fonce tête baissée : une animation qu'il ne joue pas autrement.
+        let lainou = bundled("lainou");
+        let (mut flock, world) = resting_flock(&lainou, 4, "repos");
+        flock.set_mood(crate::Mood::Rowdy);
+        let mut charged = false;
+        for _ in 0..(240.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            charged |= flock.pets().iter().any(|p| p.behavior_name() == "fonce");
+        }
+        assert!(charged);
+    }
+
+    #[test]
+    fn neighbours_of_the_same_family_follow_a_contagious_behavior() {
+        // Un Mannequin part en marchant : ses voisins le suivent souvent, du
+        // même côté, un peu plus tard ; ceux qui viennent d'imiter attendent.
+        let mannequin = bundled("mannequin");
+        let mut followed = 0;
+        for round in 0..20u64 {
+            let world = world();
+            let mut flock = Flock::new();
+            let floor = *world.floor_under(300.0).unwrap();
+            for i in 0..4u32 {
+                let id = flock.spawn(
+                    Arc::clone(&mannequin),
+                    round * 97 + u64::from(i) * 31,
+                    &world,
+                    None,
+                );
+                let pet = flock.get_mut(id).unwrap();
+                pet.pos = Vec2::new(500.0 + 70.0 * i as f32, floor.y);
+                pet.prev_pos = pet.pos;
+                pet.set_ground(&floor);
+                pet.facing = -1.0;
+                assert!(pet.force("stand"));
+                pet.behavior_length = 60.0;
+            }
+            let leader = flock.pets()[0].id();
+            {
+                let pet = flock.get_mut(leader).unwrap();
+                pet.facing = 1.0;
+                assert!(pet.force("walk"));
+            }
+            for _ in 0..(6.0 / TICK) as usize {
+                flock.advance(TICK, &world, &Input::default());
+            }
+            followed += flock
+                .pets()
+                .iter()
+                .filter(|p| p.id() != leader && p.behavior_name() == "walk" && p.facing > 0.0)
+                .count();
+            for p in flock.pets() {
+                if p.id() != leader && p.behavior_name() == "walk" {
+                    assert!(p.echo_cooldown > 0.0, "il vient d'imiter : il attend");
+                }
+            }
+        }
+        // Trois voisins, une chance sur quatre chacun, sur vingt essais.
+        assert!((5..=30).contains(&followed), "{followed} suiveurs");
+    }
+
+    #[test]
+    fn a_grazing_sheep_steps_to_the_next_tuft_without_lifting_its_head() {
+        let mannequin = bundled("mannequin");
+        let world = world();
+        let mut flock = Flock::new();
+        let floor = *world.floor_under(300.0).unwrap();
+        let id = flock.spawn(Arc::clone(&mannequin), 5, &world, None);
+        {
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos = Vec2::new(600.0, floor.y);
+            pet.prev_pos = pet.pos;
+            pet.set_ground(&floor);
+            pet.facing = 1.0;
+            assert!(pet.force("graze"));
+            pet.behavior_length = 60.0;
+        }
+        let start = flock.pets()[0].position().x;
+        let mut stepping = 0.0f32;
+        for _ in 0..(20.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+            let pet = &flock.pets()[0];
+            assert_eq!(pet.behavior_name(), "graze");
+            if pet.vel.x.abs() > 1.0 {
+                // Il avance pattes comprises, la tête toujours au sol.
+                stepping = stepping.max(pet.anim.walk);
+                assert!(pet.anim.graze > 0.9);
+            }
+        }
+        let moved = flock.pets()[0].position().x - start;
+        assert!(moved > 10.0 && moved < 60.0, "{moved}");
+        assert!(stepping > 0.6, "{stepping}");
+    }
+
+    #[test]
+    fn a_ruminating_sheep_chews_bolus_after_bolus() {
+        let mannequin = bundled("mannequin");
+        let world = world();
+        let mut pet = Pet::spawn(0, mannequin, 3, &world, Some(300.0));
+        run(&mut pet, &world, 3.0);
+        assert!(pet.force("ruminate"));
+        pet.behavior_length = 120.0;
+        let (mut chewing, mut still, mut pause) = (0.0f32, 0.0f32, 0.0f32);
+        for _ in 0..(60.0 / TICK) as usize {
+            pet.step(TICK, &world, &Input::default());
+            if pet.anim.bolus_left > 0.0 {
+                chewing += TICK;
+                pause = 0.0;
+            } else {
+                still += TICK;
+                pause += TICK;
+                if pause > 0.3 {
+                    assert!(pet.anim.jaw < 0.05, "la bouche se referme pendant la pause");
+                }
+            }
+        }
+        assert!(chewing > 40.0 && still > 4.0, "{chewing} {still}");
+    }
+
     /// Un troupeau de Lainou au repos sur le sol, côte à côte.
     fn resting_flock(def: &Arc<PetDef>, count: u32, behavior: &str) -> (Flock, World) {
         let world = world();
@@ -4494,12 +5075,20 @@ mod tests {
         let (def, seconds_in) = long_life("lainou", 30.0, 40.0, false);
         // Tenu, lancé, heurté, sonné par une grosse chute ou en partance :
         // il y faut la main de l'utilisateur, ou une chute de très haut.
+        // Dos au vent, il faut du vent ; foncer, un tempérament énervé.
         let never: Vec<&str> = never_played(&def, &seconds_in)
             .into_iter()
             .filter(|n| {
                 !matches!(
                     *n,
-                    "tenu" | "tombe" | "au_revoir" | "culbute" | "atterrit_sonne" | "etourdi"
+                    "tenu"
+                        | "tombe"
+                        | "au_revoir"
+                        | "culbute"
+                        | "atterrit_sonne"
+                        | "etourdi"
+                        | "dos_au_vent"
+                        | "fonce"
                 )
             })
             .collect();
@@ -4524,7 +5113,14 @@ mod tests {
                 .filter(|n| {
                     !matches!(
                         *n,
-                        "tenu" | "tombe" | "au_revoir" | "culbute" | "atterrit_sonne" | "etourdi"
+                        "tenu"
+                            | "tombe"
+                            | "au_revoir"
+                            | "culbute"
+                            | "atterrit_sonne"
+                            | "etourdi"
+                            | "dos_au_vent"
+                            | "fonce"
                     )
                 })
                 .collect();

@@ -63,12 +63,13 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::def::{
-    Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Inbetweens, Motion,
-    PetDef, PetMeta, Physics, PngData, Reflexes, Script, Sound, SoundCue, SpriteClip, SpritePage,
-    SpriteSheet, Transition, png_size,
+    Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Gesture, Inbetweens,
+    Motion, PetDef, PetMeta, Physics, PngData, Reflexes, Script, Sound, SoundCue, SpriteClip,
+    SpritePage, SpriteSheet, Transition, png_size,
 };
 use crate::expr::Expr;
 use crate::math::Vec2;
+use crate::temper::Temper;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
@@ -305,6 +306,9 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
             children: Vec::new(),
             sounds: cues,
             sleeping: b.sleep,
+            chew: b.chew,
+            tilt: b.tilt.unwrap_or(0.0),
+            contagious: b.contagious.unwrap_or(0.0).clamp(0.0, 1.0),
         });
     }
 
@@ -343,9 +347,13 @@ fn load_sounds(
     table
         .iter()
         .map(|(name, sound)| {
-            let (files, volume) = match sound {
-                SoundToml::One(file) => (std::slice::from_ref(file), 1.0),
-                SoundToml::Many { files, volume } => (files.as_slice(), *volume),
+            let (files, volume, mouth) = match sound {
+                SoundToml::One(file) => (std::slice::from_ref(file), 1.0, false),
+                SoundToml::Many {
+                    files,
+                    volume,
+                    mouth,
+                } => (files.as_slice(), *volume, *mouth),
             };
             if files.is_empty() {
                 return Err(format_error(format!("son « {name} » : aucun fichier")));
@@ -363,6 +371,7 @@ fn load_sounds(
                 name: name.clone(),
                 clips,
                 volume,
+                mouth,
             })
         })
         .collect()
@@ -810,17 +819,30 @@ fn parse_desktoppet_sidecar(
         }));
     }
     def.set_sounds(sounds)?;
-    for (reflex, animation) in &desktoppet.reactions {
-        let to = def.behavior_index(animation).ok_or_else(|| {
-            format_error(format!(
-                "[desktoppet.reactions] : l'animation « {animation} » n'existe pas"
-            ))
-        })?;
-        let list = vec![Transition {
-            to,
-            weight: 1.0,
-            when: Vec::new(),
-        }];
+    for (reflex, reaction) in &desktoppet.reactions {
+        let items = match reaction {
+            TransitionsToml::One(name) => vec![TransitionToml::to(name)],
+            TransitionsToml::Many(items) => items.clone(),
+        };
+        let mut list = Vec::with_capacity(items.len());
+        for item in &items {
+            let animation = &item.to;
+            let to = def.behavior_index(animation).ok_or_else(|| {
+                format_error(format!(
+                    "[desktoppet.reactions] : l'animation « {animation} » n'existe pas"
+                ))
+            })?;
+            let when = item
+                .when
+                .iter()
+                .map(|c| parse_condition(c))
+                .collect::<Result<Vec<_>, _>>()?;
+            list.push(Transition {
+                to,
+                weight: item.weight,
+                when,
+            });
+        }
         match reflex.as_str() {
             "startle" => def.reflexes.startle = list,
             "sleepy" => def.reflexes.sleepy = list,
@@ -868,6 +890,11 @@ fn parse_condition(s: &str) -> Result<Condition, LoadError> {
         "present" => Condition::Present,
         "morning" => Condition::Morning,
         "evening" => Condition::Evening,
+        "calm" => Condition::Temper(Temper::Calm),
+        "lively" => Condition::Temper(Temper::Lively),
+        "rowdy" => Condition::Temper(Temper::Rowdy),
+        "even" => Condition::Temper(Temper::Even),
+        "into_wind" => Condition::IntoWind,
         other => return Err(format_error(format!("condition inconnue « {other} »"))),
     })
 }
@@ -920,9 +947,10 @@ struct DesktopPetToml {
     #[serde(default)]
     sounds: BTreeMap<String, SoundCuesToml>,
     /// Réactions de Mouflon que le fichier ne prévoit pas : réflexe
-    /// (`startle`, `sleepy`, `wake`, `poke`) → nom de l'animation jouée.
+    /// (`startle`, `sleepy`, `wake`, `wind`, `poke`) → nom de l'animation
+    /// jouée, ou une liste `{ to, weight, when }` comme ailleurs.
     #[serde(default)]
-    reactions: BTreeMap<String, String>,
+    reactions: BTreeMap<String, TransitionsToml>,
 }
 
 #[derive(Deserialize)]
@@ -1066,6 +1094,13 @@ struct BehaviorToml {
     /// Il dort (ou s'endort) : l'utilisateur qui revient le réveille.
     #[serde(default)]
     sleep: bool,
+    /// Il mâche pendant ce comportement (rumine, couché).
+    #[serde(default)]
+    chew: bool,
+    /// Penché en avant (radians) pendant ce comportement.
+    tilt: Option<f32>,
+    /// Chance qu'un voisin de la même famille l'imite (0–1).
+    contagious: Option<f32>,
     /// Bande jouée (par défaut, celle qui porte le nom du comportement).
     strip: Option<String>,
     /// Images jouées : numéros dans la bande (ou dans la planche unique).
@@ -1251,16 +1286,27 @@ impl BehaviorToml {
                 let [vx, vy] = self.jump.unwrap_or([120.0, 520.0]);
                 Motion::Jump { vx, vy }
             }
+            "pronk" => {
+                let [vx, vy] = self.jump.unwrap_or([25.0, 420.0]);
+                Motion::Pronk { vx, vy }
+            }
+            "charge" => Motion::Charge {
+                speed: need_speed(175.0),
+            },
             "fall" => Motion::Fall,
             "land" => Motion::Land,
             "held" => Motion::Held,
-            other => {
-                return Err(format_error(format!(
-                    "comportement « {} » : mouvement inconnu « {other} » \
-                     (stand, walk, run, turn, sit, sleep, look, graze, jump, fall, land, held)",
-                    self.name
-                )));
-            }
+            other => match Gesture::from_name(other) {
+                Some(gesture) => Motion::Gesture(gesture),
+                None => {
+                    return Err(format_error(format!(
+                        "comportement « {} » : mouvement inconnu « {other} » (stand, walk, \
+                         run, charge, turn, sit, sleep, look, graze, jump, pronk, fall, land, \
+                         held, shake, stretch, paw, stamp, sniff, daze, brace, yawn, bleat)",
+                        self.name
+                    )));
+                }
+            },
         })
     }
 }
@@ -1287,6 +1333,9 @@ enum SoundToml {
         files: Vec<String>,
         #[serde(default = "one")]
         volume: f32,
+        /// Sa voix : il ouvre la bouche en le faisant entendre.
+        #[serde(default)]
+        mouth: bool,
     },
 }
 

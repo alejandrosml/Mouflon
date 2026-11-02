@@ -15,11 +15,14 @@
 
 use std::sync::Arc;
 
-use mouflon_core::{BonePose, BoneRole, PoseSignals, RUN_STRIDE, Shown, Skeleton};
+use mouflon_core::{BonePose, BoneRole, PoseSignals, Shown, Skeleton};
 use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
-use crate::animate::{about, ease, leg_phase, root_transform, rotate_about, scale_about, stepping};
+use crate::animate::{
+    Gait, about, ease, leg_phase, root_transform, rotate_about, scale_about, stepping, stride_scale,
+};
 use crate::display::{Bitmap, Command, DisplayList};
+use crate::gesture::{Gesturing, ears_turn, gesturing, leg_slot, with_posture};
 use crate::sprites::{SpriteError, coverage, decode_png_rgba};
 
 /// Pixels d'image par point affiché : deux (écrans Retina), et un quart de
@@ -337,6 +340,8 @@ impl SkeletonArt {
         };
         skip(m.walk, &mut p.walk);
         skip(m.run, &mut p.run);
+        // Une marche ou une course à clés joue aussi le trot.
+        skip(m.walk.or(m.run), &mut p.trot);
         skip(m.sit, &mut p.sit);
         skip(m.sleep, &mut p.sleep);
         skip(m.graze, &mut p.graze);
@@ -388,8 +393,10 @@ impl SkeletonArt {
     ) -> Engine {
         let f = |v: f32| f64::from(v);
         let phase = f(p.gait_phase);
-        let (walk, run, sit, sleep, air) = (f(p.walk), f(p.run), f(p.sit), f(p.sleep), f(p.air));
+        let gait = Gait::of(p);
+        let (sit, sleep, air) = (f(p.sit), f(p.sleep), f(p.air));
         let graze = ease(0.0, 1.0, f(p.graze));
+        let act = with_posture(gesturing(s), s);
         let body = self
             .role(BoneRole::Body)
             .and_then(|b| self.own[b])
@@ -401,17 +408,20 @@ impl SkeletonArt {
         let drop_back = clearance * back_down;
         let half_length = (body.width() * 0.5).max(u);
         let pitch = ((drop_front - drop_back) / (2.0 * half_length)).atan();
-        let bob = -(walk * (phase * 2.0).sin().abs() + run * 2.6 * phase.sin().abs()) * u;
-        let rock = run * 0.07 * phase.cos();
-        let body_t = Affine::translate((0.0, bob + 0.5 * (drop_front + drop_back)))
-            * rotate_about(body.center(), pitch + rock + 0.05 * graze)
-            * scale_about(g, 1.0 + 0.04 * sleep, 1.0 - 0.05 * sleep);
+        let bob = gait.bob(phase, u) + act.body_shift.y * u;
+        let rock = gait.pitch(phase, u, 2.0 * half_length);
+        let body_t =
+            Affine::translate((act.body_shift.x * u, bob + 0.5 * (drop_front + drop_back)))
+                * rotate_about(body.center(), pitch + rock + 0.05 * graze + act.body_angle)
+                * scale_about(g, 1.0 + 0.04 * sleep, 1.0 - 0.05 * sleep)
+                * scale_about(body.center(), 1.0 + act.body_squash, 1.0 - act.body_squash);
         // Les pattes : le balayage de l'appui couvre exactement la distance
         // que le corps parcourt pendant ce temps.
-        let stride =
-            if stride > 0.0 { stride } else { h * 0.9 } * (1.0 + f64::from(RUN_STRIDE) * run);
-        let duty = 0.65 + (0.38 - 0.65) * run;
+        let stride = if stride > 0.0 { stride } else { h * 0.9 } * stride_scale(s);
+        let duty = gait.duty();
         let rise = f(s.rise);
+        // Un agneau qui saute garde les pattes raides.
+        let loose = 1.0 - f(s.stiff);
         Engine {
             signals: *p,
             all: *s,
@@ -426,9 +436,11 @@ impl SkeletonArt {
             body_t,
             stride,
             duty,
-            gait: walk.max(run),
-            tuck: air * ease(0.0, 1.0, rise),
-            reach: air * ease(0.0, 1.0, -rise),
+            gait,
+            act,
+            loose,
+            tuck: air * ease(0.0, 1.0, rise) * loose,
+            reach: air * ease(0.0, 1.0, -rise) * loose,
             splay: f(s.squash).clamp(-0.15, 0.16).max(0.0) * 3.0,
             front_down,
             back_down,
@@ -454,7 +466,11 @@ struct Engine {
     body_t: Affine,
     stride: f64,
     duty: f64,
-    gait: f64,
+    gait: Gait,
+    /// Le geste en cours et la posture.
+    act: Gesturing,
+    /// 1 - raideur des pattes (un agneau qui saute les garde raides).
+    loose: f64,
     tuck: f64,
     reach: f64,
     splay: f64,
@@ -484,15 +500,22 @@ impl Engine {
             BoneRole::Body => self.body_t,
             BoneRole::Head => {
                 let rise = f(s.rise);
+                let act = &self.act;
                 let mut angle = look.y * 0.16 + 0.42 * sleep - 0.06 * air
                     + f(s.lean) * 0.3
-                    + (self.phase * 2.0).sin() * 0.035 * f(p.walk)
+                    + self.gait.nod(self.phase)
                     - 0.12 * dangle
                     - 0.12 * air * ease(0.0, 1.0, rise)
-                    + 0.1 * air * ease(0.0, 1.0, -rise);
+                    + 0.1 * air * ease(0.0, 1.0, -rise)
+                    + act.head_angle;
                 let mut shift = Vec2::new(
-                    look.x * u * 1.4,
-                    look.y * u + self.bob * 1.15 + self.drop_front + sleep * self.h * 0.06,
+                    look.x * u * 1.4 + (act.head_shift.x + act.body_shift.x) * u,
+                    look.y * u
+                        + self.bob * 1.15
+                        + self.gait.head_bob(self.phase, u)
+                        + self.drop_front
+                        + sleep * self.h * 0.06
+                        + act.head_shift.y * u,
                 );
                 if self.graze > 0.0
                     && let Some(head) = art.carried[index]
@@ -515,40 +538,57 @@ impl Engine {
                         self.graze * (lower + 0.5 * u * f(p.nibble)),
                     );
                 }
-                Affine::translate(shift) * rotate_about(at, angle)
+                // Vue de profil, la tête qui tourne paraît plus étroite.
+                let middle = art.carried[index].map_or(at, |b| b.center());
+                Affine::translate(shift)
+                    * rotate_about(at, angle)
+                    * scale_about(middle, 1.0 - act.head_squash, 1.0)
             }
             BoneRole::Ear => {
                 // La première oreille (derrière) bouge un peu moins ; elles
                 // tombent vers le bas, de quelque côté qu'elles partent.
                 let k = if rank == 0 { 0.8 } else { 1.0 } * art.side[index];
-                let droop = 0.3 * sleep + 0.15 * dangle + 0.18 * self.graze;
-                parent * rotate_about(at, k * (f(s.ear) + 0.05 * breath + droop))
+                // Pendantes au calme et en mangeant ; asymétriques sous la
+                // surprise (celle de derrière part de l'autre côté).
+                let droop = 0.3 * sleep + 0.15 * dangle + 0.1 * self.graze + 0.55 * f(s.ears_droop);
+                let pose = self.act.ear + ears_turn(self.act.ears_back);
+                let split = if rank == 0 { -1.0 } else { 1.0 } * f(s.ear_split);
+                parent
+                    * rotate_about(
+                        at,
+                        k * (f(s.ear) + 0.05 * breath + droop + pose) + art.side[index] * split,
+                    )
             }
             BoneRole::Eye => {
                 if art.painted_lids {
                     parent
                 } else {
-                    let open = (1.0 - 0.94 * f(s.blink)).max(0.06);
+                    let blink = f(s.blink);
+                    let closed = (blink + self.act.eyes * (1.0 - blink)).min(1.0);
+                    let open = (1.0 - 0.94 * closed).max(0.06);
                     parent * scale_about(at, 1.0, open)
                 }
             }
             BoneRole::Pupil => parent * Affine::translate((look.x * u * 2.6, look.y * u * 2.0)),
             BoneRole::Tail => {
-                Affine::translate((0.0, self.bob + self.drop_back))
-                    * rotate_about(at, f(s.tail) - 0.2 * dangle)
+                Affine::translate((self.act.body_shift.x * u, self.bob + self.drop_back))
+                    * rotate_about(at, f(s.tail) - 0.2 * dangle + self.act.tail)
             }
+            // Elle s'ouvre vers le bas autour de sa charnière.
+            BoneRole::Jaw => parent * rotate_about(at, 0.32 * f(s.jaw)),
             BoneRole::Leg { front, near } => {
                 let leg_len = (self.g.y - at.y).max(u * 8.0);
                 let amplitude = (self.stride * self.duty / (2.0 * leg_len)).clamp(0.1, 0.75);
-                let lift_amount = (2.2 + 3.0 * f(p.run)) * u * self.gait;
-                let cycle = self.phase + leg_phase(front, near, f(p.run));
-                let (step, raised, support) = stepping(cycle, self.duty, amplitude);
-                let mut angle = self.gait * step;
+                let lift_amount = self.gait.lift(u);
+                let moving = self.gait.moving();
+                let cycle = self.phase + leg_phase(front, near, &self.gait);
+                let (step, raised, support) = stepping(cycle, self.duty, amplitude, front);
+                let mut angle = moving * step;
                 // En l'air : repliées en montant, tendues vers le sol en descendant.
                 angle += if front {
-                    -0.15 * air + self.tuck - 0.3 * self.reach
+                    -0.15 * air * self.loose + self.tuck - 0.3 * self.reach
                 } else {
-                    0.15 * air + 0.55 * self.tuck - 0.12 * self.reach
+                    0.15 * air * self.loose + 0.55 * self.tuck - 0.12 * self.reach
                 };
                 angle += dangle * (if front { -0.1 } else { 0.12 } + f(s.swing) * 0.4);
                 // À l'atterrissage, elles s'écartent ; couché, elles se replient.
@@ -558,16 +598,19 @@ impl Engine {
                 } else {
                     -1.25 * self.back_down
                 };
-                let lift = raised * lift_amount;
+                // Le geste (gratter le sol, taper du pied, s'étirer…).
+                let (gesture_angle, gesture_lift) = self.act.legs[leg_slot(front, near)];
+                angle += gesture_angle;
+                let lift = raised * lift_amount + gesture_lift * u;
                 let drop = if front {
                     self.drop_front
                 } else {
                     self.drop_back
                 };
                 // En appui, la patte penchée s'allonge juste assez pour rester au sol.
-                let planted = self.gait * support * (1.0 / (self.gait * step).cos().max(0.5) - 1.0);
+                let planted = moving * support * (1.0 / (moving * step).cos().max(0.5) - 1.0);
                 let stretch = 1.0 + planted + 0.07 * dangle + 0.04 * air;
-                Affine::translate((0.0, drop - lift))
+                Affine::translate((self.act.body_shift.x * u, drop - lift))
                     * rotate_about(at, angle)
                     * scale_about(at, 1.0, stretch)
             }

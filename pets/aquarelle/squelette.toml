@@ -78,6 +78,14 @@ parent = "tete"
 at = [878, 480]
 role = "eye"
 
+# La mâchoire s'ouvre autour de sa charnière, sous la joue, à hauteur de la
+# bouche : pour ruminer, bêler, bâiller.
+[[bone]]
+name = "machoire"
+parent = "tete"
+at = [865, 553]
+role = "jaw"
+
 # --- Les morceaux, de l'arrière vers l'avant. Chacun fait la taille de la
 # toile (exportés tels quels) : Mouflon les recadre et les réduit.
 
@@ -108,6 +116,12 @@ image = "morceaux/corps.png"
 [[piece]]
 bone = "oreille-loin"
 image = "morceaux/oreille-loin.png"
+
+# Derrière la tête : le bas du museau (et, cachés tant que la bouche est
+# fermée, la joue qui s'étire et l'intérieur de la bouche).
+[[piece]]
+bone = "machoire"
+image = "morceaux/machoire.png"
 
 [[piece]]
 bone = "tete"

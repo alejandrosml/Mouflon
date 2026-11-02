@@ -27,11 +27,14 @@ animations = "animations.xml"
 tile = [80, 80]               # le fichier est réglé pour des images de 80 pixels
 
 # Réactions de Mouflon que le fichier desktopPet ne prévoit pas : le pointeur
-# qui file tout près le fait bondir ; quand tu t'absentes, il s'endort
-# (`sleep1a`), et se réveille à ton retour (la suite de son sommeil).
+# qui file tout près le fait bondir, ou détaler ; quand tu t'absentes, il
+# s'endort (`sleep1a`), et se réveille à ton retour (la suite de son
+# sommeil) ; un coup de vent dans le museau, il lui tourne le dos, comme les
+# moutons, sinon il baisse la tête.
 [desktoppet.reactions]
-startle = "jump"
+startle = [{ to = "jump", weight = 2 }, { to = "run_begin", weight = 1 }]
 sleepy = "sleep1a"
+wind = [{ to = "rotate1a", weight = 4, when = "into_wind" }, { to = "look_down", weight = 1 }]
 
 # Sons (enregistrements libres de droits, CC0 : voir CREDITS.md) : bêlements
 # de brebis, la clochette de son collier, le broutage du trèfle, le bain et

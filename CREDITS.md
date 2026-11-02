@@ -47,8 +47,9 @@ The rights in the characters belong to their respective owners.
 
 ### Sounds
 
-The sounds of Lainou and Pelote are cut from recordings given to the public
-domain (none requires credit; thanks to their authors all the same):
+The sounds of Lainou, Pelote, the Mannequin and Aquarelle are cut from
+recordings given to the public domain (none requires credit; thanks to their
+authors all the same):
 
 - **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>): sheep
   (#2343 to #2346), goat kids that lend their voice to Lainou the lamb (#1377
@@ -112,8 +113,9 @@ Les droits sur les personnages appartiennent à leurs auteurs respectifs.
 
 ### Sons
 
-Les sons de Lainou et de Pelote sont découpés dans des enregistrements versés
-au domaine public (aucun n'exige de mention ; merci quand même à leurs auteurs) :
+Les sons de Lainou, de Pelote, du Mannequin et d'Aquarelle sont découpés dans
+des enregistrements versés au domaine public (aucun n'exige de mention ; merci
+quand même à leurs auteurs) :
 
 - **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>) : des
   moutons (n° 2343 à 2346), des chevreaux qui prêtent leur voix à Lainou

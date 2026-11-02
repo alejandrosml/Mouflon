@@ -306,15 +306,51 @@ pub fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 pub(crate) fn builtin_mannequin() -> Result<PetDef, LoadError> {
     const TOML: &str = include_str!("../../../pets/mannequin/pet.toml");
-    const SVG: &[u8] = include_bytes!("../../../pets/mannequin/mannequin.svg");
+    /// Son dessin et ses sons, dans le programme.
+    const FILES: &[(&str, &[u8])] = &[
+        (
+            "mannequin.svg",
+            include_bytes!("../../../pets/mannequin/mannequin.svg"),
+        ),
+        (
+            "sons/mouton-1.mp3",
+            include_bytes!("../../../pets/mannequin/sons/mouton-1.mp3"),
+        ),
+        (
+            "sons/mouton-2.mp3",
+            include_bytes!("../../../pets/mannequin/sons/mouton-2.mp3"),
+        ),
+        (
+            "sons/mouton-3.mp3",
+            include_bytes!("../../../pets/mannequin/sons/mouton-3.mp3"),
+        ),
+        (
+            "sons/mouton-4.mp3",
+            include_bytes!("../../../pets/mannequin/sons/mouton-4.mp3"),
+        ),
+        (
+            "sons/broute-1.mp3",
+            include_bytes!("../../../pets/mannequin/sons/broute-1.mp3"),
+        ),
+        (
+            "sons/broute-2.mp3",
+            include_bytes!("../../../pets/mannequin/sons/broute-2.mp3"),
+        ),
+        (
+            "sons/pose-1.mp3",
+            include_bytes!("../../../pets/mannequin/sons/pose-1.mp3"),
+        ),
+        (
+            "sons/pose-2.mp3",
+            include_bytes!("../../../pets/mannequin/sons/pose-2.mp3"),
+        ),
+    ];
     parse_pet_toml(TOML, |name: &str| {
-        if name == "mannequin.svg" {
-            Ok(SVG.to_vec())
-        } else {
-            Err(LoadError::Format(format!(
-                "ressource intégrée inconnue : {name}"
-            )))
-        }
+        FILES
+            .iter()
+            .find(|(file, _)| *file == name)
+            .map(|(_, bytes)| bytes.to_vec())
+            .ok_or_else(|| LoadError::Format(format!("ressource intégrée inconnue : {name}")))
     })
 }
 
@@ -572,6 +608,11 @@ mod tests {
         std::fs::write(
             source.join("mannequin.svg"),
             include_bytes!("../../../pets/mannequin/mannequin.svg"),
+        )
+        .unwrap();
+        copy_dir(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/mannequin/sons"),
+            &source.join("sons"),
         )
         .unwrap();
 

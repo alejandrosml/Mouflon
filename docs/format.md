@@ -48,10 +48,16 @@ width = 64.0                  # largeur utilisée pour les bords et les murs
 stride = 29.0                 # distance d'un cycle de marche (défaut : 0,9 × la hauteur)
 ```
 
-Pour un dessin vectoriel, `stride` règle la cadence des pas : les pattes
-balaient juste ce qu'il faut pour que les sabots ne glissent pas, et une
-foulée d'environ 1,6 fois la longueur des pattes donne un pas naturel. Au
-galop, la foulée s'allonge d'elle-même.
+Pour un dessin vectoriel ou un squelette, `stride` règle la cadence des pas :
+les pattes balaient juste ce qu'il faut pour que les sabots ne glissent pas,
+et une foulée d'environ 1,6 fois la longueur des pattes donne un pas naturel.
+L'allure se choisit d'elle-même d'après la vitesse rapportée à la longueur
+des pattes, comme chez les vrais quadrupèdes (voir
+[animation-animale.md](animation-animale.md)) : le pas jusqu'à 2,6 longueurs
+de patte par seconde, le trot (pattes par paires diagonales, foulée à peine
+plus longue) vers 3,4, le galop (le galop transverse des moutons, foulée
+presque deux fois plus longue) au-delà de 4,6. Un comportement `trot` n'est
+donc qu'un `walk` plus rapide.
 
 ## Comportements
 
@@ -77,8 +83,53 @@ on_window_side = "turn"       # le côté d'une fenêtre barre le chemin (sinon 
 
 Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit` (couché pour
 un dessin vectoriel), `sleep`, `look` (regarde autour de lui), `graze` (broute,
-la tête au sol), `jump` (avec `jump = [vers l'avant, vers le haut]` en pt/s),
-`fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur).
+la tête au sol, une bouchée par seconde, et de temps en temps un pas vers
+l'herbe suivante), `jump` (avec `jump = [vers l'avant, vers le haut]` en pt/s),
+`fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur),
+`charge` (il fonce, tête basse, oreilles couchées ; `speed`, 175 pt/s par
+défaut) et `pronk` (saut d'agneau : droit en l'air, les quatre pattes raides ;
+`jump`, `[25, 420]` par défaut).
+
+Gestes sur place, que le moteur anime de lui-même pour un dessin vectoriel
+ou un squelette (`duration` dit combien de temps ils durent) : `shake`
+(s'ébroue : une secousse six fois par seconde, de la tête à la queue),
+`stretch` (s'étire : le cou tendu, puis une patte arrière ; 2,4 s),
+`scratch` (se gratte d'un sabot arrière), `paw` (gratte le sol d'un sabot de
+devant, tête basse), `stamp` (tape du pied, tête haute : l'alarme), `sniff`
+(renifle, le museau tendu), `daze` (sonné : la tête tourne, les yeux
+mi-clos), `brace` (contre le vent : tête basse, oreilles couchées, serré sur
+ses pattes), `yawn` (bâille ; 1,6 s), `bleat` (bêle, la bouche ouverte).
+`pets/mannequin/pet.toml` les montre tous.
+
+D'autres clés d'un comportement :
+
+```toml
+[[behavior]]
+name = "ruminate"
+motion = "sit"
+chew = true                   # il mâche : couché, il rumine bol après bol
+duration = [10.0, 24.0]
+
+[[behavior]]
+name = "walk"
+motion = "walk"
+speed = 46.0
+contagious = 0.25             # un voisin de la même famille l'imite une fois sur quatre
+
+[[behavior]]
+name = "fonce"
+strip = "course"
+tilt = 0.12                   # penché en avant (radians) : un animal en images qui fonce
+```
+
+Un comportement contagieux (`contagious`, de 0 à 1) se propage : chaque
+voisin de la même famille (`category`), à moins de quatre largeurs et à la
+même hauteur, qui a un comportement du même nom l'imite avec cette chance,
+dans les cinq secondes, s'il est debout, à marcher, à brouter ou à regarder
+autour de lui. Il part alors du même côté : un mouton qui part entraîne les
+autres, un bâillement en appelle un autre, l'alerte gagne le troupeau. Celui
+qui vient d'imiter n'imite plus pendant 25 secondes, et ce qu'il imite ne se
+propage pas plus loin.
 
 Les poids sont relatifs : `weight = 4` contre `weight = 1` donne quatre
 chances sur cinq. Une transition dont la condition est fausse est ignorée.
@@ -87,7 +138,25 @@ Conditions (`when`, une seule ou une liste) : `on_window`, `on_floor`,
 `night` (22 h – 6 h), `day`, `morning` (6 h – 11 h), `evening` (18 h – 22 h),
 `cursor_near:220`, `cursor_far:220` (rayon en points), `typing` (l'utilisateur
 tape au clavier : une touche il y a moins de 3 s), `away` (personne au clavier,
-à la souris ni au trackpad depuis 3 minutes), `present` (le contraire).
+à la souris ni au trackpad depuis 3 minutes), `present` (le contraire),
+`into_wind` (un coup de vent lui souffle dans le museau), et le tempérament
+de l'animal, réglé dans les réglages : `calm`, `lively` (actif), `rowdy`
+(énervé), `even` (tel que son auteur l'a fait).
+
+```toml
+next = [
+    { to = "walk", weight = 6 },
+    { to = "paw", weight = 4, when = "rowdy" },      # un énervé gratte le sol avant de foncer
+    { to = "pronk", weight = 3, when = "lively" },   # un actif saute comme un agneau
+    { to = "ruminate", weight = 3, when = "calm" },  # un calme se couche pour ruminer
+]
+```
+
+Le tempérament change aussi, de lui-même, ce que l'animal choisit le plus
+volontiers (le repos pour un calme, l'élan pour un actif ou un énervé) et
+combien de temps il y reste ; il change sa posture (oreilles dressées et
+tête basse d'un énervé, oreilles pendantes d'un calme) et le rythme de ses
+oreilles et de sa queue.
 Mouflon sait *quand* une touche est frappée, jamais *laquelle* : le système le
 dit à tous les programmes, sans autorisation.
 
@@ -120,6 +189,9 @@ sleepy = "yawn"               # l'utilisateur est parti : il s'installe pour dor
 wake = "wake_up"              # l'utilisateur revient pendant qu'il dort (sinon : la suite de son sommeil)
 wind = "look"                 # un coup de vent se lève (une surprise)
 ```
+
+Un mouton tourne le dos au vent : `wind = [{ to = "turn_away", weight = 4,
+when = "into_wind" }, { to = "brace", weight = 1 }]`.
 
 Les animaux s'endorment l'un après l'autre (dans les 40 s) quand
 l'utilisateur part, se rendorment s'ils se réveillent avant son retour, et
@@ -308,6 +380,15 @@ sound = [{ name = "clochette", frame = 2, chance = 0.15 }]   # sur la troisième
 fps = 14
 ```
 
+Un son qui est la voix de l'animal le dit avec `mouth = true` : il ouvre la
+bouche en le faisant entendre (s'il a une mâchoire, voir rig.md et
+squelette.md).
+
+```toml
+[sounds]
+bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3"], volume = 0.7, mouth = true }
+```
+
 Les sons se coupent dans le menu (« Sons »).
 
 ## Animaux desktopPet
@@ -406,6 +487,8 @@ voir les réflexes) :
 [desktoppet.reactions]
 startle = "jump"              # le pointeur file tout près : il bondit
 sleepy = "sleep1a"            # l'utilisateur est parti : il s'endort
+# Une liste, comme ailleurs : le vent dans le museau, il lui tourne le dos.
+wind = [{ to = "rotate1a", weight = 4, when = "into_wind" }, { to = "look_down", weight = 1 }]
 ```
 
 Sans `sleepy`, un animal desktopPet s'endort avec sa première animation de

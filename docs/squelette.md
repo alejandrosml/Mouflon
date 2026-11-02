@@ -100,9 +100,18 @@ Un `role` dit ce que le moteur fait de l'os de lui-même :
 | `ear` | bat en tombant, frémit, tombe en dormant | base de l'oreille |
 | `eye` | cligne (s'écrase, ou laisse place à une paupière peinte), se ferme en dormant | milieu de l'œil |
 | `pupil` | suit le curseur | — |
+| `jaw` | s'ouvre pour mâcher, ruminer, bêler, bâiller (enfant de la tête) | la charnière, sous la joue, à hauteur de la bouche |
 | `tail` | se balance, bat de temps en temps | base de la queue |
-| `leg-front-near`, `leg-back-near` | pas, galop, sauts, pattes repliées couché | hanche ou épaule |
+| `leg-front-near`, `leg-back-near` | pas, trot, galop, sauts, gestes (gratter le sol, taper du pied, se gratter), pattes repliées couché | hanche ou épaule |
 | `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
+
+La mâchoire d'Aquarelle est un morceau posé **derrière** la tête : le bas du
+museau, peint comme la tête l'aurait peint, et au-dessus, cachés tant que la
+bouche est fermée, la joue qui s'étire et l'intérieur de la bouche, langue
+en bas. La tête a l'encoche de la mâchoire (et la recouvre d'un rien sur ses
+bords, pour qu'aucune jointure ne laisse passer le jour) : bouche fermée, on
+ne voit rien ; ouverte, l'intérieur apparaît entre les lèvres. Voir
+`paint_jaw` dans `tools/mouflon-peintre`.
 
 `near` : le côté qu'on voit ; `far` : l'autre. Une patte balaie juste ce
 qu'il faut pour ne pas glisser : sa longueur est la distance de son

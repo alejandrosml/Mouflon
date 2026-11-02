@@ -45,6 +45,9 @@ pub enum BoneRole {
     /// l'autre) : sans animation de marche, le moteur la fait marcher, en
     /// tournant autour de sa hanche (l'articulation de l'os).
     Leg { front: bool, near: bool },
+    /// La mâchoire du bas : elle s'ouvre autour de son articulation (la
+    /// charnière, près de la joue) quand il mâche, bêle ou bâille.
+    Jaw,
 }
 
 impl BoneRole {
@@ -56,6 +59,7 @@ impl BoneRole {
             "tail" => Self::Tail,
             "eye" => Self::Eye,
             "pupil" => Self::Pupil,
+            "jaw" => Self::Jaw,
             "leg-front-near" => Self::Leg {
                 front: true,
                 near: true,

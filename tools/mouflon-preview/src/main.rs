@@ -5,7 +5,7 @@
 //! resvg. Sert à juger le rendu et la fluidité sans lancer l'app.
 //!
 //! ```text
-//! cargo run -p mouflon-preview --release -- <pet.toml|animations.xml> <dossier> [video|poses|all|icon]
+//! cargo run -p mouflon-preview --release -- <pet.toml|animations.xml> <dossier> [video|poses|gestes|all|icon]
 //! cargo run -p mouflon-preview --release -- <animal> <dossier> troupeau [secondes] [nombre]
 //! ```
 //!
@@ -36,8 +36,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mouflon_core::{
-    Flock, Input, LedgeOptions, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals, Rect,
-    Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
+    Flock, Gesture, Input, LedgeOptions, Particle, ParticleKind, Pet, PetEvent, PetView,
+    PoseSignals, Rect, Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
 };
 use mouflon_render::display::{Command, DisplayList, Paint, Stop, rgba};
 use mouflon_render::kurbo::{Affine, BezPath, Circle, Point, Rect as KRect, RoundedRect, Shape};
@@ -81,6 +81,11 @@ fn main() -> Result<(), Error> {
         let path = out_dir.join("poses.png");
         render_poses(&art, &path)?;
         println!("planche de poses : {}", path.display());
+    }
+    if mode == "gestes" || mode == "all" {
+        let path = out_dir.join("gestes.png");
+        render_gestures(&art, &path)?;
+        println!("planche des allures et des gestes : {}", path.display());
     }
     if mode == "video" || mode == "all" || mode == "troupeau" {
         let frames = out_dir.join("frames");
@@ -1289,10 +1294,13 @@ fn paint_cursor(list: &mut DisplayList, c: Vec2, grabbing: bool) {
 
 // ---------------------------------------------------------------- poses
 
-fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
+type PoseCase = (PoseSignals, f32, Option<f32>, Vec<Particle>);
+
+/// Une planche de poses, `cols` par rangée, sur un fond clair.
+fn draw_cases(art: &PetArt, path: &Path, cases: Vec<PoseCase>, cols: u32) -> Result<(), Error> {
     let cell_w = 420.0_f32;
     let cell_h = 380.0_f32;
-    let (cols, rows) = (3u32, 3u32);
+    let rows = (cases.len() as u32).div_ceil(cols);
     let zoom = 3.4_f64;
     let width = (cell_w * cols as f32) as u32;
     let height = (cell_h * rows as f32) as u32;
@@ -1316,7 +1324,45 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             extend: Extend::Pad,
         },
     );
+    for (i, (pose, facing, shadow, particles)) in cases.into_iter().enumerate() {
+        let col = i as u32 % cols;
+        let row = i as u32 / cols;
+        let ground_px = Vec2::new(
+            col as f32 * cell_w + cell_w / 2.0,
+            row as f32 * cell_h + cell_h - 70.0,
+        );
+        let lift = shadow.unwrap_or(0.0);
+        let frame = Frame {
+            origin: Vec2::new(-ground_px.x / zoom as f32, -ground_px.y / zoom as f32),
+            scale: zoom,
+        };
+        let particles: Vec<Particle> = particles
+            .into_iter()
+            .map(|p| Particle {
+                pos: p.pos + Vec2::new(0.0, -lift),
+                ..p
+            })
+            .collect();
+        let view = PetView {
+            id: i as u32,
+            ground: Vec2::new(0.0, -lift),
+            facing,
+            pose,
+            shadow: shadow.map(|d| Shadow::on(0.0, d)),
+            sprite_frame: None,
+            sprite_offset_y: 0.0,
+            opacity: 1.0,
+            particles: &particles,
+            support: Support::Air,
+            behavior: "",
+            grip: None,
+        };
+        paint_pet(art, &view, &frame, &Style::default(), &mut list);
+    }
+    rasterize(&list, path)
+}
 
+fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
     let bubbles = [
         Particle {
             kind: ParticleKind::Bubble,
@@ -1352,7 +1398,6 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
         })
         .collect();
 
-    type PoseCase = (PoseSignals, f32, Option<f32>, Vec<Particle>);
     let base = PoseSignals {
         look: Vec2::new(0.35, 0.05),
         ..PoseSignals::default()
@@ -1465,42 +1510,94 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
         ),
     ];
 
-    for (i, (pose, facing, shadow, particles)) in cases.into_iter().enumerate() {
-        let col = i as u32 % cols;
-        let row = i as u32 / cols;
-        let ground_px = Vec2::new(
-            col as f32 * cell_w + cell_w / 2.0,
-            row as f32 * cell_h + cell_h - 70.0,
-        );
-        let lift = shadow.unwrap_or(0.0);
-        let frame = Frame {
-            origin: Vec2::new(-ground_px.x / zoom as f32, -ground_px.y / zoom as f32),
-            scale: zoom,
-        };
-        let particles: Vec<Particle> = particles
-            .into_iter()
-            .map(|p| Particle {
-                pos: p.pos + Vec2::new(0.0, -lift),
-                ..p
-            })
-            .collect();
-        let view = PetView {
-            id: i as u32,
-            ground: Vec2::new(0.0, -lift),
-            facing,
-            pose,
-            shadow: shadow.map(|d| Shadow::on(0.0, d)),
-            sprite_frame: None,
-            sprite_offset_y: 0.0,
-            opacity: 1.0,
-            particles: &particles,
-            support: Support::Air,
-            behavior: "",
-            grip: None,
-        };
-        paint_pet(art, &view, &frame, &Style::default(), &mut list);
-    }
-    rasterize(&list, path)
+    draw_cases(art, path, cases, 3)
+}
+
+/// Les allures et les gestes animés par le moteur : trot, élan d'un énervé,
+/// saut d'agneau, puis chaque geste à un moment parlant.
+fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
+    let base = PoseSignals {
+        look: Vec2::new(0.35, 0.05),
+        breath: 0.2,
+        ..PoseSignals::default()
+    };
+    let gesture = |g: Gesture, time: f32| PoseSignals {
+        gesture: Some(g),
+        gesture_amount: 1.0,
+        gesture_time: time,
+        jaw: match g {
+            Gesture::Yawn => 1.0,
+            Gesture::Bleat => 0.65,
+            _ => 0.0,
+        },
+        ..base
+    };
+    let ground = |pose: PoseSignals| -> PoseCase { (pose, 1.0, Some(0.0), vec![]) };
+    let cases: Vec<PoseCase> = vec![
+        // Trot : une paire diagonale à l'appui, puis l'autre.
+        ground(PoseSignals {
+            walk: 1.0,
+            trot: 1.0,
+            stride_scale: 1.5,
+            gait_phase: TAU * 0.05,
+            ..base
+        }),
+        ground(PoseSignals {
+            walk: 1.0,
+            trot: 1.0,
+            stride_scale: 1.5,
+            gait_phase: TAU * 0.55,
+            ..base
+        }),
+        // Il fonce, tête basse, oreilles couchées.
+        ground(PoseSignals {
+            walk: 1.0,
+            run: 1.0,
+            stride_scale: 2.2,
+            gait_phase: TAU * 0.35,
+            lean: 0.08,
+            head_low: 1.0,
+            ears_back: 0.9,
+            ..base
+        }),
+        // Saut d'agneau : pattes raides.
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                stiff: 1.0,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
+        ground(gesture(Gesture::Shake, 0.55)),
+        ground(gesture(Gesture::Shake, 0.61)),
+        ground(gesture(Gesture::Stretch, 0.75)),
+        ground(gesture(Gesture::Stretch, 1.65)),
+        ground(gesture(Gesture::Paw, 0.1)),
+        ground(gesture(Gesture::Paw, 0.45)),
+        ground(gesture(Gesture::Stamp, 0.25)),
+        ground(gesture(Gesture::Sniff, 0.6)),
+        ground(gesture(Gesture::Daze, 0.5)),
+        ground(gesture(Gesture::Brace, 0.8)),
+        ground(gesture(Gesture::Yawn, 0.9)),
+        ground(gesture(Gesture::Bleat, 0.4)),
+        ground(gesture(Gesture::Scratch, 0.8)),
+        // Aux aguets (oreilles dressées), puis couché qui rumine (mâchoire).
+        ground(PoseSignals {
+            ears_back: -1.0,
+            look: Vec2::new(0.8, -0.3),
+            ..base
+        }),
+        ground(PoseSignals {
+            sit: 1.0,
+            jaw: 0.22,
+            ..base
+        }),
+    ];
+    draw_cases(art, path, cases, 4)
 }
 
 // ---------------------------------------------------------------- export

@@ -2,11 +2,13 @@
 
 Un personnage Mouflon est un **dessin SVG découpé en calques nommés**. Le
 moteur anime ces calques lui-même : marche au pas (un pied après l'autre, les
-sabots posés sans glisser) et galop par bonds, couché (l'avant se plie
-d'abord, il se relève par l'arrière), sommeil, broutage la tête au sol,
-sauts les pattes repliées, atterrissage, regard, respiration, clignements,
-oreilles qui frémissent et queue qui bat de temps en temps. Tu dessines une
-seule pose de profil, il fait le reste.
+sabots posés sans glisser), trot par paires diagonales et galop transverse,
+couché (l'avant se plie d'abord, il se relève par l'arrière), sommeil,
+broutage la tête au sol, rumination, sauts les pattes repliées ou raides,
+atterrissage, regard, respiration, clignements, oreilles qui frémissent et
+queue qui bat de temps en temps, et une dizaine de gestes (s'ébrouer,
+s'étirer, se gratter, bâiller, bêler, taper du pied…). Tu dessines une seule
+pose de profil, il fait le reste.
 
 Le vectoriel n'a pas de résolution : dessine à la taille qui te convient, le
 moteur le met à l'échelle (`height` dans `pet.toml`) et il reste net sur
@@ -34,11 +36,19 @@ Toutes sont facultatives.
 | `ear-near`, `ear-far` | battent en tombant, frémissent, tombent en dormant | base de l'oreille |
 | `eyes` (dans `head`) | clignements, yeux fermés en dormant | centre des yeux |
 | `pupils` (dans `eyes`) | suivent le curseur | — |
+| `jaw` (dans `head`) | s'ouvre pour mâcher, ruminer, bêler, bâiller | la charnière, sous la joue, à hauteur de la bouche |
 | `tail` | balancement, coups de queue | base de la queue |
 | `leg-front-near`, `leg-back-near` | pas, galop, sauts, pattes repliées couché | hanche ou épaule |
 | `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
 
 `near` = côté visible (devant le corps), `far` = côté caché (derrière le corps).
+
+La mâchoire se dessine **sous** la tête (avant elle dans le groupe `head`) :
+le bas du museau, et au-dessus, cachés par la tête tant que la bouche est
+fermée, l'intérieur de la bouche (langue en bas) et la joue qui s'étire. Le
+tracé de la tête a l'encoche de la mâchoire, sans contour le long de
+l'encoche : bouche fermée, on ne voit rien ; ouverte, l'intérieur apparaît
+entre les lèvres. Voir le groupe `jaw` de `pets/mannequin/mannequin.svg`.
 
 ## Pivots
 

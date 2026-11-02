@@ -4,7 +4,7 @@
 //! seulement ce qu'il choisit le plus volontiers parmi ce que son auteur a
 //! prévu, et combien de temps il y reste.
 
-use crate::def::{Behavior, Motion, Script};
+use crate::def::{Behavior, Gesture, Motion, Script};
 
 /// L'allure d'un comportement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,8 +61,21 @@ impl Energy {
             Motion::Stand | Motion::Sit | Motion::Look | Motion::Graze => Self::Rest,
             Motion::Sleep => Self::Sleep,
             Motion::Walk { .. } => Self::Walk,
-            Motion::Run { .. } | Motion::Jump { .. } => Self::Dash,
+            Motion::Run { .. }
+            | Motion::Charge { .. }
+            | Motion::Jump { .. }
+            | Motion::Pronk { .. } => Self::Dash,
             Motion::Turn | Motion::Fall | Motion::Land | Motion::Held => Self::Neutral,
+            Motion::Gesture(gesture) => match gesture {
+                Gesture::Shake
+                | Gesture::Stretch
+                | Gesture::Yawn
+                | Gesture::Brace
+                | Gesture::Scratch => Self::Rest,
+                Gesture::Paw | Gesture::Stamp | Gesture::Sniff | Gesture::Daze | Gesture::Bleat => {
+                    Self::Neutral
+                }
+            },
             Motion::Script(script) => {
                 Self::by_name(&behavior.name).unwrap_or_else(|| Self::by_steps(script))
             }

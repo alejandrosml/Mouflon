@@ -36,6 +36,19 @@ throw them across the desktop.
   reaches the display (ProMotion included), sub-pixel motion, in-between
   images for smoother animations, sharp pixel-exact images at rest, soft
   shadows, dust on landing.
+- **Lifelike**: the drawn and painted sheep move the way real sheep do,
+  after a broad review of the studies on sheep and quadrupeds (gaits,
+  behavior, emotions) and of the best animation techniques: a walk in
+  lateral sequence, a trot in diagonal pairs and the transverse gallop of
+  sheep, chosen by speed relative to leg length, hooves that never slide;
+  grazing one bite a second with a step to the next tuft, chewing the cud
+  bolus after bolus; shaking off at 6 Hz, stretching on getting up,
+  scratching, yawning, bleating mouth open, stamping, pawing before a
+  charge, lamb leaps; ears that tell their mood (raised when angry, back
+  when afraid or in the wind, drooping when calm, lopsided when surprised);
+  a flock that follows the one who sets off, catches yawns and alarms, and
+  turns its back to the wind. All of it, with its sources:
+  [docs/animation-animale.md](docs/animation-animale.md) (in French).
 - **Compatible with desktopPet**: Mouflon reads the pets of
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 and the
   community's pets) as they are, with all their scenes: climbing the screen
@@ -60,7 +73,8 @@ throw them across the desktop.
 | **Poete** | The mascot of Mouflon, a painted sheep. It lives in its own repository and waits for the permission of its original creator before being shared. |
 | **Pelote** | A soft wool sheep with a collar and a bell (`pets/pelote`): the desktopPet behaviors, drawn in high definition. |
 | **Lainou** | A small wool sheep with a bell (`pets/lainou`): 26 animations drawn frame by frame, in both directions. |
-| Mannequin | The built-in example: a sheep drawn as a vector rig (slate-blue head, after the Bleu du Maine breed) and animated by Mouflon (`pets/mannequin`). |
+| **Aquarelle** | A ewe painted in watercolor (`pets/aquarelle`): a dozen painted pieces on a skeleton, jaw included, animated entirely by Mouflon. |
+| Mannequin | The built-in example: a sheep drawn as a vector rig (slate-blue head, after the Bleu du Maine breed) and animated by Mouflon (`pets/mannequin`); its `pet.toml` shows every gesture the engine can animate. |
 
 ### Requirements
 
@@ -311,7 +325,7 @@ its behaviors: [docs/format.md](docs/format.md) (all in French).
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; everything as pieces of image (rigs, shadows and discs baked with tiny-skia); SVG output | forbidden |
 | `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating screen windows, Core Animation layers and the display clock, settings window, gallery and a pet's menu (AppKit), the menu bar icon, Mouflon's windows in front of its pets, keyboard shortcuts in every app (Carbon hot keys) and the Escape key (Accessibility), opening at login | isolated and commented |
 | `mouflon-app` | one transparent window per screen (winit), the display thread (flock, scene of layers, timing), GPU renderer for systems without layers (wgpu), input, native menu, translations | forbidden |
-| `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
+| `tools/mouflon-preview` | off-screen preview: poses, gaits and gestures, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
 | `tools/essai` | the three-minute trial (a double-clickable script) and the reading of its journal and surroundings (Python script) | — |
@@ -335,6 +349,9 @@ ffmpeg -framerate 60 -i apercu/frames/frame_%05d.png -c:v libx264 -pix_fmt yuv42
 # Several pets at their spawn points (30 s, 4 pets):
 cargo run -p mouflon-preview --release -- pets/pelote/pet.toml apercu troupeau 30 4
 
+# The gaits and every gesture of a drawn or painted pet, on one sheet:
+cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
+
 # Two Lainou bumping into each other, then a throw; and all its images as
 # Mouflon draws them, in both directions:
 cargo run -p mouflon-preview --release -- pets/lainou/pet.toml apercu rencontre
@@ -353,6 +370,10 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 - A livelier flying saucer: hit by a thrown pet, it smokes, then flees at full
   speed or crashes to the ground (hitting only its beam does nothing).
+- More of real sheep life: the flock gathering together from time to time,
+  lambs at play (twisting leaps, races, head butts), a ram backing up before
+  it charges, sleep with the head on the flank (see
+  [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
 
@@ -398,6 +419,20 @@ se laissent attraper et lancer à travers le bureau.
   près, des images intermédiaires pour des animations plus fluides, des
   images nettes au pixel près au repos, des ombres douces, de la poussière à
   l'atterrissage.
+- **Vivant** : les moutons dessinés et peints bougent comme de vrais
+  moutons, d'après une large revue des études sur le mouton et les
+  quadrupèdes (allures, comportement, émotions) et des meilleures techniques
+  d'animation : un pas en séquence latérale, un trot par paires diagonales et
+  le galop transverse des moutons, choisis d'après la vitesse rapportée à la
+  longueur des pattes, des sabots qui ne glissent jamais ; une bouchée par
+  seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
+  après bol ; l'ébrouement à 6 Hz, l'étirement en se relevant, le grattage,
+  le bâillement, le bêlement bouche ouverte, le pied qui tape, le sol gratté
+  avant une charge, les sauts d'agneau ; des oreilles qui disent l'humeur
+  (dressées de colère, en arrière de peur ou dans le vent, pendantes au
+  calme, asymétriques de surprise) ; un troupeau qui suit celui qui part,
+  attrape les bâillements et les alertes, et tourne le dos au vent. Tout
+  cela, avec ses sources : [docs/animation-animale.md](docs/animation-animale.md).
 - **Compatible desktopPet** : Mouflon lit tels quels les animaux de
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 et ceux
   de la communauté), avec toutes leurs scènes : escalade des bords de l'écran,
@@ -424,7 +459,8 @@ se laissent attraper et lancer à travers le bureau.
 | **Poete** | La mascotte de Mouflon, un mouton peint. Il vit dans son propre dépôt et attend l'accord de son créateur d'origine avant d'être partagé. |
 | **Pelote** | Un mouton tout en laine douce, avec son collier et sa clochette (`pets/pelote`) : les comportements de desktopPet, dessinés en haute définition. |
 | **Lainou** | Un petit mouton de laine à clochette (`pets/lainou`) : 26 animations dessinées image par image, dans les deux sens. |
-| Mannequin | L'exemple intégré : un mouton dessiné en vecteurs (tête bleu ardoise, d'après la race Bleu du Maine) et animé par Mouflon (`pets/mannequin`). |
+| **Aquarelle** | Une brebis peinte à l'aquarelle (`pets/aquarelle`) : une douzaine de morceaux peints sur un squelette, mâchoire comprise, animés tout entiers par Mouflon. |
+| Mannequin | L'exemple intégré : un mouton dessiné en vecteurs (tête bleu ardoise, d'après la race Bleu du Maine) et animé par Mouflon (`pets/mannequin`) ; son `pet.toml` montre tous les gestes que le moteur sait animer. |
 
 ### Prérequis
 
@@ -693,7 +729,7 @@ squelette) ; pour régler ses comportements : [docs/format.md](docs/format.md).
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; tout en morceaux d'image (rigs, ombres et disques cuits avec tiny-skia) ; sortie SVG | interdit |
 | `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'écran non activantes, calques Core Animation et horloge de l'écran, fenêtre des réglages, galerie et menu d'un animal (AppKit), icône de la barre des menus, fenêtres de Mouflon devant ses animaux, raccourcis clavier dans toutes les apps (« hot keys » de Carbon) et touche Échap (Accessibilité), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | une fenêtre transparente par écran (winit), le fil de l'affichage (troupeau, scène de calques, rythme), dessin sur le GPU pour les systèmes sans calques (wgpu), entrées, menu natif, traductions | interdit |
-| `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
+| `tools/mouflon-preview` | aperçu hors écran : poses, allures et gestes, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |
 | `tools/essai` | l'essai de trois minutes (un script à double-cliquer) et la lecture de son journal et de ses alentours (script Python) | — |
@@ -718,6 +754,9 @@ ffmpeg -framerate 60 -i apercu/frames/frame_%05d.png -c:v libx264 -pix_fmt yuv42
 # Plusieurs animaux à leurs points d'apparition (30 s, 4 animaux) :
 cargo run -p mouflon-preview --release -- pets/pelote/pet.toml apercu troupeau 30 4
 
+# Les allures et tous les gestes d'un animal dessiné ou peint, sur une planche :
+cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
+
 # Deux Lainou qui se rentrent dedans, puis un lancer ; et toutes ses images
 # telles que Mouflon les dessine, dans les deux sens :
 cargo run -p mouflon-preview --release -- pets/lainou/pet.toml apercu rencontre
@@ -737,6 +776,10 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 - Une soucoupe volante plus vivante : percutée par un animal lancé, elle fume,
   puis s'enfuit en trombe ou s'écrase au sol (viser seulement son rayon ne lui
   fait rien).
+- Davantage de la vie des moutons : le troupeau qui se regroupe de temps en
+  temps, les jeux d'agneaux (sauts tordus, courses, coups de front), le
+  bélier qui recule avant de charger, le sommeil la tête sur le flanc (voir
+  [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.
 

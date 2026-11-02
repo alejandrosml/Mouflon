@@ -118,6 +118,25 @@ aucune par la faute de Mouflon) :
 - **la taille du premier lancement** d'après l'écran principal (grande sur
   un écran Retina d'au moins 1 600 points, normale ailleurs).
 
+Le soir du 2 novembre, les moutons bougent comme de vrais moutons (voir
+[animation-animale.md](animation-animale.md), qui rassemble ce que disent
+les études et ce que font les jeux) :
+- **les allures** (`animate.rs`) : le pas en séquence latérale du mouton,
+  le trot par paires diagonales, le galop transverse, mêlés selon la
+  vitesse rapportée à la longueur des pattes ; le corps qui se balance au
+  pas (croupe et garrot tour à tour), rebondit au trot, bascule au galop ;
+- **les gestes** (`gesture.rs`) : dix gestes sur place, décrits une fois
+  pour les rigs et les squelettes (ce que chacun ajoute à chaque partie) ;
+- **la mâchoire** (`Part::Jaw`, rôle `jaw`) : elle mâche en broutant,
+  rumine bol après bol, s'ouvre pour bêler ou bâiller ; posée derrière la
+  tête, avec l'intérieur de la bouche caché tant qu'elle est fermée ;
+- **les oreilles qui disent l'humeur**, le pas en broutant, les clignements
+  au rythme d'une paupière, la respiration d'un mouton ;
+- **l'imitation entre voisins** (`Flock::echo`) : un comportement
+  `contagious` se propage aux voisins de la même famille (suivre celui qui
+  part, l'alerte, le bâillement), sans va-et-vient. Mille animaux en tas :
+  toujours 1,4 ms par pas.
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
 plus d'animaux, et la soucoupe qu'on peut percuter.

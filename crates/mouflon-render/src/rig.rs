@@ -36,10 +36,13 @@ pub enum Part {
     LegFrontFar,
     LegBackNear,
     LegBackFar,
+    /// La mâchoire du bas (facultative), portée par la tête : elle s'ouvre
+    /// autour de son articulation, près de la joue.
+    Jaw,
 }
 
 impl Part {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Body,
         Self::Head,
         Self::EarNear,
@@ -51,6 +54,7 @@ impl Part {
         Self::LegFrontFar,
         Self::LegBackNear,
         Self::LegBackFar,
+        Self::Jaw,
     ];
 
     #[must_use]
@@ -67,6 +71,7 @@ impl Part {
             Self::LegFrontFar => "leg-front-far",
             Self::LegBackNear => "leg-back-near",
             Self::LegBackFar => "leg-back-far",
+            Self::Jaw => "jaw",
         }
     }
 
@@ -187,6 +192,8 @@ impl Rig {
             Part::EarNear | Part::EarFar => Point::new(b.center().x, b.max_y()),
             Part::Tail => Point::new(b.max_x(), b.center().y),
             Part::Body => Point::new(b.center().x, b.max_y()),
+            // La charnière : l'arrière de la mâchoire, vers la joue.
+            Part::Jaw => Point::new(b.min_x(), b.min_y() + b.height() * 0.3),
             _ => b.center(),
         }
     }

@@ -467,6 +467,83 @@ pub enum Motion {
     Held,
     /// Déplacement image par image façon desktopPet (voir [`Script`]).
     Script(Arc<Script>),
+    /// Fonce au galop, tête baissée et oreilles couchées : l'élan d'un
+    /// animal énervé, qui bouscule celui qu'il atteint.
+    Charge {
+        speed: f32,
+    },
+    /// Saute sur place, pattes raides, en secouant la tête : le jeu des
+    /// agneaux (vitesses comme pour [`Motion::Jump`]).
+    Pronk {
+        vx: f32,
+        vy: f32,
+    },
+    /// Un geste sur place, que le moteur anime de lui-même (voir [`Gesture`]).
+    Gesture(Gesture),
+}
+
+/// Un geste sur place, animé par le moteur pour les animaux dessinés en
+/// vecteurs ou en squelette (voir `docs/animation-animale.md` pour ce qu'en
+/// disent les études sur les moutons).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Gesture {
+    /// S'ébroue : une secousse qui part de la tête et file jusqu'à la queue.
+    Shake,
+    /// S'étire en se levant : le cou tendu, puis une patte arrière.
+    Stretch,
+    /// Gratte le sol d'un sabot de devant.
+    Paw,
+    /// Tape du pied, tête haute : l'alarme des moutons.
+    Stamp,
+    /// Renifle, le museau tendu.
+    Sniff,
+    /// Sonné : la tête tourne, les yeux mi-clos.
+    Daze,
+    /// Se protège (du vent) : tête basse, oreilles couchées.
+    Brace,
+    /// Bâille, tête levée, la bouche grande ouverte.
+    Yawn,
+    /// Bêle, tête levée, la bouche ouverte.
+    Bleat,
+    /// Se gratte d'un sabot arrière, à petits coups rapides.
+    Scratch,
+}
+
+impl Gesture {
+    pub const ALL: [Self; 10] = [
+        Self::Shake,
+        Self::Stretch,
+        Self::Paw,
+        Self::Stamp,
+        Self::Sniff,
+        Self::Daze,
+        Self::Brace,
+        Self::Yawn,
+        Self::Bleat,
+        Self::Scratch,
+    ];
+
+    /// Son nom dans un `pet.toml` (`motion = "shake"`…).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Shake => "shake",
+            Self::Stretch => "stretch",
+            Self::Paw => "paw",
+            Self::Stamp => "stamp",
+            Self::Sniff => "sniff",
+            Self::Daze => "daze",
+            Self::Brace => "brace",
+            Self::Yawn => "yawn",
+            Self::Bleat => "bleat",
+            Self::Scratch => "scratch",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|g| g.name() == name)
+    }
 }
 
 /// Animation desktopPet : à chaque pas de la séquence, le corps avance de
@@ -507,7 +584,16 @@ impl Motion {
     /// Le comportement se déroule dans les airs.
     #[must_use]
     pub fn is_airborne(&self) -> bool {
-        matches!(self, Self::Fall | Self::Jump { .. })
+        matches!(self, Self::Fall | Self::Jump { .. } | Self::Pronk { .. })
+    }
+
+    /// Sa vitesse au sol, s'il avance de lui-même.
+    #[must_use]
+    pub fn speed(&self) -> Option<f32> {
+        match *self {
+            Self::Walk { speed } | Self::Run { speed } | Self::Charge { speed } => Some(speed),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -516,10 +602,11 @@ impl Motion {
             Self::Stand | Self::Turn | Self::Look => Pose::Stand,
             Self::Graze => Pose::Graze,
             Self::Walk { .. } => Pose::Walk,
-            Self::Run { .. } => Pose::Run,
+            Self::Run { .. } | Self::Charge { .. } => Pose::Run,
+            Self::Gesture(_) => Pose::Stand,
             Self::Sit => Pose::Sit,
             Self::Sleep => Pose::Sleep,
-            Self::Jump { .. } | Self::Fall => Pose::Air,
+            Self::Jump { .. } | Self::Pronk { .. } | Self::Fall => Pose::Air,
             Self::Land => Pose::Land,
             Self::Held => Pose::Dangle,
             // Les animaux desktopPet portent leurs poses dans leurs images.
@@ -563,6 +650,12 @@ pub enum Condition {
     CursorFar(f32),
     /// Au sol (sur une fenêtre ou en bas de l'écran).
     Grounded,
+    /// L'animal a cette humeur (`calm`, `lively`, `rowdy` ou `even`) : il a
+    /// ses gestes à lui quand il est énervé ou calme.
+    Temper(crate::temper::Temper),
+    /// Un coup de vent lui souffle au visage (`into_wind`) : il peut se
+    /// retourner, dos au vent, comme le font les moutons.
+    IntoWind,
     /// L'utilisateur tape au clavier : une touche il y a moins de
     /// [`crate::TYPING_WINDOW`] secondes (Mouflon sait quand, jamais laquelle).
     Typing,
@@ -664,6 +757,9 @@ pub struct Sound {
     pub clips: Vec<Arc<[u8]>>,
     /// Volume, de 0 à 1.
     pub volume: f32,
+    /// C'est sa voix : il ouvre la bouche en le faisant entendre (un
+    /// bêlement, pas une clochette).
+    pub mouth: bool,
 }
 
 /// Un son qu'un comportement fait entendre.
@@ -718,6 +814,18 @@ pub struct Behavior {
     /// Il dort (ou s'endort) : l'utilisateur qui revient le réveille
     /// (réflexe `wake`), un pointeur qui file ne le fait pas sursauter.
     pub sleeping: bool,
+    /// Il mâche pendant ce comportement (un ruminant couché qui rumine) :
+    /// sa mâchoire, s'il en a une, va et vient.
+    pub chew: bool,
+    /// Penché en avant (radians ; négatif : en arrière) pendant ce
+    /// comportement, en plus de ce que lui donne son élan : un animal en
+    /// images qui fonce tête la première.
+    pub tilt: f32,
+    /// Contagieux (0–1) : la chance qu'un voisin de la même famille l'imite,
+    /// un peu plus tard (un mouton qui part entraîne les autres, un
+    /// bâillement en appelle d'autres). Le voisin doit avoir un comportement
+    /// du même nom.
+    pub contagious: f32,
 }
 
 /// Personnage secondaire (élément `child` de desktopPet). Il joue ses propres
@@ -1040,8 +1148,10 @@ impl PetDef {
         }
         for b in &mut def.behaviors {
             match &mut b.motion {
-                Motion::Walk { speed } | Motion::Run { speed } => *speed *= k,
-                Motion::Jump { vx, vy } => {
+                Motion::Walk { speed } | Motion::Run { speed } | Motion::Charge { speed } => {
+                    *speed *= k;
+                }
+                Motion::Jump { vx, vy } | Motion::Pronk { vx, vy } => {
                     *vx *= k;
                     *vy *= k;
                 }

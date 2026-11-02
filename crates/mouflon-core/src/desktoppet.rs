@@ -612,6 +612,9 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             gravity: a.gravity.is_some(),
             flip_at_end: a.flip,
             walk_off_edges: true,
+            chew: false,
+            tilt: 0.0,
+            contagious: 0.0,
             clip: Some(SpriteClip {
                 frames: a.frames.clone(),
                 interval_start,
@@ -773,6 +776,7 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
                 name: def.behaviors[behavior].name.clone(),
                 clips: vec![Arc::from(mp3)],
                 volume: 1.0,
+                mouth: false,
             });
         }
     }

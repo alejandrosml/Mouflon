@@ -283,7 +283,7 @@ pub fn paint_pet(
             paint_skeleton(
                 skeleton,
                 &pose,
-                view.pose.blink,
+                crate::gesture::lids(&view.pose),
                 world,
                 pt(view.ground),
                 k,

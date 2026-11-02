@@ -208,6 +208,18 @@ impl Layer {
         }
     }
 
+    /// Ce calque, seulement là où est `mask` (son opacité multipliée).
+    fn masked(&self, mask: &[f32]) -> Layer {
+        Layer {
+            px: self
+                .px
+                .iter()
+                .zip(mask)
+                .map(|(p, m)| [p[0] * m, p[1] * m, p[2] * m, p[3] * m])
+                .collect(),
+        }
+    }
+
     /// Ajoute un autre calque par-dessus.
     fn stack(&mut self, other: &Layer) {
         for (p, q) in self.px.iter_mut().zip(&other.px) {
@@ -385,6 +397,30 @@ fn smooth_open(points: &[(f32, f32)]) -> SkPath {
         pb.cubic_to(c1.0, c1.1, c2.0, c2.1, p2.0, p2.1);
     }
     pb.finish().expect("courbe")
+}
+
+/// Une forme fermée aux coins vifs.
+fn polygon(points: &[(f32, f32)]) -> SkPath {
+    let mut pb = PathBuilder::new();
+    pb.move_to(points[0].0, points[0].1);
+    for &(x, y) in &points[1..] {
+        pb.line_to(x, y);
+    }
+    pb.close();
+    pb.finish().expect("polygone")
+}
+
+/// Ce qui est à `r` pixels au moins du bord de `mask` (la forme rentrée).
+fn inset(mask: &[f32], r: usize) -> Vec<f32> {
+    blur(mask, r)
+        .iter()
+        .map(|&v| smoothstep(0.9, 0.99, v))
+        .collect()
+}
+
+/// Le produit de deux masques (ce que couvrent l'un et l'autre).
+fn both(a: &[f32], b: &[f32]) -> Vec<f32> {
+    a.iter().zip(b).map(|(a, b)| a * b).collect()
 }
 
 /// Des cercles qui se fondent en une seule forme (une toison).
@@ -717,7 +753,8 @@ const HEAD: [(f32, f32); 12] = [
     (797.0, 450.0),
 ];
 
-fn paint_head(p: &Palette) -> Layer {
+/// La tête entière, mâchoire comprise.
+fn paint_whole_head(p: &Palette) -> Layer {
     let mut layer = Layer::new();
     let head = mask_of(&smooth_closed(&shifted(&HEAD)));
     p.face.paint(&head, &mut layer);
@@ -746,6 +783,76 @@ fn paint_head(p: &Palette) -> Layer {
         3.0,
     );
     dab(&mut layer, &mouth, Some(&head), hex(0x4A302D), 0.8);
+    layer
+}
+
+/// La mâchoire : le bas du museau, sous la bouche, jusqu'au menton. Elle
+/// s'ouvre autour de sa charnière, sous la joue, à hauteur de la bouche :
+/// le menton descend, la bouche s'ouvre de la commissure jusqu'au bout du
+/// museau.
+const JAW: [(f32, f32); 9] = [
+    (1000.0, 482.0),
+    (983.0, 487.0),
+    (978.0, 489.0),
+    (969.0, 499.0),
+    (955.0, 502.0),
+    (930.0, 508.0),
+    (905.0, 513.0),
+    (905.0, 560.0),
+    (1000.0, 560.0),
+];
+
+fn jaw_mask() -> Vec<f32> {
+    mask_of(&polygon(&shifted(&JAW)))
+}
+
+/// La tête, sans sa mâchoire (posée derrière elle). La tête la recouvre
+/// d'un rien sur ses bords : aucune jointure ne laisse passer le jour.
+fn paint_head(p: &Palette) -> Layer {
+    let away: Vec<f32> = inset(&jaw_mask(), 2).iter().map(|m| 1.0 - m).collect();
+    paint_whole_head(p).masked(&away)
+}
+
+/// La mâchoire, posée derrière la tête : le bas du museau, peint comme la
+/// tête l'aurait peint ; et au-dessus, cachés tant que la bouche est
+/// fermée, la joue qui s'étire et l'intérieur de la bouche, langue en bas.
+fn paint_jaw(p: &Palette) -> Layer {
+    let whole = paint_whole_head(p);
+    let head = mask_of(&smooth_closed(&shifted(&HEAD)));
+    // Rien ne doit dépasser de la tête bouche fermée.
+    let inside = inset(&head, 6);
+    let mut layer = Layer::new();
+    let cheek = mask_of(&polygon(&shifted(&[
+        (958.0, 493.0),
+        (905.0, 503.0),
+        (893.0, 511.0),
+        (893.0, 545.0),
+        (916.0, 545.0),
+        (916.0, 521.0),
+        (958.0, 513.0),
+    ])));
+    // (La joue n'a que les couleurs de la tête : elle peut aller jusqu'au
+    // bord, où elle comble la jointure.)
+    layer.stack(&whole.masked(&cheek));
+    let mouth = mask_of(&polygon(&shifted(&[
+        (986.0, 489.0),
+        (964.0, 457.0),
+        (944.0, 466.0),
+        (929.0, 487.0),
+        (937.0, 509.0),
+        (960.0, 510.0),
+        (977.0, 502.0),
+        (992.0, 494.0),
+    ])));
+    let mouth = both(&blur(&mouth, 2), &inside);
+    dab(&mut layer, &mouth, None, hex(0x4D2C2B), 1.0);
+    let (dx, dy) = hp(957.0, 470.0);
+    let deep = blur(&mask_of(&ellipse(dx, dy, 24.0, 18.0)), 8);
+    dab(&mut layer, &deep, Some(&mouth), hex(0x2C1918), 0.7);
+    let (tx, ty) = hp(967.0, 497.0);
+    let tongue = blur(&mask_of(&ellipse(tx, ty, 15.0, 5.5)), 2);
+    dab(&mut layer, &tongue, Some(&mouth), hex(0xC4797A), 0.95);
+    layer.stack(&whole.masked(&jaw_mask()));
     layer
 }
 
@@ -882,6 +989,7 @@ fn main() {
         ),
         ("corps", paint_body(&p)),
         ("oreille-loin", paint_ear(&p, EAR_FAR.0, EAR_FAR.1, true)),
+        ("machoire", paint_jaw(&p)),
         ("tete", paint_head(&p)),
         ("oreille-pres", paint_ear(&p, EAR_NEAR.0, EAR_NEAR.1, false)),
         ("toupet", paint_topknot(&p)),
