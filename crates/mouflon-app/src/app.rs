@@ -82,6 +82,9 @@ enum TrialStep {
     Goodbye(usize),
     /// Un animal de cette espèce arrive.
     Add(usize),
+    /// Essai de charge : des animaux arrivent jusqu'à en avoir tant (des
+    /// espèces du lancement, à tour de rôle).
+    Crowd(usize),
 }
 
 /// Une surprise (voir `mouflon_core::surprise`).
@@ -217,6 +220,8 @@ pub struct App {
     /// Instantanés de la scène (`MOUFLON_INSTANTANES`) : le dossier, et
     /// quand les prendre.
     snapshots: Option<(std::path::PathBuf, Vec<Instant>)>,
+    /// Sons lancés depuis le début de la fenêtre de temps en cours.
+    sounds_window: (Instant, u32),
 }
 
 /// La vitrine de la CI : à l'heure dite, la fenêtre des réglages s'ouvre,
@@ -262,6 +267,9 @@ fn show_about() {
 /// Volume de l'ensemble des sons des animaux (de 0 à 1) : discret, c'est un
 /// compagnon de bureau.
 const VOLUME: f32 = 0.55;
+/// Sons lancés au plus par fenêtre de temps (les suivants se taisent).
+const SOUNDS_PER_WINDOW: u32 = 4;
+const SOUND_WINDOW: Duration = Duration::from_millis(500);
 
 /// Mention de copyright de la fenêtre « À propos ».
 const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
@@ -359,6 +367,7 @@ impl App {
             menu_pet: None,
             showcase: None,
             snapshots: None,
+            sounds_window: (now, 0),
         }
     }
 
@@ -1006,9 +1015,17 @@ impl App {
     /// et vide la liste de leurs événements (notés au journal d'un essai).
     fn play_sounds(&mut self) {
         let audible = self.settings.sounds && !self.paused;
-        for pet in self.flock.pets_mut() {
+        let now = Instant::now();
+        if now.duration_since(self.sounds_window.0) >= SOUND_WINDOW {
+            self.sounds_window = (now, 0);
+        }
+        for (rank, pet) in self.flock.pets_mut().iter_mut().enumerate() {
             for event in pet.take_events() {
-                if let Some(stats) = &self.stats {
+                // Au journal : les événements des premiers arrivés seulement
+                // (une foule en ferait des milliers par seconde).
+                if let Some(stats) = &self.stats
+                    && rank < crate::stats::DETAILED_PETS
+                {
                     let mut what = describe(&event, pet);
                     if let PetEvent::Landed { .. } = event
                         && let Support::Ground { surface } = pet.support()
@@ -1018,11 +1035,15 @@ impl App {
                     }
                     stats.note(format_args!("n° {} {what}", pet.id()));
                 }
+                // Pas plus de quelques sons à la fois : une foule ne fait
+                // qu'un brouhaha (et chaque son coûte).
                 if let PetEvent::Sound { sound, clip } = event
                     && audible
+                    && self.sounds_window.1 < SOUNDS_PER_WINDOW
                     && let Some(sound) = pet.def().sounds.get(sound)
                     && let Some(data) = sound.clips.get(clip)
                 {
+                    self.sounds_window.1 += 1;
                     platform::play_sound(data, sound.volume * VOLUME);
                 }
             }
@@ -1082,22 +1103,55 @@ impl App {
     /// Une étape de l'essai, notée au journal.
     fn trial_step(&mut self, step: TrialStep) {
         if let Some(stats) = &self.stats {
-            let (TrialStep::Goodbye(index) | TrialStep::Add(index)) = step;
-            let name = self
-                .library
-                .pets
-                .get(index)
-                .map_or("?", |entry| entry.def.meta.name.as_str());
+            let name = |index: usize| {
+                self.library
+                    .pets
+                    .get(index)
+                    .map_or("?", |entry| entry.def.meta.name.as_str())
+            };
             match step {
-                TrialStep::Goodbye(_) => {
-                    stats.note(format_args!("essai : au revoir à un(e) {name}"))
+                TrialStep::Goodbye(index) => {
+                    stats.note(format_args!("essai : au revoir à un(e) {}", name(index)));
                 }
-                TrialStep::Add(_) => stats.note(format_args!("essai : un(e) {name} de plus")),
+                TrialStep::Add(index) => {
+                    stats.note(format_args!("essai : un(e) {} de plus", name(index)));
+                }
+                TrialStep::Crowd(count) => {
+                    stats.note(format_args!("essai de charge : {count} animaux"));
+                }
             }
         }
         match step {
             TrialStep::Goodbye(index) => self.goodbye_one(index),
             TrialStep::Add(index) => self.spawn(index),
+            TrialStep::Crowd(count) => self.crowd(count),
+        }
+    }
+
+    /// Essai de charge : des animaux arrivent jusqu'à en avoir `count`, des
+    /// espèces du lancement à tour de rôle (dessins déjà prêts).
+    fn crowd(&mut self, count: usize) {
+        let mut kinds: Vec<usize> = Vec::new();
+        for pet in self.flock.pets() {
+            if let Some(i) = self
+                .library
+                .pets
+                .iter()
+                .position(|e| Arc::ptr_eq(&e.def, pet.def()))
+                && !kinds.contains(&i)
+            {
+                kinds.push(i);
+            }
+        }
+        if kinds.is_empty() {
+            kinds.push(
+                self.library
+                    .default_index(self.settings.default_pet.as_deref()),
+            );
+        }
+        let have = self.flock.pets().len();
+        for k in have..count {
+            self.spawn(kinds[k % kinds.len()]);
         }
     }
 
@@ -1586,9 +1640,18 @@ impl App {
             .rev()
             .filter(|pet| !pet.is_child())
             .find(|pet| {
-                self.arts
-                    .get(&pet.id())
-                    .is_some_and(|art| hit_test(p, &pet.view(alpha), art))
+                self.arts.get(&pet.id()).is_some_and(|art| {
+                    // D'abord sa place au dernier pas, avec de la marge : la
+                    // vue entre deux pas n'est calculée que pour ceux qui sont
+                    // tout près (une foule en compte des centaines).
+                    let (half, height) = art.body;
+                    let at = pet.position();
+                    let margin = 64.0;
+                    (p.x - at.x).abs() <= half + margin
+                        && p.y >= at.y - height - margin
+                        && p.y <= at.y + margin
+                        && hit_test(p, &pet.view(alpha), art)
+                })
             })
             .map(Pet::id)
     }
@@ -2081,25 +2144,30 @@ impl App {
                 }
             }
             stats.set_images(arts.iter().map(|a| a.image_bytes()).sum());
-            let pets = self.flock.pets().iter().map(|p| {
-                let view = p.view(alpha);
-                crate::stats::PetLine {
-                    id: p.id(),
-                    name: p.def().meta.name.as_str(),
-                    behavior: p.behavior_name(),
-                    frame: view.sprite_frame,
-                    x: view.ground.x,
-                    y: view.ground.y,
-                    vx: p.velocity().x,
-                    vy: p.velocity().y,
-                    support: match p.support() {
-                        mouflon_core::Support::Ground { .. } => 's',
-                        mouflon_core::Support::Air => 'a',
-                        mouflon_core::Support::Held => 't',
-                    },
-                    roll: view.pose.roll,
-                }
-            });
+            let pets = self
+                .flock
+                .pets()
+                .iter()
+                .take(crate::stats::DETAILED_PETS)
+                .map(|p| {
+                    let view = p.view(alpha);
+                    crate::stats::PetLine {
+                        id: p.id(),
+                        name: p.def().meta.name.as_str(),
+                        behavior: p.behavior_name(),
+                        frame: view.sprite_frame,
+                        x: view.ground.x,
+                        y: view.ground.y,
+                        vx: p.velocity().x,
+                        vy: p.velocity().y,
+                        support: match p.support() {
+                            mouflon_core::Support::Ground { .. } => 's',
+                            mouflon_core::Support::Air => 'a',
+                            mouflon_core::Support::Held => 't',
+                        },
+                        roll: view.pose.roll,
+                    }
+                });
             // Durée d'une image de l'écran : ProMotion la change selon ce qui bouge.
             let refresh = self
                 .clock
@@ -2595,7 +2663,19 @@ impl ApplicationHandler<UserEvent> for App {
                 .pets
                 .iter()
                 .position(|e| e.def.meta.id == "aquarelle");
-            for (k, at) in [duration / 2, duration * 3 / 4].into_iter().enumerate() {
+            // Essai de charge : des paliers d'animaux au lieu des départs et arrivées.
+            if crate::stats::trial_load() {
+                for (fraction, count) in crate::stats::LOAD_STAGES {
+                    self.trial_steps
+                        .push((start + duration.mul_f32(fraction), TrialStep::Crowd(count)));
+                }
+            }
+            let swaps: &[Duration] = if crate::stats::trial_load() {
+                &[]
+            } else {
+                &[duration / 2, duration * 3 / 4]
+            };
+            for (k, &at) in swaps.iter().enumerate() {
                 if let Some(&kind) = kinds.get(k % kinds.len().max(1)) {
                     let arrives = if k == 1 {
                         painted.unwrap_or(kind)

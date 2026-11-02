@@ -90,6 +90,16 @@ jobs:
             bash "tools/essai/Essai de 3 minutes (GPU).command" | tee essai-gpu-console.log
           grep -q "essai terminé" essais/*-gpu/sortie.log
 
+      # Essai de charge : 20, 100, 500 puis 1 000 animaux (`MOUFLON_ESSAI_CHARGE`),
+      # pour voir comment Mouflon tient la foule (l'analyse donne chaque
+      # palier). Un échec ne fait pas échouer la construction.
+      - name: Essai de charge
+        continue-on-error: true
+        run: |
+          MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_INSTANTANES=1 perl -e 'alarm 420; exec @ARGV' \
+            bash "tools/essai/Essai de charge.command" | tee essai-charge-console.log
+          grep -q "essai terminé" essais/*-charge/sortie.log
+
       # Vitrine : la fenêtre des réglages en images, en plusieurs langues
       # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
       # sombre — et le texte du menu d'un animal (`vitrine/`). Rien n'y est
@@ -119,6 +129,7 @@ jobs:
           path: |
             essai-console.log
             essai-gpu-console.log
+            essai-charge-console.log
             essais/
 
       - name: Publier la version

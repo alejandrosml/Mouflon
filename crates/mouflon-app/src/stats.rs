@@ -90,6 +90,22 @@ pub fn trial_collisions() -> bool {
     std::env::var("MOUFLON_ESSAI_COLLISIONS").is_ok_and(|v| v.trim() == "1")
 }
 
+/// Essai de charge (`MOUFLON_ESSAI_CHARGE=1`) : des animaux ajoutés par
+/// paliers pendant l'essai (voir [`LOAD_STAGES`]).
+#[must_use]
+pub fn trial_load() -> bool {
+    std::env::var("MOUFLON_ESSAI_CHARGE").is_ok_and(|v| v.trim() == "1")
+}
+
+/// Les paliers d'un essai de charge : à quelle fraction de l'essai, et
+/// combien d'animaux en tout.
+pub const LOAD_STAGES: [(f32, usize); 4] = [(0.1, 20), (0.3, 100), (0.5, 500), (0.7, 1000)];
+
+/// Animaux détaillés dans chaque ligne d'image du journal (les premiers
+/// arrivés) : au-delà, le journal grossirait de plusieurs mégaoctets par
+/// seconde.
+pub const DETAILED_PETS: usize = 32;
+
 /// Temps passé dans chaque partie d'une image.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Phases {

@@ -28,9 +28,9 @@ from datetime import datetime, timedelta, timezone
 # champs sont lus depuis la fin.
 PET = re.compile(r"(\d+) (.+) (-?\d+) (\S+),(\S+) (\S+),(\S+) ([sat]) (\S+)$")
 # Parties d'une image, pour dire ce qui a retardé un à-coup.
-CAUSES = {"des": "dessin", "att": "attente de l'écran", "env": "envoi", "rel": "relevés",
-          "sim": "simulation", "son": "sons", "fen": "fenêtres ouvertes ou fermées",
-          "dep": "déplacements de fenêtres", "cur": "zones cliquables"}
+CAUSES = {"des": "dessin (et images décompressées)", "att": "attente de l'écran (GPU)",
+          "env": "envoi au compositeur", "rel": "relevés", "sim": "simulation", "son": "sons",
+          "fen": "arrivées et départs", "dep": "mise à jour des calques", "cur": "zones cliquables"}
 PHASE_KEYS = set(CAUSES)
 NUM = re.compile(r"^-?\d+(?:\.\d+)?$")
 
@@ -658,6 +658,30 @@ def report_around(trial, hitches, folder):
             print(f"  {line}")
 
 
+def report_load(trial, normal):
+    """Essai de charge : chaque palier d'animaux (de sa note à la suivante)."""
+    stages = [(t, int(m.group(1))) for t, what in trial.events
+              for m in [re.match(r"essai de charge : (\d+) animaux", what)] if m]
+    if not stages:
+        return
+    section("ESSAI DE CHARGE (par palier : images, en retard, préparation médiane / 99 % / max, "
+            "parties moyennes en ms) :")
+    ends = [t for t, _ in stages[1:]] + [trial.frames[-1]["t"] + 1]
+    for (start, count), end in zip(stages, ends):
+        # La première seconde du palier : les arrivées elles-mêmes.
+        frames = [f for f in trial.frames if start + 1.0 <= f["t"] < end]
+        if len(frames) < 2:
+            continue
+        late = sum(1 for f in frames[1:] if f["gap"] > expected_interval(f, normal) * 1.6)
+        prep = [f["prep"] for f in frames]
+        means = {k: statistics.mean(f["phases"].get(k, 0) for f in frames) for k in ("sim", "des", "dep", "env")}
+        rate = len(frames) / max(frames[-1]["t"] - frames[0]["t"], 1e-6)
+        print(f"  {count:5d} animaux : {len(frames):5d} images ({rate:.0f} i/s), {late} en retard "
+              f"({100 * late / len(frames):.2f} %), préparation {percentile(prep, 0.5):.2f} / "
+              f"{percentile(prep, 0.99):.2f} / {max(prep):.2f} ms ; "
+              + ", ".join(f"{CAUSES[k].split(' (')[0]} {v:.2f}" for k, v in means.items()))
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__.split("\n\n")[1])
@@ -672,6 +696,8 @@ def main():
     if not trial.frames:
         sys.exit("aucune image dans le journal")
     hitches = report_frames(trial)
+    gaps = [f["gap"] for f in trial.frames[1:] if f["gap"] > 0]
+    report_load(trial, statistics.median(gaps) if gaps else 16.7)
     report_clock(trial)
     report_stalls(trial)
     report_slow(trial)
