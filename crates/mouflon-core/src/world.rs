@@ -3,7 +3,41 @@
 //! Repère : points logiques, origine en haut à gauche de l'écran principal,
 //! y vers le bas. La couche système convertit depuis le repère de l'OS.
 
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+
 use crate::math::{Rect, Vec2};
+
+/// Hachage des identifiants de surfaces (des entiers) : un mélange par
+/// multiplication, bien plus rapide que celui par défaut, sans rien à
+/// craindre ici d'identifiants choisis pour le mettre en défaut.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0 ^ n)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(29);
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(u64::from(n));
+    }
+}
+
+/// Une table rangée par identifiant de surface (voir [`IdHasher`]).
+pub type IdMap<V> = HashMap<SurfaceId, V, BuildHasherDefault<IdHasher>>;
 
 /// Identifiant stable d'une surface, conservé tant que la fenêtre existe :
 /// c'est ce qui permet à un animal de « voyager » sur une fenêtre qu'on déplace.
@@ -94,10 +128,140 @@ impl Default for LedgeOptions {
     }
 }
 
+/// Largeur d'une colonne de l'index des surfaces (points).
+const COLUMN: f32 = 64.0;
+/// Colonnes de l'index, au plus (au-delà, les surfaces lointaines se
+/// rangent dans les colonnes du bord).
+const MAX_COLUMNS: usize = 4096;
+
+/// Les surfaces rangées par colonnes et par identifiant : ce que cherche un
+/// animal (où se poser, sur quoi il est) ne parcourt que les surfaces de sa
+/// colonne, même avec un millier de dos d'animaux parmi elles.
+#[derive(Clone, Debug, Default)]
+struct SurfaceIndex {
+    /// Bord gauche de la première colonne.
+    left: f32,
+    /// Les surfaces de la colonne `c` : `items[starts[c]..starts[c + 1]]`
+    /// (leurs rangs dans `World::surfaces`, croissants).
+    starts: Vec<u32>,
+    items: Vec<u32>,
+    by_id: IdMap<u32>,
+    floors: Vec<u32>,
+    /// Pour remplir les colonnes (gardé d'une fois à l'autre).
+    fill: Vec<u32>,
+}
+
+impl SurfaceIndex {
+    /// Refait l'index de ces surfaces, en gardant la mémoire déjà prise.
+    fn rebuild(&mut self, surfaces: &[Surface]) {
+        let index = self;
+        index.by_id.clear();
+        index.floors.clear();
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for s in surfaces
+            .iter()
+            .filter(|s| s.x0.is_finite() && s.x1.is_finite())
+        {
+            lo = lo.min(s.x0);
+            hi = hi.max(s.x1);
+        }
+        let count = if lo.is_finite() && hi >= lo {
+            (((hi - lo) / COLUMN) as usize + 1).min(MAX_COLUMNS)
+        } else {
+            1
+        };
+        index.left = if lo.is_finite() { lo } else { 0.0 };
+        let mut counts = std::mem::take(&mut index.starts);
+        counts.clear();
+        counts.resize(count + 1, 0);
+        for s in surfaces {
+            let (c0, c1) = index.columns(s.x0, s.x1, count);
+            for c in c0..=c1 {
+                counts[c + 1] += 1;
+            }
+        }
+        for c in 0..count {
+            counts[c + 1] += counts[c];
+        }
+        index.items.clear();
+        index.items.resize(counts[count] as usize, 0);
+        let mut fill = std::mem::take(&mut index.fill);
+        fill.clear();
+        fill.extend_from_slice(&counts);
+        for (i, s) in surfaces.iter().enumerate() {
+            let (c0, c1) = index.columns(s.x0, s.x1, count);
+            for next in &mut fill[c0..=c1] {
+                index.items[*next as usize] = i as u32;
+                *next += 1;
+            }
+            index.by_id.entry(s.id).or_insert(i as u32);
+            if s.kind == SurfaceKind::Floor {
+                index.floors.push(i as u32);
+            }
+        }
+        index.fill = fill;
+        index.starts = counts;
+    }
+
+    fn column_count(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    /// Colonnes couvertes de `x0` à `x1` (bornées à celles de l'index).
+    fn columns(&self, x0: f32, x1: f32, count: usize) -> (usize, usize) {
+        let col = |x: f32| {
+            let c = ((x - self.left) / COLUMN).floor();
+            if c.is_nan() || c < 0.0 {
+                0
+            } else {
+                (c as usize).min(count.saturating_sub(1))
+            }
+        };
+        let (a, b) = (col(x0.min(x1)), col(x0.max(x1)));
+        (a, b)
+    }
+
+    /// Rangs des surfaces qui peuvent contenir les abscisses de `x0` à `x1`
+    /// (avec des doublons quand une surface couvre plusieurs colonnes).
+    fn near(&self, x0: f32, x1: f32) -> impl Iterator<Item = usize> + '_ {
+        let (c0, c1) = self.columns(x0, x1, self.column_count());
+        let (from, to) = (
+            self.starts.get(c0).copied().unwrap_or(0) as usize,
+            self.starts.get(c1 + 1).copied().unwrap_or(0) as usize,
+        );
+        self.items[from..to.max(from)].iter().map(|&i| i as usize)
+    }
+}
+
+/// La surface la plus haute (plus petit `y`) parmi celles que garde
+/// `keep`, la première de la liste en cas d'égalité.
+fn highest(
+    surfaces: &[Surface],
+    candidates: impl Iterator<Item = usize>,
+    keep: impl Fn(&Surface) -> bool,
+) -> Option<&Surface> {
+    let mut best: Option<usize> = None;
+    for i in candidates {
+        let s = &surfaces[i];
+        if !keep(s) {
+            continue;
+        }
+        best = match best {
+            Some(b) if surfaces[b].y < s.y || (surfaces[b].y == s.y && b <= i) => Some(b),
+            _ => Some(i),
+        };
+    }
+    best.map(|i| &surfaces[i])
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct World {
     screens: Vec<Screen>,
     surfaces: Vec<Surface>,
+    /// L'index des surfaces, et s'il est à jour (sinon les questions les
+    /// parcourent toutes : voir [`World::reindex`]).
+    index: SurfaceIndex,
+    indexed: bool,
     walls: Vec<Wall>,
     arena: Rect,
     bounds: Rect,
@@ -145,6 +309,7 @@ impl World {
                 y: screen.usable.bottom(),
             });
         }
+        self.reindex();
     }
 
     /// Remplace les rebords et les côtés des fenêtres à partir de la liste
@@ -162,6 +327,21 @@ impl World {
         self.windows.clear();
         self.windows.extend_from_slice(windows);
         self.options = Some(options);
+        self.reindex();
+    }
+
+    /// Refait l'index des surfaces, après des changements faits par
+    /// [`World::shift_windows`] ou [`World::push_surface`] (les autres le
+    /// refont d'eux-mêmes). Sans lui, les questions sont justes, mais
+    /// parcourent toutes les surfaces.
+    pub(crate) fn reindex(&mut self) {
+        self.index.rebuild(&self.surfaces);
+        self.indexed = true;
+    }
+
+    /// L'index des surfaces, s'il est à jour.
+    fn index(&self) -> Option<&SurfaceIndex> {
+        self.indexed.then_some(&self.index)
     }
 
     /// Côtés visibles des fenêtres.
@@ -187,6 +367,8 @@ impl World {
     pub(crate) fn copy_from(&mut self, other: &World) {
         self.screens.clone_from(&other.screens);
         self.surfaces.clone_from(&other.surfaces);
+        // L'index sera refait (sa mémoire est gardée).
+        self.indexed = false;
         self.walls.clone_from(&other.walls);
         self.windows.clone_from(&other.windows);
         self.arena = other.arena;
@@ -198,6 +380,7 @@ impl World {
     /// Déplace les rebords et les côtés de chaque fenêtre de ce que dit
     /// `offset` (identifiant de la fenêtre → décalage, ou rien).
     pub(crate) fn shift_windows(&mut self, offset: impl Fn(u64) -> Option<Vec2>) {
+        self.indexed = false;
         for surface in &mut self.surfaces {
             if surface.kind == SurfaceKind::Window
                 && let Some(d) = offset(surface.id >> 8)
@@ -218,6 +401,7 @@ impl World {
 
     /// Ajoute une surface (le dos d'un animal, en physique réaliste).
     pub(crate) fn push_surface(&mut self, surface: Surface) {
+        self.indexed = false;
         self.surfaces.push(surface);
     }
 
@@ -255,7 +439,10 @@ impl World {
 
     #[must_use]
     pub fn surface(&self, id: SurfaceId) -> Option<&Surface> {
-        self.surfaces.iter().find(|s| s.id == id)
+        match self.index() {
+            Some(index) => index.by_id.get(&id).map(|&i| &self.surfaces[i as usize]),
+            None => self.surfaces.iter().find(|s| s.id == id),
+        }
     }
 
     /// Union des zones utiles de tous les écrans.
@@ -289,50 +476,67 @@ impl World {
     /// la plus haute dont le niveau est compris dans l'intervalle.
     #[must_use]
     pub fn landing_surface(&self, x: f32, margin: f32, y0: f32, y1: f32) -> Option<&Surface> {
-        self.surfaces
-            .iter()
-            .filter(|s| s.contains_x(x, margin) && s.y >= y0 - 0.01 && s.y <= y1 + 0.01)
-            .min_by(|a, b| a.y.total_cmp(&b.y))
+        let keep = |s: &Surface| s.contains_x(x, margin) && s.y >= y0 - 0.01 && s.y <= y1 + 0.01;
+        self.highest_near(x - margin, x + margin, keep)
     }
 
     /// Surface la plus proche sous le point (pour l'ombre portée pendant un saut).
     #[must_use]
     pub fn surface_below(&self, p: Vec2, margin: f32) -> Option<&Surface> {
-        self.surfaces
-            .iter()
-            .filter(|s| s.contains_x(p.x, margin) && s.y >= p.y - 0.5)
-            .min_by(|a, b| a.y.total_cmp(&b.y))
+        let keep = |s: &Surface| s.contains_x(p.x, margin) && s.y >= p.y - 0.5;
+        self.highest_near(p.x - margin, p.x + margin, keep)
+    }
+
+    /// La plus haute des surfaces gardées par `keep`, parmi celles qui
+    /// peuvent couvrir les abscisses de `x0` à `x1` (par l'index s'il est à
+    /// jour) ; la première de la liste en cas d'égalité.
+    fn highest_near(&self, x0: f32, x1: f32, keep: impl Fn(&Surface) -> bool) -> Option<&Surface> {
+        match self.index() {
+            Some(index) => highest(&self.surfaces, index.near(x0, x1), keep),
+            None => highest(&self.surfaces, 0..self.surfaces.len(), keep),
+        }
     }
 
     /// Sol d'un écran qui s'étend au-dessus de l'abscisse `x`, le plus proche
     /// de la hauteur `y` (pour passer d'un écran à l'autre).
     #[must_use]
     pub fn floor_at(&self, x: f32, y: f32) -> Option<&Surface> {
-        self.surfaces
-            .iter()
-            .filter(|s| s.kind == SurfaceKind::Floor && s.contains_x(x, 0.0))
+        self.floors()
+            .filter(|s| s.contains_x(x, 0.0))
             .min_by(|a, b| (a.y - y).abs().total_cmp(&(b.y - y).abs()))
+    }
+
+    /// Les sols des écrans, dans l'ordre de la liste des surfaces.
+    fn floors(&self) -> impl Iterator<Item = &Surface> + '_ {
+        let indexed = self.index().map(|index| index.floors.as_slice());
+        let all = if indexed.is_some() {
+            &self.surfaces[..0]
+        } else {
+            &self.surfaces[..]
+        };
+        indexed
+            .unwrap_or_default()
+            .iter()
+            .map(|&i| &self.surfaces[i as usize])
+            .chain(all.iter().filter(|s| s.kind == SurfaceKind::Floor))
     }
 
     /// Sol de l'écran situé sous l'abscisse `x` (ou du plus proche).
     #[must_use]
     pub fn floor_under(&self, x: f32) -> Option<&Surface> {
-        self.surfaces
-            .iter()
-            .filter(|s| s.kind == SurfaceKind::Floor)
-            .min_by(|a, b| {
-                let da = if a.contains_x(x, 0.0) {
-                    0.0
-                } else {
-                    (a.x0 - x).abs().min((a.x1 - x).abs())
-                };
-                let db = if b.contains_x(x, 0.0) {
-                    0.0
-                } else {
-                    (b.x0 - x).abs().min((b.x1 - x).abs())
-                };
-                da.total_cmp(&db)
-            })
+        self.floors().min_by(|a, b| {
+            let da = if a.contains_x(x, 0.0) {
+                0.0
+            } else {
+                (a.x0 - x).abs().min((a.x1 - x).abs())
+            };
+            let db = if b.contains_x(x, 0.0) {
+                0.0
+            } else {
+                (b.x0 - x).abs().min((b.x1 - x).abs())
+            };
+            da.total_cmp(&db)
+        })
     }
 }
 
@@ -654,6 +858,80 @@ mod tests {
         let mut wide = vec![screen()];
         assert!(exact_dock(&mut wide, Rect::new(0.0, 830.0, 1440.0, 70.0)).is_none());
         assert_eq!(wide[0].usable.bottom(), 825.0);
+    }
+
+    #[test]
+    fn the_surface_index_answers_like_a_full_scan() {
+        let mut rng = crate::math::Rng::new(42);
+        let mut unit = || (rng.next_u32() >> 8) as f32 / (1u32 << 24) as f32;
+        let mut world = World::new(vec![
+            Screen {
+                frame: Rect::new(0.0, 0.0, 1728.0, 1117.0),
+                usable: Rect::new(0.0, 38.0, 1728.0, 1010.0),
+                scale: 2.0,
+            },
+            Screen {
+                frame: Rect::new(1728.0, -200.0, 2560.0, 1440.0),
+                usable: Rect::new(1728.0, -175.0, 2560.0, 1415.0),
+                scale: 1.0,
+            },
+        ]);
+        let windows: Vec<WindowRect> = (0..15)
+            .map(|i| WindowRect {
+                id: 10 + i,
+                frame: Rect::new(
+                    unit() * 3800.0,
+                    100.0 + unit() * 900.0,
+                    200.0 + unit() * 900.0,
+                    300.0,
+                ),
+            })
+            .collect();
+        world.set_windows(&windows, LedgeOptions::default());
+        // Des dos d'animaux, certains à la même hauteur (égalités).
+        for k in 0..400 {
+            let x = unit() * 4300.0;
+            let y = if k % 7 == 0 {
+                600.0
+            } else {
+                200.0 + unit() * 900.0
+            };
+            world.push_surface(Surface {
+                id: (1 << 62) | k,
+                kind: SurfaceKind::Window,
+                x0: x,
+                x1: x + 20.0 + unit() * 60.0,
+                y,
+            });
+        }
+        let mut indexed = world.clone();
+        indexed.reindex();
+        assert!(world.index().is_none() && indexed.index().is_some());
+        let same = |a: Option<&Surface>, b: Option<&Surface>| match (a, b) {
+            (Some(a), Some(b)) => a.id == b.id,
+            (None, None) => true,
+            _ => false,
+        };
+        for _ in 0..3000 {
+            let x = unit() * 4600.0 - 150.0;
+            let y = unit() * 1300.0 - 100.0;
+            let margin = unit() * 40.0;
+            let span = unit() * 500.0;
+            assert!(same(
+                world.landing_surface(x, margin, y, y + span),
+                indexed.landing_surface(x, margin, y, y + span)
+            ));
+            assert!(same(
+                world.surface_below(Vec2::new(x, y), margin),
+                indexed.surface_below(Vec2::new(x, y), margin)
+            ));
+            assert!(same(world.floor_at(x, y), indexed.floor_at(x, y)));
+            assert!(same(world.floor_under(x), indexed.floor_under(x)));
+        }
+        for s in world.surfaces() {
+            assert!(same(world.surface(s.id), indexed.surface(s.id)));
+        }
+        assert!(indexed.surface(12_345).is_none());
     }
 
     #[test]

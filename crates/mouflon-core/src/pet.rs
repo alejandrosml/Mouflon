@@ -16,6 +16,7 @@ use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep};
 use crate::physics::{Back, Tracker};
 use crate::world::{Surface, SurfaceId, SurfaceKind, World};
 
+mod near;
 mod real;
 mod script;
 
@@ -2523,6 +2524,8 @@ pub struct Flock {
     saucers: Vec<crate::surprise::Saucer>,
     /// Le pointeur au dernier [`Flock::advance`].
     last_cursor: Option<Vec2>,
+    /// Les paires d'animaux assez proches pour se toucher (voir [`near`]).
+    near: near::Near,
 }
 
 /// Distance d'un point au segment `[a, b]`.
@@ -2864,7 +2867,9 @@ impl Flock {
                     }
                 }
                 if self.collisions {
-                    self.collide(world, input);
+                    let mut near = std::mem::take(&mut self.near);
+                    self.collide(near.update(&self.pets), world, input);
+                    self.near = near;
                 } else {
                     self.meet(world, input);
                 }
@@ -3010,8 +3015,13 @@ impl Flock {
             }
         }
         if self.collisions {
-            self.collide_bodies(tracker.world(), input);
-            self.collide(tracker.world(), input);
+            // Les mêmes paires proches pour les chocs entre corps et les
+            // heurts : les corps séparés n'ont bougé que de la marge.
+            let mut near = std::mem::take(&mut self.near);
+            let pairs = near.update(&self.pets);
+            self.collide_bodies(pairs, tracker.world(), input);
+            self.collide(pairs, tracker.world(), input);
+            self.near = near;
         } else {
             self.meet(tracker.world(), input);
         }
@@ -3022,60 +3032,66 @@ impl Flock {
     /// l'air heurte les autres, en l'air ou au sol ; tenu, il est comme la
     /// main qui le tient. Deux animaux au sol se heurtent comme en physique
     /// classique (`collide`), et l'un sur le dos de l'autre y est posé.
-    fn collide_bodies(&mut self, world: &World, input: &Input) {
-        for i in 0..self.pets.len() {
-            for j in i + 1..self.pets.len() {
-                let (left, right) = self.pets.split_at_mut(j);
-                let (a, b) = (&mut left[i], &mut right[0]);
-                if !physical_pair(a, b) || self.still == Some(a.id) || self.still == Some(b.id) {
-                    continue;
-                }
-                let Some(contact) = crate::physics::obb_contact(&a.body(), &b.body()) else {
-                    continue;
-                };
-                bodies_hit(a, b, contact, world, input);
+    fn collide_bodies(&mut self, pairs: &[(u32, u32)], world: &World, input: &Input) {
+        let still = self.still;
+        for &(i, j) in pairs {
+            let (a, b) = self.pair_mut(i, j);
+            if !physical_pair(a, b) || still == Some(a.id) || still == Some(b.id) {
+                continue;
             }
+            let Some(contact) = crate::physics::obb_contact(&a.body(), &b.body()) else {
+                continue;
+            };
+            bodies_hit(a, b, contact, world, input);
         }
     }
 
     /// Deux animaux qui se rentrent dedans partent chacun à la renverse.
-    fn collide(&mut self, world: &World, input: &Input) {
-        for i in 0..self.pets.len() {
-            for j in i + 1..self.pets.len() {
-                if self.is_still(i) || self.is_still(j) {
-                    continue;
-                }
-                let Some((push_i, push_j)) = bump(&self.pets[i], &self.pets[j]) else {
-                    continue;
-                };
-                let (left, right) = self.pets.split_at_mut(j);
-                left[i].knock(push_i, world, input);
-                right[0].knock(push_j, world, input);
+    fn collide(&mut self, pairs: &[(u32, u32)], world: &World, input: &Input) {
+        for &(i, j) in pairs {
+            let (i, j) = (i as usize, j as usize);
+            if self.is_still(i) || self.is_still(j) {
+                continue;
             }
+            let Some((push_i, push_j)) = bump(&self.pets[i], &self.pets[j]) else {
+                continue;
+            };
+            let (a, b) = self.pair_mut(i as u32, j as u32);
+            a.knock(push_i, world, input);
+            b.knock(push_j, world, input);
         }
     }
 
     /// Rencontres : un animal qui en atteint un autre en marchant réagit,
     /// et l'autre parfois avec lui (`petSide` de desktopPet).
     fn meet(&mut self, world: &World, input: &Input) {
-        for i in 0..self.pets.len() {
-            for j in 0..self.pets.len() {
-                if i == j
-                    || self.is_still(i)
-                    || self.is_still(j)
-                    || !meeting(&self.pets[i], &self.pets[j])
-                {
+        let mut near = std::mem::take(&mut self.near);
+        for &(i, j) in near.update(&self.pets) {
+            if self.is_still(i as usize) || self.is_still(j as usize) {
+                continue;
+            }
+            // Chacun peut atteindre l'autre.
+            for (from, to) in [(i, j), (j, i)] {
+                if !meeting(&self.pets[from as usize], &self.pets[to as usize]) {
                     continue;
                 }
-                let (a, b) = if i < j {
-                    let (left, right) = self.pets.split_at_mut(j);
-                    (&mut left[i], &mut right[0])
-                } else {
-                    let (left, right) = self.pets.split_at_mut(i);
-                    (&mut right[0], &mut left[j])
-                };
+                let (a, b) = self.pair_mut(from, to);
                 encounter(a, b, world, input);
             }
+        }
+        self.near = near;
+    }
+
+    /// Deux animaux différents du troupeau (leurs rangs), à changer ensemble.
+    fn pair_mut(&mut self, i: u32, j: u32) -> (&mut Pet, &mut Pet) {
+        let (i, j) = (i as usize, j as usize);
+        debug_assert_ne!(i, j);
+        if i < j {
+            let (left, right) = self.pets.split_at_mut(j);
+            (&mut left[i], &mut right[0])
+        } else {
+            let (left, right) = self.pets.split_at_mut(i);
+            (&mut right[0], &mut left[j])
         }
     }
 

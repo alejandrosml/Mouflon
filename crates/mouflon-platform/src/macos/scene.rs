@@ -74,7 +74,7 @@ impl SceneImage {
     }
 }
 
-/// Un calque de la scène. Son point d'ancrage est son coin haut gauche :
+/// Un calque de la scène. Son point d'ancrage est l'origine de son repère :
 /// sa place et sa transformation partent de là.
 #[derive(Debug, Clone)]
 pub struct SceneLayer {
@@ -111,7 +111,7 @@ impl SceneLayer {
         self.layer.removeFromSuperlayer();
     }
 
-    /// Coin haut gauche, en points, dans le repère du parent.
+    /// Son origine (le coin de son repère), en points, dans le repère du parent.
     pub fn set_position(&self, x: f64, y: f64) {
         self.layer.setPosition(CGPoint::new(x, y));
     }
@@ -184,14 +184,15 @@ pub fn scene_transaction<R>(change: impl FnOnce() -> R) -> R {
 }
 
 /// Pose la racine des calques de la scène dans une fenêtre, sur toute sa
-/// taille : origine en haut à gauche, y vers le bas, en points. Elle suit
-/// la taille de la fenêtre.
+/// taille, dans le repère ordinaire de Core Animation sur Mac : origine en
+/// bas à gauche, y vers le haut, en points (une image s'y affiche à
+/// l'endroit, à l'écran comme dans [`render_scene`]). Elle suit la taille
+/// de la fenêtre.
 pub fn attach_scene(window: &impl HasWindowHandle) -> Option<SceneLayer> {
     let (view, _) = super::view_and_window(window)?;
     view.setWantsLayer(true);
     let host = view.layer()?;
     let root = SceneLayer::new();
-    root.layer.setGeometryFlipped(true);
     root.layer.setFrame(host.bounds());
     root.layer.setAutoresizingMask(
         CAAutoresizingMask::LayerWidthSizable | CAAutoresizingMask::LayerHeightSizable,

@@ -174,6 +174,18 @@ while kill -0 "$PID" 2>/dev/null; do
     if [ $(( ecoule % 15 )) -eq 0 ]; then
         printf "  %3d s / %d s\n" "$ecoule" "$DUREE"
     fi
+    # Avec les instantanés : l'écran lui-même, deux fois (ce que macOS
+    # montre vraiment, à comparer aux instantanés des calques).
+    if [ -n "$INSTANTANES" ]; then
+        for t in 13 $(( DUREE * 2 / 3 + 6 )); do
+            if [ "$ecoule" -eq "$t" ]; then
+                mkdir -p "$OUT/instantanes"
+                repere "capture de l'écran"
+                screencapture -x "$OUT/instantanes/ecran-${t}s.png" \
+                    >> "$OUT/instantanes/capture.log" 2>&1 &
+            fi
+        done
+    fi
     # La mémoire de Mouflon par catégories, vers la fin (le relevé l'arrête
     # un instant : l'à-coup est noté dans les repères).
     if [ -z "$memoire_faite" ] && [ "$ecoule" -ge $(( DUREE - 6 )) ]; then

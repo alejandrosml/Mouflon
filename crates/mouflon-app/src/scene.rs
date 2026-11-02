@@ -256,12 +256,18 @@ impl Node {
     }
 
     /// Met ses calques à jour : sa place sur l'écran `screen` (coin haut
-    /// gauche, points), et ses morceaux s'ils ont changé. `false` si une
-    /// image n'a pas pu être prête à temps (on réessaie à l'image suivante).
-    fn update(&mut self, shown: &Shown, screen: (f64, f64), images: &mut Images) -> bool {
+    /// gauche et hauteur, points), et ses morceaux s'ils ont changé.
+    /// `false` si une image n'a pas pu être prête à temps (on réessaie à
+    /// l'image suivante).
+    ///
+    /// Les calques suivent le repère ordinaire de Core Animation sur Mac :
+    /// origine en bas à gauche, y vers le haut (une image s'y affiche à
+    /// l'endroit). Le calque qui porte la chose est placé au coin haut
+    /// gauche de sa toile ; chaque morceau y descend (y négatif).
+    fn update(&mut self, shown: &Shown, screen: (f64, f64, f64), images: &mut Images) -> bool {
         let position = (
             shown.origin.0 / shown.scale - screen.0,
-            shown.origin.1 / shown.scale - screen.1,
+            screen.2 - (shown.origin.1 / shown.scale - screen.1),
         );
         if self.position != Some(position) {
             self.container.set_position(position.0, position.1);
@@ -303,8 +309,10 @@ impl Node {
             }
             // L'image a une bordure transparente d'un pixel (ses bords
             // tournés restent lisses) : son coin est à (-1, -1).
-            let transform =
-                (to_points * piece.transform * Affine::translate((-1.0, -1.0))).as_coeffs();
+            let transform = upright(
+                (to_points * piece.transform * Affine::translate((-1.0, -1.0))).as_coeffs(),
+                f64::from(size.1),
+            );
             if slot.transform != transform {
                 slot.layer.set_transform(transform);
                 slot.transform = transform;
@@ -843,6 +851,18 @@ impl Default for Scene {
     }
 }
 
+/// La transformation d'un calque d'image de `height` pixels de haut, dans
+/// le repère de Core Animation (y vers le haut, l'image à l'endroit : sa
+/// première ligne en haut du calque), pour qu'il tombe là où `toward`
+/// (des pixels de l'image, y vers le bas, aux points du calque parent, y
+/// vers le bas depuis son origine) pose l'image.
+///
+/// Un point du calque (u, w) est la ligne `height - w` de l'image ; il va
+/// en `toward(u, height - w)`, puis y change de signe.
+fn upright([a, b, c, d, e, f]: [f64; 6], height: f64) -> [f64; 6] {
+    [a, -b, -c, d, c * height + e, -(d * height + f)]
+}
+
 /// RVBA prémultiplié → alpha non prémultiplié, sur place.
 fn unpremultiply(rgba: &mut [u8]) {
     for px in rgba.as_chunks_mut::<4>().0 {
@@ -871,7 +891,11 @@ fn update_layers(
     let Backend::Layers { root, nodes } = &mut overlay.backend else {
         return;
     };
-    let screen = (f64::from(overlay.rect.x), f64::from(overlay.rect.y));
+    let screen = (
+        f64::from(overlay.rect.x),
+        f64::from(overlay.rect.y),
+        f64::from(overlay.rect.h),
+    );
     // Ce qui est parti, ou n'est plus sur cet écran.
     nodes.retain(|entity, node| {
         let here = shown
@@ -931,5 +955,37 @@ fn write_pieces(pieces: &Pieces, at: Affine, out: &mut DisplayList) {
     }
     if open != 0 {
         out.pop_layer();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Applique une transformation `[a, b, c, d, tx, ty]` à un point.
+    fn apply([a, b, c, d, tx, ty]: [f64; 6], (x, y): (f64, f64)) -> (f64, f64) {
+        (a * x + c * y + tx, b * x + d * y + ty)
+    }
+
+    #[test]
+    fn images_land_where_they_should_in_the_upward_frame() {
+        // Une image de 10 × 6 pixels, tournée, agrandie, déplacée (y vers le bas).
+        let toward = Affine::translate((40.0, 25.0)) * Affine::rotate(0.4) * Affine::scale(1.5);
+        let t = upright(toward.as_coeffs(), 6.0);
+        for (u, v) in [
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (0.0, 6.0),
+            (10.0, 6.0),
+            (3.5, 2.25),
+        ] {
+            // La ligne `v` de l'image est à la hauteur `6 - v` du calque.
+            let (x, y) = apply(t, (u, 6.0 - v));
+            let p = toward * mouflon_render::vello::kurbo::Point::new(u, v);
+            assert!(
+                (x - p.x).abs() < 1e-9 && (y + p.y).abs() < 1e-9,
+                "({u}, {v})"
+            );
+        }
     }
 }

@@ -263,19 +263,25 @@ impl Obb {
             .iter()
             .map(|c| c.dot(dir))
             .fold(f32::NEG_INFINITY, f32::max);
-        let close: Vec<Vec2> = corners
-            .iter()
-            .copied()
-            .filter(|c| best - c.dot(dir) < 0.5)
-            .collect();
-        close.iter().fold(Vec2::ZERO, |a, &c| a + c) / close.len().max(1) as f32
+        // La moyenne des coins presque aussi avancés (sans rien allouer).
+        let (mut sum, mut count) = (Vec2::ZERO, 0u32);
+        for c in corners.iter().filter(|c| best - c.dot(dir) < 0.5) {
+            sum += *c;
+            count += 1;
+        }
+        sum / count.max(1) as f32
     }
 
-    fn project(&self, axis: Vec2) -> (f32, f32) {
-        let [ax, ay] = self.axes();
+    /// Ses côtés projetés sur `axis`, ses axes déjà connus.
+    fn project_with(&self, [ax, ay]: [Vec2; 2], axis: Vec2) -> (f32, f32) {
         let r = self.half.x * ax.dot(axis).abs() + self.half.y * ay.dot(axis).abs();
         let c = self.center.dot(axis);
         (c - r, c + r)
+    }
+
+    /// Rayon du cercle qui le contient, autour de son centre.
+    fn radius(&self) -> f32 {
+        self.half.length()
     }
 }
 
@@ -292,10 +298,18 @@ pub struct Contact {
 /// l'axe (un côté de l'un ou de l'autre) où ils se chevauchent le moins.
 #[must_use]
 pub fn obb_contact(a: &Obb, b: &Obb) -> Option<Contact> {
+    // Leurs cercles ne se touchent pas : leurs rectangles non plus.
+    // (Un peu de marge : jamais écarté à tort par un arrondi.)
+    let reach = a.radius() + b.radius() + 0.01;
+    let apart = b.center - a.center;
+    if apart.dot(apart) > reach * reach {
+        return None;
+    }
+    let (axes_a, axes_b) = (a.axes(), b.axes());
     let mut best: Option<(f32, Vec2)> = None;
-    for axis in a.axes().into_iter().chain(b.axes()) {
-        let (a0, a1) = a.project(axis);
-        let (b0, b1) = b.project(axis);
+    for axis in axes_a.into_iter().chain(axes_b) {
+        let (a0, a1) = a.project_with(axes_a, axis);
+        let (b0, b1) = b.project_with(axes_b, axis);
         let overlap = a1.min(b1) - a0.max(b0);
         if overlap <= 0.0 {
             return None;
@@ -376,7 +390,7 @@ pub struct Tracker {
     windows: Vec<Tracked>,
     world: World,
     /// Vitesse des dos des animaux (les fenêtres ont la leur, les sols aucune).
-    backs: Vec<(SurfaceId, Vec2)>,
+    backs: crate::world::IdMap<Vec2>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -409,7 +423,7 @@ impl Tracker {
     /// est, ou rien pour un sol.
     #[must_use]
     pub fn velocity(&self, surface: SurfaceId) -> Vec2 {
-        if let Some(&(_, vel)) = self.backs.iter().find(|(id, _)| *id == surface) {
+        if let Some(&vel) = self.backs.get(&surface) {
             return vel;
         }
         match self.world.surface(surface) {
@@ -542,8 +556,10 @@ impl Tracker {
         self.backs.clear();
         for back in backs {
             self.world.push_surface(back.surface);
-            self.backs.push((back.surface.id, back.vel));
+            self.backs.insert(back.surface.id, back.vel);
         }
+        // Une seule fois pour toutes les fenêtres et tous les dos.
+        self.world.reindex();
     }
 }
 
