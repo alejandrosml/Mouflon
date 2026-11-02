@@ -39,5 +39,6 @@ pub use skeleton::{
 };
 pub use surprise::{BEAM_MAX, Gust, SAUCER_HEIGHT, SAUCER_WIDTH, Saucer, SaucerView};
 pub use world::{
-    DOCK_ID, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World, exact_dock,
+    DOCK_ID, IdHasher, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World,
+    exact_dock,
 };

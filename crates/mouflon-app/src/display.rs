@@ -16,6 +16,7 @@
 //! par la boucle de winit : c'est le même code, avec une autre horloge.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
@@ -283,7 +284,7 @@ pub struct Display<C: Clock> {
     flock: Flock,
     scene: Scene,
     /// Le dessin de chaque animal (son numéro → son dessin).
-    arts: HashMap<u32, Arc<PetArt>>,
+    arts: HashMap<u32, Arc<PetArt>, BuildHasherDefault<mouflon_core::IdHasher>>,
     /// Le dessin de chaque définition à l'écran : les personnages secondaires
     /// prennent celui de leur espèce (ils en partagent la définition).
     def_arts: Vec<(Arc<PetDef>, Arc<PetArt>)>,
@@ -397,7 +398,7 @@ impl<C: Clock> Display<C> {
             world: World::default(),
             flock,
             scene: Scene::new(),
-            arts: HashMap::new(),
+            arts: HashMap::default(),
             def_arts: Vec::new(),
             done: 0,
             commands: 0,

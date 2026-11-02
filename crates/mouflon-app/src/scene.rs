@@ -16,6 +16,7 @@
 //! elle : elle peut ainsi vivre sur le fil de l'affichage.
 
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,10 @@ const IMAGE_BUDGET: usize = 96 << 20;
 /// reste attend l'image suivante (le calque garde la sienne en attendant).
 /// La première de chaque image passe toujours.
 const DECODE_BUDGET: Duration = Duration::from_millis(3);
+
+/// Une table rangée par identifiant (des entiers) : chaque image, chaque
+/// animal y passe à chaque image de l'écran, avec un hachage rapide.
+type IdMap<K, V> = HashMap<K, V, BuildHasherDefault<mouflon_core::IdHasher>>;
 
 /// Ce que montre la scène.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,7 +101,7 @@ struct Cached {
 /// image cuite), décompressée à sa première apparition.
 #[derive(Debug, Default)]
 struct Images {
-    map: HashMap<u64, Cached>,
+    map: IdMap<u64, Cached>,
     bytes: usize,
     frame: u64,
     spent: Duration,
@@ -367,7 +372,7 @@ enum Backend {
     /// Des calques Core Animation (Mac).
     Layers {
         root: platform::SceneLayer,
-        nodes: HashMap<Entity, Node>,
+        nodes: IdMap<Entity, Node>,
     },
     /// Le GPU : tout se redessine dans la fenêtre à chaque image.
     Gpu {
@@ -408,7 +413,9 @@ pub struct Timings {
 /// Toute la scène.
 pub struct Scene {
     places: Vec<Place>,
-    shown: HashMap<Entity, Shown>,
+    shown: IdMap<Entity, Shown>,
+    /// Ce qui est parti à cette image (gardé pour ne pas réallouer).
+    gone: Vec<Entity>,
     /// Ordre d'empilement : les soucoupes d'abord, puis les animaux dans
     /// l'ordre de leur arrivée.
     order: Vec<Entity>,
@@ -424,7 +431,8 @@ impl Scene {
     pub fn new() -> Self {
         Self {
             places: Vec::new(),
-            shown: HashMap::new(),
+            shown: IdMap::default(),
+            gone: Vec::new(),
             order: Vec::new(),
             images: Images::default(),
             gpu: None,
@@ -496,7 +504,7 @@ impl Scene {
         let backend = match overlay.surface {
             Surface::Layers(root) => Backend::Layers {
                 root,
-                nodes: HashMap::new(),
+                nodes: IdMap::default(),
             },
             Surface::Gpu(window) => {
                 let gpu = self.gpu.get_or_insert_with(Gpu::new);
@@ -660,10 +668,11 @@ impl Scene {
             scale,
             dark: style.dark,
         });
-        if !self.shown.contains_key(&entity) {
-            self.order.push(entity);
-        }
-        let shown = self.shown.entry(entity).or_default();
+        let order = &mut self.order;
+        let shown = self.shown.entry(entity).or_insert_with(|| {
+            order.push(entity);
+            Shown::default()
+        });
         shown.seen = self.frame;
         shown.origin = origin;
         shown.scale = scale;
@@ -734,9 +743,20 @@ impl Scene {
     /// images les moins récentes sont oubliées au-delà du budget.
     pub fn finish(&mut self) -> Timings {
         let frame = self.frame;
-        self.shown.retain(|_, shown| shown.seen == frame);
-        let shown = &self.shown;
-        self.order.retain(|entity| shown.contains_key(entity));
+        let mut gone = std::mem::take(&mut self.gone);
+        gone.clear();
+        self.shown.retain(|entity, shown| {
+            let here = shown.seen == frame;
+            if !here {
+                gone.push(*entity);
+            }
+            here
+        });
+        // L'ordre ne se refait que si quelque chose est parti.
+        if !gone.is_empty() {
+            let shown = &self.shown;
+            self.order.retain(|entity| shown.contains_key(entity));
+        }
         let decode_before = self.images.spent;
         let started = Instant::now();
         let uses_layers = self.places.iter().any(Place::uses_layers);
@@ -750,12 +770,13 @@ impl Scene {
             } = self;
             platform::scene_transaction(|| {
                 for place in places.iter_mut() {
-                    update_layers(place, shown, order, images);
+                    update_layers(place, shown, order, &gone, images);
                 }
                 self.timings.layers = started.elapsed();
             });
             self.timings.commit = started.elapsed().saturating_sub(self.timings.layers);
         }
+        self.gone = gone;
         self.timings.decode = self.images.spent.saturating_sub(decode_before);
         self.timings.layers = self.timings.layers.saturating_sub(self.timings.decode);
         self.render_gpu();
@@ -834,11 +855,13 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 }
 
 /// Les calques d'une fenêtre d'écran : un nœud par chose qui s'y trouve
-/// (même en partie), dans l'ordre d'empilement.
+/// (même en partie), dans l'ordre d'empilement. `gone` : ce qui n'est plus
+/// montré du tout depuis l'image d'avant.
 fn update_layers(
     place: &mut Place,
-    shown: &HashMap<Entity, Shown>,
+    shown: &IdMap<Entity, Shown>,
     order: &[Entity],
+    gone: &[Entity],
     images: &mut Images,
 ) {
     let overlay = place.info;
@@ -846,21 +869,21 @@ fn update_layers(
         return;
     };
     let screen = (f64::from(overlay.rect.x), f64::from(overlay.rect.y));
-    // Ce qui est parti, ou n'est plus sur cet écran.
-    nodes.retain(|entity, node| {
-        let here = shown
-            .get(entity)
-            .is_some_and(|s| overlaps(s.rect(), overlay.rect));
-        if !here {
+    // Ce qui est parti.
+    for entity in gone {
+        if let Some(node) = nodes.remove(entity) {
             node.container.remove();
         }
-        here
-    });
+    }
     for entity in order {
         let Some(shown) = shown.get(entity) else {
             continue;
         };
+        // Ce qui n'est pas (ou plus) sur cet écran.
         if !overlaps(shown.rect(), overlay.rect) {
+            if let Some(node) = nodes.remove(entity) {
+                node.container.remove();
+            }
             continue;
         }
         let node = nodes.entry(*entity).or_insert_with(|| {
@@ -905,5 +928,88 @@ fn write_pieces(pieces: &Pieces, at: Affine, out: &mut DisplayList) {
     }
     if open != 0 {
         out.pop_layer();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deux écrans côte à côte, de 800 × 600 points chacun (clés 1 et 2).
+    fn two_screens() -> Vec<Overlay> {
+        (0..2u64)
+            .map(|i| Overlay {
+                info: ScreenInfo {
+                    key: i + 1,
+                    rect: Rect::new(800.0 * i as f32, 0.0, 800.0, 600.0),
+                    scale: 1.0,
+                    hz: 60.0,
+                },
+                surface: Surface::Layers(platform::SceneLayer::new()),
+            })
+            .collect()
+    }
+
+    /// Les choses qui ont des calques sur chaque écran.
+    fn on_screens(scene: &Scene) -> Vec<Vec<Entity>> {
+        scene
+            .places
+            .iter()
+            .map(|place| match &place.backend {
+                Backend::Layers { nodes, .. } => {
+                    let mut here: Vec<Entity> = nodes.keys().copied().collect();
+                    here.sort_by_key(|e| match e {
+                        Entity::Pet(id) | Entity::Saucer(id) => *id,
+                    });
+                    here
+                }
+                Backend::Gpu { .. } => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Un animal a des calques sur l'écran où il est, les quitte quand il
+    /// passe sur l'autre, et n'en a plus nulle part quand il s'en va ; les
+    /// autres gardent les leurs.
+    #[test]
+    fn a_pet_has_layers_only_where_it_is() {
+        let def = Arc::new(crate::library::builtin_mannequin().expect("mannequin"));
+        let art = Arc::new(PetArt::load(&def).expect("dessin"));
+        let world = mouflon_core::World::new(vec![mouflon_core::Screen {
+            frame: Rect::new(0.0, 0.0, 1600.0, 600.0),
+            usable: Rect::new(0.0, 25.0, 1600.0, 560.0),
+            scale: 1.0,
+        }]);
+        let pet = mouflon_core::Pet::spawn(0, Arc::clone(&def), 3, &world, Some(200.0));
+        let mut scene = Scene::new();
+        assert_eq!(scene.set_overlays(two_screens()).len(), 2, "deux fenêtres");
+        let style = Style::default();
+        let frame = |scene: &mut Scene, pets: &[(u32, f32)]| {
+            scene.begin();
+            for &(id, x) in pets {
+                let mut view = pet.view(1.0);
+                view.ground = Vec2::new(x, 500.0);
+                scene.show_pet(id, &art, &view, &style);
+            }
+            scene.finish();
+            on_screens(scene)
+        };
+        let (a, b) = (Entity::Pet(1), Entity::Pet(2));
+        assert_eq!(
+            frame(&mut scene, &[(1, 200.0), (2, 1200.0)]),
+            [vec![a], vec![b]]
+        );
+        // Il passe sur l'autre écran (à cheval sur les deux en chemin).
+        assert_eq!(
+            frame(&mut scene, &[(1, 800.0), (2, 1200.0)]),
+            [vec![a], vec![a, b]]
+        );
+        assert_eq!(
+            frame(&mut scene, &[(1, 1400.0), (2, 1200.0)]),
+            [vec![], vec![a, b]]
+        );
+        // Il s'en va.
+        assert_eq!(frame(&mut scene, &[(2, 1200.0)]), [vec![], vec![b]]);
+        assert_eq!(frame(&mut scene, &[]), [Vec::<Entity>::new(), vec![]]);
     }
 }

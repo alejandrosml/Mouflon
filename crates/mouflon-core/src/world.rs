@@ -8,9 +8,9 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::math::{Rect, Vec2};
 
-/// Hachage des identifiants de surfaces (des entiers) : un mélange par
-/// multiplication, bien plus rapide que celui par défaut, sans rien à
-/// craindre ici d'identifiants choisis pour le mettre en défaut.
+/// Hachage des identifiants (des entiers : surfaces, animaux, images) : un
+/// mélange par multiplication, bien plus rapide que celui par défaut, sans
+/// rien à craindre ici d'identifiants choisis pour le mettre en défaut.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IdHasher(u64);
 
