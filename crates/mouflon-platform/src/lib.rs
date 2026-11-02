@@ -324,12 +324,13 @@ pub struct Beat {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
-    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, request_accessibility, screens, set_gallery_preview, set_login_item,
-    set_ui_handler, set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form,
-    snapshot_gallery, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
+    FrameClock, LoopWaker, accessibility_trusted, control_key_down, cursor_position, dock_frame,
+    follow_window_moves, frontmost_pid, keep_pet_window, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, request_accessibility, run_loop_for, screens,
+    set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
+    show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
+    warm_up_sounds, window_max_fps, windows,
 };
 
 /// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
@@ -484,8 +485,46 @@ mod fallback {
     }
 
     #[must_use]
+    pub fn login_item_available() -> bool {
+        false
+    }
+
+    #[must_use]
     pub fn login_item() -> LoginItem {
         LoginItem::Unavailable
+    }
+
+    /// La boucle d'attente du relevé, sans boucle d'événements du système :
+    /// une simple attente qu'un [`LoopWaker`] interrompt.
+    static WAKE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+    pub fn run_loop_for(timeout: std::time::Duration) {
+        let (lock, cvar) = &WAKE;
+        let Ok(woken) = lock.lock() else {
+            return;
+        };
+        if let Ok((mut woken, _)) = cvar.wait_timeout_while(woken, timeout, |woken| !*woken) {
+            *woken = false;
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct LoopWaker;
+
+    impl LoopWaker {
+        #[must_use]
+        pub fn current() -> Option<Self> {
+            Some(Self)
+        }
+
+        pub fn wake(&self) {
+            let (lock, cvar) = &WAKE;
+            if let Ok(mut woken) = lock.lock() {
+                *woken = true;
+                cvar.notify_all();
+            }
+        }
     }
 
     pub fn set_login_item(_on: bool) -> LoginItem {
@@ -545,12 +584,13 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    FrameClock, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    follow_window_moves, frontmost_pid, keep_pet_window, login_item, open_accessibility_settings,
-    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, request_accessibility, screens, set_gallery_preview, set_login_item,
-    set_ui_handler, set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form,
-    snapshot_gallery, update_form, user_activity, warm_up_sounds, window_max_fps, windows,
+    FrameClock, LoopWaker, accessibility_trusted, control_key_down, cursor_position, dock_frame,
+    follow_window_moves, frontmost_pid, keep_pet_window, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, request_accessibility, run_loop_for, screens,
+    set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
+    show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
+    warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

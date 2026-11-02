@@ -70,6 +70,9 @@ pub enum UserEvent {
     GalleryPreview(u32, Vec<platform::GalleryImage>),
     /// Un article du menu d'un animal, un contrôle de la fenêtre des réglages.
     Ui(platform::UiEvent),
+    /// Ce que le système dit de l'ouverture à l'ouverture de session (voir
+    /// `App::ask_login_item`).
+    LoginItem(platform::LoginItem),
 }
 
 /// Ce qu'un essai fait de lui-même à mi-parcours, pour passer aussi par un
@@ -222,16 +225,18 @@ pub struct App {
     resizing: Vec<(u32, Entry)>,
     /// Essai (`MOUFLON_ESSAI`) : fin prévue, étapes à venir et mesures de fluidité.
     trial_end: Option<Instant>,
-    /// Ce que fait l'utilisateur, au dernier relevé (voir `App::user_activity`).
-    activity: Cell<Option<(Instant, platform::UserActivity)>>,
+    /// Ce que fait l'utilisateur, au dernier relevé, et quand ce relevé est
+    /// arrivé (voir `App::user_activity`).
+    activity: Option<(Instant, platform::UserActivity)>,
     /// Personne devant la machine (essai de la CI) : on ne regarde pas ce
     /// que fait l'utilisateur.
     no_user: bool,
-    /// Apps dont les fenêtres bougeant sont signalées, et si l'Accessibilité
-    /// le permettait (voir `App::follow_moves`).
-    followed: Option<(bool, Vec<i32>)>,
-    /// L'autorisation d'Accessibilité, et quand elle a été relue.
-    trust: Option<(Instant, bool)>,
+    /// Apps dont les fenêtres qui bougent sont signalées par l'Accessibilité
+    /// (au dernier relevé), et l'autorisation d'Accessibilité.
+    followed: Option<u32>,
+    trusted: bool,
+    /// Dernière note au journal d'une fenêtre qui bouge (essais), par fenêtre.
+    window_notes: HashMap<u64, Instant>,
     trial_steps: Vec<(Instant, TrialStep)>,
     stats: Option<crate::stats::FrameStats>,
     frontmost: Option<i32>,
@@ -410,10 +415,11 @@ impl App {
             decoding: HashSet::new(),
             resizing: Vec::new(),
             trial_end: None,
-            activity: Cell::new(None),
+            activity: None,
             no_user: std::env::var_os("MOUFLON_ESSAI_CI").is_some(),
             followed: None,
-            trust: None,
+            trusted: false,
+            window_notes: HashMap::new(),
             trial_steps: Vec::new(),
             stats: None,
             frontmost: None,
@@ -454,26 +460,20 @@ impl App {
         }
     }
 
-    /// Ce que fait l'utilisateur (voir `platform::user_activity`), demandé
-    /// au système deux fois par seconde au plus. Pas dans la CI : personne
-    /// n'y touche à la machine, les animaux y dormiraient tout l'essai.
+    /// Ce que fait l'utilisateur (voir `platform::user_activity`), tel que
+    /// le dit le dernier relevé (quatre par seconde au moins), vieilli du
+    /// temps passé depuis. Pas dans la CI : personne n'y touche à la
+    /// machine, les animaux y dormiraient tout l'essai.
     fn user_activity(&self) -> Option<platform::UserActivity> {
         if self.no_user {
             return None;
         }
-        let now = Instant::now();
-        if let Some((at, known)) = self.activity.get() {
-            let age = now.duration_since(at).as_secs_f64();
-            if age < 0.5 {
-                return Some(platform::UserActivity {
-                    since_key: known.since_key + age,
-                    idle: known.idle + age,
-                });
-            }
-        }
-        let fresh = platform::user_activity();
-        self.activity.set(fresh.map(|a| (now, a)));
-        fresh
+        let (at, known) = self.activity?;
+        let age = at.elapsed().as_secs_f64();
+        Some(platform::UserActivity {
+            since_key: known.since_key + age,
+            idle: known.idle + age,
+        })
     }
 
     fn refresh_screens(&mut self, event_loop: &ActiveEventLoop) {
@@ -611,76 +611,93 @@ impl App {
     }
 
     fn apply_snapshot(&mut self, event_loop: &ActiveEventLoop, snapshot: Snapshot, now: Instant) {
-        let dock = snapshot.dock.filter(|_| self.settings.walk_under_dock);
-        if dock != self.dock_frame {
-            // Le Dock se lit (ou plus) : l'autorisation d'Accessibilité a pu
-            // changer, la fenêtre des réglages le montre.
-            if dock.is_some() != self.dock_frame.is_some() {
-                platform::update_form(&crate::settings_window::values(&self.shown()));
-            }
-            self.dock_frame = dock;
-            self.refresh_screens(event_loop);
-        }
-        if let Some(stats) = &self.stats
-            && snapshot.windows.len() != self.os_windows.len()
-        {
-            stats.note(format_args!(
-                "fenêtres des autres apps : {} → {}",
-                self.os_windows.len(),
-                snapshot.windows.len()
-            ));
-        }
-        self.os_windows = snapshot.windows;
-        self.follow_moves();
-        self.refresh_windows(now);
-    }
-
-    /// Les apps dont les fenêtres servent de rebords préviennent quand l'une
-    /// d'elles bouge (avec l'autorisation d'Accessibilité seulement).
-    fn follow_moves(&mut self) {
-        let mut pids: Vec<i32> = self
-            .os_windows
-            .iter()
-            .filter(|w| w.is_walkable())
-            .map(|w| w.pid)
-            .collect();
-        pids.sort_unstable();
-        pids.dedup();
-        // L'autorisation peut arriver en cours de route : relue toutes les
-        // deux secondes.
-        let now = Instant::now();
-        let trusted = match self.trust {
-            Some((at, trusted)) if now.duration_since(at) < SCREEN_POLL => trusted,
-            _ => {
-                let trusted = platform::accessibility_trusted();
-                self.trust = Some((now, trusted));
-                trusted
-            }
-        };
-        if self.followed.as_ref() == Some(&(trusted, pids.clone())) {
-            return;
-        }
-        let count = platform::follow_window_moves(&pids);
-        if let Some(stats) = &self.stats
-            && self.followed.as_ref().is_none_or(|(t, _)| *t != trusted)
-        {
-            stats.note(format_args!(
-                "fenêtres suivies par l'Accessibilité : {count} app(s){}",
-                if trusted { "" } else { " (pas d'autorisation)" }
-            ));
-        }
-        self.followed = Some((trusted, pids));
-    }
-
-    /// Applique le dernier relevé des fenêtres (sans rien redemander au système,
-    /// sauf l'app au premier plan).
-    fn refresh_windows(&mut self, now: Instant) {
-        let me = platform::current_pid();
-        if let Some(pid) = platform::frontmost_pid()
-            && pid != me
+        // Ce que fait l'utilisateur, l'app au premier plan (sauf Mouflon
+        // lui-même, avec ses réglages) et l'autorisation d'Accessibilité :
+        // tout vient du relevé, aucune question au système ici.
+        self.activity = snapshot.activity.map(|activity| (now, activity));
+        if let Some(pid) = snapshot.frontmost
+            && pid != platform::current_pid()
         {
             self.frontmost = Some(pid);
         }
+        let trust_changed = snapshot.trusted != self.trusted;
+        self.trusted = snapshot.trusted;
+        if let Some(stats) = &self.stats
+            && (self.followed != Some(snapshot.followed) || trust_changed)
+        {
+            stats.note(format_args!(
+                "fenêtres suivies par l'Accessibilité : {} app(s){}",
+                snapshot.followed,
+                if snapshot.trusted {
+                    ""
+                } else {
+                    " (pas d'autorisation)"
+                }
+            ));
+        }
+        self.followed = Some(snapshot.followed);
+        let dock = snapshot.dock.filter(|_| self.settings.walk_under_dock);
+        if dock != self.dock_frame {
+            self.dock_frame = dock;
+            self.refresh_screens(event_loop);
+        }
+        if trust_changed {
+            // La fenêtre des réglages montre ce qui manque (ou plus).
+            platform::update_form(&crate::settings_window::values(&self.shown()));
+        }
+        if self.stats.is_some() {
+            self.note_window_changes(&snapshot.windows, now);
+        }
+        self.os_windows = snapshot.windows;
+        self.refresh_windows(now);
+    }
+
+    /// Au journal d'un essai : les fenêtres des autres apps qui arrivent,
+    /// partent, bougent (au plus deux fois par seconde chacune) ou changent
+    /// de niveau.
+    fn note_window_changes(&mut self, windows: &[platform::OsWindow], now: Instant) {
+        let Some(stats) = &self.stats else {
+            return;
+        };
+        let describe = |w: &platform::OsWindow| {
+            format!(
+                "n° {} de {} (pid {}, niveau {}, {:.0}×{:.0} en {:.0},{:.0})",
+                w.id, w.owner, w.pid, w.layer, w.frame.w, w.frame.h, w.frame.x, w.frame.y
+            )
+        };
+        for w in windows {
+            match self.os_windows.iter().find(|old| old.id == w.id) {
+                None => stats.note(format_args!("fenêtre + {}", describe(w))),
+                Some(old) if old.layer != w.layer => {
+                    stats.note(format_args!(
+                        "fenêtre niveau {} → {}",
+                        old.layer,
+                        describe(w)
+                    ));
+                }
+                Some(old) if old.frame != w.frame => {
+                    let recent = self
+                        .window_notes
+                        .get(&w.id)
+                        .is_some_and(|at| now.duration_since(*at) < Duration::from_millis(500));
+                    if !recent {
+                        self.window_notes.insert(w.id, now);
+                        stats.note(format_args!("fenêtre ~ {}", describe(w)));
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        for old in &self.os_windows {
+            if !windows.iter().any(|w| w.id == old.id) {
+                stats.note(format_args!("fenêtre − {}", describe(old)));
+                self.window_notes.remove(&old.id);
+            }
+        }
+    }
+
+    /// Applique le dernier relevé des fenêtres (sans rien redemander au système).
+    fn refresh_windows(&mut self, now: Instant) {
         let mut windows = Vec::new();
         for w in &self.os_windows {
             // Calque transparent posé sur tout un écran (le clavier d'accessibilité
@@ -1181,7 +1198,14 @@ impl App {
         for pet in self.flock.pets_mut() {
             for event in pet.take_events() {
                 if let Some(stats) = &self.stats {
-                    stats.note(format_args!("n° {} {}", pet.id(), describe(&event, pet)));
+                    let mut what = describe(&event, pet);
+                    if let PetEvent::Landed { .. } = event
+                        && let Support::Ground { surface } = pet.support()
+                    {
+                        what.push_str(" sur ");
+                        what.push_str(&surface_name(&self.world, &self.os_windows, surface));
+                    }
+                    stats.note(format_args!("n° {} {what}", pet.id()));
                 }
                 if let PetEvent::Sound { sound, clip } = event
                     && audible
@@ -1528,10 +1552,24 @@ impl App {
             Action::SetSurprises(on) => self.set_surprises(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
             Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
-            Action::SetOpenAtLogin(on) => self.login = platform::set_login_item(on),
+            Action::SetOpenAtLogin(on) => {
+                // La case reste comme on l'a cochée en attendant la réponse.
+                self.login = if on {
+                    platform::LoginItem::On
+                } else {
+                    platform::LoginItem::Off
+                };
+                self.ask_login_item(Some(on));
+            }
             Action::OpenSettings => self.open_settings(),
             Action::OpenGallery => self.open_gallery(false),
-            Action::RefreshSettings => self.login = platform::login_item(),
+            Action::RefreshSettings => {
+                // Relus à côté ; la fenêtre suit quand les réponses arrivent.
+                self.ask_login_item(None);
+                if let Some(watcher) = &self.watcher {
+                    watcher.refresh_now();
+                }
+            }
             Action::OpenPetsFolder => {
                 if let Some(paths) = &self.paths {
                     let _ = std::fs::create_dir_all(&paths.pets);
@@ -1582,7 +1620,7 @@ impl App {
             realistic_physics: self.flock.realistic(),
             frontmost_only: self.settings.frontmost_only,
             walk_under_dock: self.settings.walk_under_dock,
-            trusted: platform::accessibility_trusted(),
+            trusted: self.trusted,
             login: self.login,
         }
     }
@@ -1590,6 +1628,31 @@ impl App {
     fn save_settings(&self) {
         if let Some(paths) = &self.paths {
             self.settings.save(&paths.settings);
+        }
+    }
+
+    /// Demande au système, sur un fil à part, où en est l'ouverture à
+    /// l'ouverture de session (`set` : la demander ou la retirer d'abord).
+    /// Il met parfois une cinquantaine de millisecondes à répondre ; la
+    /// réponse arrive par `UserEvent::LoginItem`.
+    fn ask_login_item(&self, set: Option<bool>) {
+        if !platform::login_item_available() {
+            return;
+        }
+        let proxy = Arc::clone(&self.proxy);
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-ouverture".into())
+            .spawn(move || {
+                let state = match set {
+                    Some(on) => platform::set_login_item(on),
+                    None => platform::login_item(),
+                };
+                if let Ok(proxy) = proxy.lock() {
+                    let _ = proxy.send_event(UserEvent::LoginItem(state));
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("ouverture à l'ouverture de session non relue : {e}");
         }
     }
 
@@ -1952,10 +2015,10 @@ impl App {
         }
     }
 
-    /// Ouvre la fenêtre des réglages, avec ce que le système dit de
-    /// l'ouverture de session à cet instant.
+    /// Ouvre la fenêtre des réglages, avec ce que le système a dit en
+    /// dernier de l'ouverture de session (relue à côté : la fenêtre suit).
     fn open_settings(&mut self) {
-        self.login = platform::login_item();
+        self.ask_login_item(None);
         let form = crate::settings_window::form(crate::i18n::texts(), self.login);
         let values = crate::settings_window::values(&self.shown());
         if !platform::show_form(&form, &values)
@@ -2706,6 +2769,34 @@ fn moving_rate(needed: f32, full: f64) -> f64 {
     full / divisor
 }
 
+/// Ce sur quoi se tient une surface, pour le journal d'un essai.
+fn surface_name(
+    world: &World,
+    windows: &[platform::OsWindow],
+    surface: mouflon_core::world::SurfaceId,
+) -> String {
+    if world
+        .surface(surface)
+        .is_some_and(|s| s.kind == mouflon_core::SurfaceKind::Floor)
+    {
+        return "le sol de l'écran".to_owned();
+    }
+    if let Some(pet) = mouflon_core::physics::surface_pet(surface) {
+        return format!("le dos de n° {pet}");
+    }
+    let window = surface >> 8;
+    if window == mouflon_core::DOCK_ID {
+        return "le Dock".to_owned();
+    }
+    match windows.iter().find(|w| w.id == window) {
+        Some(w) => format!(
+            "la fenêtre n° {} de {} (niveau {}, {:.0}×{:.0} en {:.0},{:.0})",
+            w.id, w.owner, w.layer, w.frame.w, w.frame.h, w.frame.x, w.frame.y
+        ),
+        None => format!("la fenêtre n° {window} (plus au relevé)"),
+    }
+}
+
 /// Un événement d'un animal, pour le journal d'un essai.
 fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
     match event {
@@ -2840,10 +2931,11 @@ impl ApplicationHandler<UserEvent> for App {
                 .as_ref()
                 .and_then(|s| Some((s.sender()?, s.begun()))),
         );
-        // Avec l'Accessibilité, une fenêtre qui bouge est relevée aussitôt
-        // (voir `follow_window_moves`).
-        let nudger = watcher.nudger();
-        platform::set_window_moves_handler(move || nudger.nudge());
+        // Ce que le système dit de l'ouverture de session, relu à côté.
+        if platform::login_item_available() {
+            self.login = platform::LoginItem::Off;
+            self.ask_login_item(None);
+        }
 
         // Animaux du lancement : ceux de l'essai s'il en demande, sinon le préféré.
         let mut starters: Vec<usize> = Vec::new();
@@ -3029,6 +3121,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::PetSizeReady(..) => "dessin à une autre taille prêt",
             UserEvent::GalleryPreview(..) => "aperçu de la galerie prêt",
             UserEvent::Ui(_) => "menu d'un animal ou réglages",
+            UserEvent::LoginItem(_) => "ouverture de session relue",
         };
         if let Some(stats) = &mut self.stats {
             if matches!(event, UserEvent::Frame) {
@@ -3062,6 +3155,12 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::PetSizeReady(pet, index) => self.pet_size_ready(pet, index),
             UserEvent::GalleryPreview(index, frames) => {
                 platform::set_gallery_preview(index, &frames);
+            }
+            UserEvent::LoginItem(state) => {
+                if state != self.login {
+                    self.login = state;
+                    self.publish();
+                }
             }
             UserEvent::Ui(platform::UiEvent::MenuClosed) => {
                 // L'animal du menu repart d'où il était.

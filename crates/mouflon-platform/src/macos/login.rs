@@ -34,13 +34,24 @@ fn status_of(service: &SMAppService) -> LoginItem {
     }
 }
 
-/// Où en est l'ouverture à l'ouverture de session.
+/// L'ouverture à l'ouverture de session est-elle réglable d'ici (macOS 13
+/// et plus, Mouflon lancé depuis son app) ? Ne demande rien au système : à
+/// appeler n'importe quand.
+#[must_use]
+pub fn login_item_available() -> bool {
+    available!(macos = 13.0) && in_app_bundle()
+}
+
+/// Où en est l'ouverture à l'ouverture de session. Le système met parfois
+/// une cinquantaine de millisecondes à répondre : à demander hors du fil
+/// de l'affichage.
 #[must_use]
 pub fn login_item() -> LoginItem {
     service().map_or(LoginItem::Unavailable, |service| status_of(&service))
 }
 
-/// Demande (ou retire) l'ouverture à l'ouverture de session, et renvoie
+/// Demande (ou retire) l'ouverture à l'ouverture de session (hors du fil
+/// de l'affichage, comme [`login_item`]), et renvoie
 /// ce qu'en dit ensuite le système : c'est ce qui compte, même quand la
 /// demande a renvoyé une erreur (déjà inscrit, accord en attente…).
 pub fn set_login_item(on: bool) -> LoginItem {

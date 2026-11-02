@@ -96,6 +96,14 @@ fi
     echo "== accessibilité (réduire les animations, la transparence)"
     defaults read com.apple.universalaccess reduceMotion 2>&1
     defaults read com.apple.universalaccess reduceTransparency 2>&1
+    # Stage Manager (GloballyEnabled) et ce qu'il garde sur les côtés : des
+    # fenêtres que macOS annonce mais qu'on ne voit pas toujours.
+    echo "== Stage Manager (com.apple.WindowManager)"
+    defaults read com.apple.WindowManager 2>&1
+    echo "== Dock (masquage, position, taille)"
+    defaults read com.apple.dock autohide 2>&1
+    defaults read com.apple.dock orientation 2>&1
+    defaults read com.apple.dock tilesize 2>&1
     echo "== écrans"; system_profiler SPDisplaysDataType 2>&1
     echo "== Mouflon"; ls -la "$BIN"; codesign -dv "$APP" 2>&1
 } > "$OUT/systeme-avant.txt" 2>&1

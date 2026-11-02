@@ -7,6 +7,7 @@
 
 mod app;
 mod gpu;
+mod helper;
 mod i18n;
 mod icon;
 mod library;
@@ -15,6 +16,7 @@ mod quick;
 mod settings;
 mod settings_window;
 mod stats;
+mod survey;
 mod watch;
 
 use winit::event_loop::EventLoop;
@@ -31,6 +33,15 @@ fn main() {
     )
     .format_timestamp_millis()
     .init();
+
+    // Le processus auxiliaire du relevé (voir `helper`) : rien d'autre.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == survey::HELPER_ARG)
+    {
+        helper::run();
+        return;
+    }
 
     let paths = settings::Paths::new();
     let mut settings = paths

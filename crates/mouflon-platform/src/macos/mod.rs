@@ -8,6 +8,7 @@ mod gallery;
 mod login;
 mod moves;
 mod popup;
+mod runloop;
 mod sound;
 mod ui;
 
@@ -15,9 +16,10 @@ pub use actions::set_ui_handler;
 pub use clock::FrameClock;
 pub use form::{show_form, snapshot_form, update_form};
 pub use gallery::{set_gallery_preview, show_gallery, snapshot_gallery};
-pub use login::{login_item, open_login_items_settings, set_login_item};
+pub use login::{login_item, login_item_available, open_login_items_settings, set_login_item};
 pub use moves::{follow_window_moves, set_window_moves_handler};
 pub use popup::pop_up_menu;
+pub use runloop::{LoopWaker, run_loop_for};
 pub use sound::{play_sound, warm_up_sounds};
 pub use ui::show_about;
 
