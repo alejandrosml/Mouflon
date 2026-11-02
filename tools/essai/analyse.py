@@ -569,9 +569,11 @@ def report_animations(trial):
 # Ce que le dessin d'un animal peut faire de plus que sa vitesse sans sauter :
 # rejoindre son corps replacé d'un coup par la simulation (au plus
 # `SMOOTH_SPEED` du cœur, en points par seconde), et rouler sur un coin
-# (points par radian, en taille 1).
+# (points par radian, en taille 1). La simulation avance par pas fixes de
+# 1/120 s : une image peut en compter un de plus que sa durée.
 GLIDE_SPEED = 1000.0
 ROLL_REACH = 50.0
+TICK = 1 / 120
 
 
 def pet_size(trial):
@@ -597,7 +599,8 @@ def report_jumps(trial):
             expected = (abs(p["vx"]) + abs(p["vy"]) + abs(q["vx"]) + abs(q["vy"])) * 0.5 * dt
             # Ce qu'on voit sans saut : la vitesse (avec de la marge), la
             # glissade du dessin vers son corps, et le roulis.
-            allowed = 3 * expected + GLIDE_SPEED * dt + abs(p["roll"] - q["roll"]) * ROLL_REACH * size
+            allowed = (3 * expected + GLIDE_SPEED * (dt + TICK)
+                       + abs(p["roll"] - q["roll"]) * ROLL_REACH * size)
             if dist > max(6.0 * size, allowed):
                 jumps.append((b["t"], pid, p["behavior"], dist, expected))
     section(f"SAUTS DE POSITION (au-delà de la vitesse, d'une glissade et du roulis) : {len(jumps)}")
