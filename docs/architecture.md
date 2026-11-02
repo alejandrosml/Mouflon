@@ -8,6 +8,51 @@ Le but : une fluidité parfaite du lancement à la fermeture, sans aucun
 ralentissement quel que soit le nombre de moutons, la mémoire étant la
 seule limite. On reste en Rust.
 
+## 0. Où on en est (2 novembre 2026)
+
+Les étapes 1 à 4 sont faites, la 5 en bonne partie, la 6 commencée (voir le
+tableau de la partie 4). Ce que mesurent les essais de la CI (machine
+virtuelle à trois cœurs, écran à 60 Hz, collisions et physique réaliste) :
+
+| | une fenêtre par animal (31 oct.) | calques, fil principal (`41db34e`) | calques, fil de l'affichage (`8308f87`) |
+|---|---|---|---|
+| essai de trois minutes : images en retard | — | 0,93 % | 0,44 % |
+| horloge de l'écran, de la synchronisation à l'appel (médiane) | — | 0,75 ms | 0,24 ms |
+| essai de charge : images en retard | — | 1,40 % | 0,08 % |
+| … avec 100, 500 et 1 000 animaux | — | 1,52 %, 1,24 %, 2,50 % | 0, 0, 0 |
+| préparation d'une image avec 1 000 animaux (médiane, 99 %) | — | 8,3 et 20,6 ms | 8,4 et 11,8 ms |
+
+Les retards qui restent viennent de l'écran (rafraîchissements sautés par
+l'horloge de la machine virtuelle), d'un fil qui attend un cœur, et des
+instantanés de la scène que prennent les essais. Plus aucun ne vient du fil
+principal : il ne fait plus d'images.
+
+Ce qui a été fait, en bref :
+- **processus auxiliaire** (`helper.rs`, `survey.rs`, `watch.rs`) : le
+  relevé des fenêtres, le Dock, l'Accessibilité et l'app au premier plan ;
+- **une fenêtre par écran** (`screens.rs`, fil principal) et une **scène
+  de calques** (`scene.rs`) : chaque animal en morceaux d'image partagés
+  (`mouflon_render::pieces`), une seule transaction par image. Les calques
+  sont dans le repère de la vue de la fenêtre, qu'AppKit retourne (winit la
+  déclare `isFlipped`) : origine en haut à gauche, y vers le bas. Les
+  instantanés appliquent le même retournement, et l'analyse de chaque essai
+  les compare aux captures de l'écran ;
+- **le fil de l'affichage** (`display.rs`) : troupeau, monde, scène et
+  rythme, réveillé par un `CADisplayLink` inscrit sur sa propre boucle. Le
+  fil principal lui envoie des demandes numérotées et reçoit ce qu'il doit
+  savoir (le troupeau pour les menus, les fenêtres qui prennent la souris,
+  l'animal dont ouvrir le menu, une nouvelle horloge, la fin d'un essai).
+  Avec le GPU (`MOUFLON_GPU=1`), l'affichage reste sur le fil principal
+  (`MOUFLON_AFFICHAGE=principal` l'y force aussi, pour comparer) ;
+- **la foule** : les paires proches par balayage, en deux sortes ajustées à
+  ce qui peut arriver (des dessins qui se touchent à la même hauteur, dont
+  l'un va de côté ; des corps, dont l'un est en l'air), les surfaces rangées
+  par colonnes, et un essai de charge (20, 100, 500, 1 000 animaux).
+
+Ce qui reste : alléger la simulation des moutons calmes (une foule serrée de
+mille moutons coûte encore 5 ms de simulation par image sur la machine de
+la CI) ; retirer Vello du programme ; des tests pour chaque partie de l'app.
+
 ## 1. Ce que disent les essais
 
 Les deux essais ont tourné l'un après l'autre sur le même Mac, avec la même
@@ -218,15 +263,15 @@ La CI échouera si un essai montre un retard causé par Mouflon.
 
 Chaque étape donne une version à essayer sur le vrai Mac.
 
-| étape | contenu | durée estimée |
-|---|---|---|
-| 0 (fait) | sauts à l'atterrissage, moutons posés en l'air sur un dos | — |
-| 1 | processus auxiliaire pour les appels système, journal des fenêtres sous les moutons | une demi-journée |
-| 2 | scène : une fenêtre par écran et des calques pour les animaux en images (images partagées, cache des images vivantes, survol, prise, menus, dépôt) | deux jours |
-| 3 | tout en morceaux : dessins vectoriels, squelettes, ombres, particules, surprises ; fin des fenêtres par animal et de Vello | un à deux jours |
-| 4 | fil d'affichage : simulation et calques hors du fil principal | un jour |
-| 5 | des milliers de moutons : grille, simulation allégée au calme, essai de charge | un jour |
-| 6 | découpage de l'app, tests de chaque partie, documentation | un à deux jours |
+| étape | contenu | durée estimée | état |
+|---|---|---|---|
+| 0 | sauts à l'atterrissage, moutons posés en l'air sur un dos | — | fait |
+| 1 | processus auxiliaire pour les appels système, journal des fenêtres sous les moutons | une demi-journée | fait (`ac180e5`) |
+| 2 | scène : une fenêtre par écran et des calques pour les animaux en images (images partagées, cache des images vivantes, survol, prise, menus, dépôt) | deux jours | fait (`de49997`, à l'endroit depuis `8308f87`) |
+| 3 | tout en morceaux : dessins vectoriels, squelettes, ombres, particules, surprises ; fin des fenêtres par animal et de Vello | un à deux jours | fait, sauf Vello |
+| 4 | fil d'affichage : simulation et calques hors du fil principal | un jour | fait (`8308f87`) |
+| 5 | des milliers de moutons : grille, simulation allégée au calme, essai de charge | un jour | balayage, surfaces par colonnes, essai de charge ; reste le calme |
+| 6 | découpage de l'app, tests de chaque partie, documentation | un à deux jours | commencé (affichage, fenêtres des écrans, relevé à part) |
 
 Soit une semaine et demie de sessions, avec un essai réel entre les étapes.
 
@@ -237,9 +282,13 @@ Soit une semaine et demie de sessions, avec un essai réel entre les étapes.
   invisible pourrait suivre le seul mouton sous le curseur. À mesurer dès
   l'étape 2.
 - **Core Animation hors du fil principal** : permis pour des calques qui
-  nous appartiennent, avec des transactions explicites. Un prototype le
-  vérifiera avant l'étape 4. Sinon, la transaction est validée par le fil
-  principal (moins de 0,3 ms), sans le reste.
+  nous appartiennent, avec des transactions explicites (Firefox fait de même
+  depuis son fil de composition). Le risque qui reste : qu'AppKit ait à
+  redessiner ou à disposer un de ses propres calques de la fenêtre au moment
+  où notre fil valide une transaction. La vue de chaque fenêtre d'écran ne
+  dessine donc jamais rien elle-même (`NSViewLayerContentsRedrawNever`), et
+  les fenêtres ne bougent ni ne changent de taille. En cas de doute,
+  `MOUFLON_AFFICHAGE=principal` remet tout sur le fil principal.
 - **Mémoire des images décompressées** pour les grandes planches : cache des
   images vivantes, décompression en avance et sur un autre fil.
 - **Ce que macOS fait des fenêtres d'écran** (Spaces, apps en plein écran,

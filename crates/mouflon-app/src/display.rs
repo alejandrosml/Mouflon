@@ -39,9 +39,12 @@ use crate::watch::{Snapshot, Watcher};
 /// affiche les fenêtres et que tout soit en route avant que le premier
 /// animal ne tombe.
 pub const SETTLE: Duration = Duration::from_millis(300);
-/// Sans battement de l'horloge de l'écran depuis ce délai (écran en veille,
-/// débranché…), la minuterie prend le relais ; au-delà du second, l'écran
-/// dort sans doute : on ralentit.
+/// Sans battement de l'horloge de l'écran depuis deux images et demie
+/// (entre ces deux délais), la minuterie prend le relais : un battement qui
+/// manque (écran en veille, débranché, horloge qui hoquette) ne coûte qu'une
+/// image ou deux. Au-delà du dernier délai, l'écran dort sans doute : on
+/// ralentit.
+const CLOCK_SILENT_MIN: Duration = Duration::from_millis(25);
 const CLOCK_SILENT: Duration = Duration::from_millis(150);
 const CLOCK_ASLEEP: Duration = Duration::from_secs(1);
 /// Une horloge qui tourne mais ne bat plus depuis ce délai (écran changé,
@@ -327,6 +330,9 @@ pub struct Display<C: Clock> {
     /// présent est arrivée à cette heure.
     clock_asked: bool,
     clock_since: Instant,
+    /// Silence de l'horloge au-delà duquel la minuterie prend le relais (il
+    /// suit la cadence).
+    silence: Duration,
     last_tick: Instant,
     settle_until: Option<Instant>,
     /// Prochaine image prévue par la minuterie (`None` : tout de suite).
@@ -416,6 +422,7 @@ impl<C: Clock> Display<C> {
             shown_at: None,
             clock_asked: false,
             clock_since: now,
+            silence: CLOCK_SILENT,
             last_tick: now,
             settle_until: None,
             next_frame: None,
@@ -514,7 +521,7 @@ impl<C: Clock> Display<C> {
         self.clock.as_ref().is_some_and(Clock::is_running)
             && self
                 .clock_beat
-                .is_some_and(|beat| now.duration_since(beat) < CLOCK_SILENT)
+                .is_some_and(|beat| now.duration_since(beat) < self.silence)
     }
 
     /// Une image est-elle à faire sur la minuterie maintenant ?
@@ -1547,13 +1554,14 @@ impl<C: Clock> Display<C> {
             return;
         };
         let interval = Duration::from_secs_f64(1.0 / fps);
+        self.silence = interval.mul_f32(2.5).clamp(CLOCK_SILENT_MIN, CLOCK_SILENT);
         let wake = match &self.clock {
             Some(clock) => {
                 clock.set_rate(fps as f32);
                 clock.set_running(true);
                 match self.clock_beat.map(|beat| now.duration_since(beat)) {
                     // Tant que l'horloge bat, c'est elle qui réveille.
-                    Some(silent) if silent < CLOCK_SILENT => CLOCK_SILENT,
+                    Some(silent) if silent < self.silence => self.silence,
                     // Muette depuis longtemps : l'écran dort, rien ne se voit.
                     Some(silent) if silent > CLOCK_ASLEEP => Duration::from_millis(100),
                     _ => interval,
@@ -1565,7 +1573,7 @@ impl<C: Clock> Display<C> {
         if self.stats.is_some() {
             // L'horloge qui bat amène l'image suivante dans un intervalle ;
             // sinon, c'est la minuterie.
-            let clocked = self.clock.is_some() && wake == CLOCK_SILENT;
+            let clocked = self.clock.is_some() && wake == self.silence;
             platform::diag::expect_frame(if clocked { interval } else { wake });
         }
     }

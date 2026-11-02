@@ -2,8 +2,8 @@
 # Essai de trois minutes de Mouflon : double-clique ce fichier.
 #
 # Mouflon (celui de dist/) tourne trois minutes en notant tout ce qui peut
-# expliquer un à-coup : chaque image, chaque événement, la pile du fil
-# principal quand une image tarde, les ressources du processus, de chacun de
+# expliquer un à-coup : chaque image, chaque événement, la pile du fil qui
+# fait les images quand l'une d'elles tarde, les ressources du processus, de chacun de
 # ses fils et du système. Autour de lui, le Mac est observé : `sample` (où
 # passe le temps de calcul), `top` (les autres apps), `log stream` (messages
 # du système), `vm_stat`, `pmset` (chaleur, batterie). Tout va dans

@@ -153,9 +153,9 @@ closes and a notification tells you it is done. Everything goes to
 - the journal of the trial (`journal.log`): every image (gap, time spent in
   each part, what the screen's clock said, allocations), every event
   (collisions, landings, sounds, windows, menus, notifications of the system
-  such as sleep, spaces or the frontmost app), the stack of the main thread
-  whenever an image is late or the event loop stays busy (sampled every 4 ms
-  by a watchdog thread), and every ten seconds the resources of the process
+  such as sleep, spaces or the frontmost app), the stack of the thread that
+  makes the images whenever one is late (sampled every 4 ms by a watchdog
+  thread), and every ten seconds the resources of the process
   (CPU, performance cores, energy, instructions, time waiting for a core,
   wakeups, disk, memory, page faults, context switches, system calls), of
   each of its threads and of the system (load, memory pressure, swap,
@@ -165,16 +165,18 @@ closes and a notification tells you it is done. Everything goes to
   and `footprint`, with the time of each step (`reperes.txt`).
 
 `tools/essai/analyse.py essais/<date>/` reads it all and lists what went
-wrong: hitches and their likely cause, stalls of the main thread and where it
-was, the slowest images, animations short of images, position jumps, each
-collision step by step, the resources, and what the Mac was doing around the
-longest hitches. The CI runs the same trial on every Mac build.
+wrong: hitches and their likely cause, stalls of the thread that makes the
+images and where it was, the slowest images, animations short of images,
+position jumps, each collision step by step, the resources, and what the Mac
+was doing around the longest hitches. The CI runs the same trial on every Mac
+build, with pictures of the scene compared to screen captures.
 
-`Essai de 3 minutes (une fenêtre par écran).command` runs the same trial with
-another way of showing the pets, to compare the two (`MOUFLON_SCENE=1`): one
-transparent window per screen where all the pets (and saucers) are drawn,
-taking clicks only when the pointer is on a pet, instead of one window per
-pet moved at every image. Its results go to `essais/<date>-une-fenetre/`.
+`Essai de 3 minutes (GPU).command` runs the same trial with the pets drawn on
+the GPU in each screen's window instead of Core Animation layers
+(`MOUFLON_GPU=1`; the images are then made on the main thread), to compare the
+two; its results go to `essais/<date>-gpu/`. `Essai de charge.command` adds
+pets in steps (20, then 100, 500 and 1,000) for two and a half minutes, and the
+analysis measures each step; its results go to `essais/<date>-charge/`.
 
 Without the script: `MOUFLON_ESSAI=180` runs a trial of 180 seconds
 (`MOUFLON_JOURNAL` names the journal, `mouflon-essai.log` by default),
@@ -492,9 +494,9 @@ va dans `essais/<date>/` :
   dans chaque partie, ce qu'a dit l'horloge de l'écran, allocations), chaque
   événement (collisions, atterrissages, sons, fenêtres, menus, notifications
   du système comme la veille, les bureaux ou l'app au premier plan), la pile
-  du fil principal dès qu'une image tarde ou que la boucle d'événements reste
-  occupée (relevée toutes les 4 ms par un fil de surveillance), et toutes les
-  dix secondes les ressources du processus (processeur, cœurs performants,
+  du fil qui fait les images dès que l'une d'elles tarde (relevée toutes les
+  4 ms par un fil de surveillance), et toutes les dix secondes les
+  ressources du processus (processeur, cœurs performants,
   énergie, instructions, attente d'un cœur, réveils, disque, mémoire, fautes
   de page, changements de contexte, appels système), de chacun de ses fils et
   du système (charge, pression mémoire, échange, état thermique, économie
@@ -504,18 +506,20 @@ va dans `essais/<date>/` :
   `footprint`, avec l'heure de chaque étape (`reperes.txt`).
 
 `tools/essai/analyse.py essais/<date>/` lit le tout et dit ce qui cloche : les
-à-coups et leur cause probable, les blocages du fil principal et où il en
-était, les images les plus longues à préparer, les animations qui manquent
-d'images, les sauts de position, chaque collision pas à pas, les ressources,
-et ce que faisait le Mac autour des plus longs à-coups. La CI fait le même
-essai à chaque construction pour Mac.
+à-coups et leur cause probable, les blocages du fil qui fait les images et où
+il en était, les images les plus longues à préparer, les animations qui
+manquent d'images, les sauts de position, chaque collision pas à pas, les
+ressources, et ce que faisait le Mac autour des plus longs à-coups. La CI fait
+le même essai à chaque construction pour Mac, avec des instantanés de la
+scène comparés à des captures de l'écran.
 
-`Essai de 3 minutes (une fenêtre par écran).command` fait le même essai avec
-une autre façon de montrer les animaux, pour comparer les deux
-(`MOUFLON_SCENE=1`) : une seule fenêtre transparente par écran, où se
-dessinent tous les animaux (et les soucoupes), qui ne prend les clics que
-quand le curseur est sur un animal, au lieu d'une fenêtre par animal
-déplacée à chaque image. Ses résultats vont dans `essais/<date>-une-fenetre/`.
+`Essai de 3 minutes (GPU).command` fait le même essai avec les animaux
+dessinés sur le GPU dans la fenêtre de chaque écran au lieu des calques Core
+Animation (`MOUFLON_GPU=1` ; les images se font alors sur le fil principal),
+pour comparer les deux ; ses résultats vont dans `essais/<date>-gpu/`.
+`Essai de charge.command` fait arriver des animaux par paliers (20, puis 100,
+500 et 1 000) pendant deux minutes et demie, et l'analyse mesure chaque
+palier ; ses résultats vont dans `essais/<date>-charge/`.
 
 Sans le script : `MOUFLON_ESSAI=180` lance un essai de 180 secondes
 (`MOUFLON_JOURNAL` nomme le journal, `mouflon-essai.log` par défaut),

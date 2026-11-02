@@ -5,13 +5,13 @@
     python3 tools/essai/analyse.py journal.log                # un journal seul
 
 Le journal (format décrit dans `crates/mouflon-app/src/stats.rs`) note chaque
-image, chaque événement, les retards du fil principal avec sa pile, et toutes
+image, chaque événement, les retards du fil des images avec sa pile, et toutes
 les dix secondes les ressources du processus, de ses fils et du système. Le
 dossier d'un essai (`Essai de 3 minutes.command`) y ajoute ce qui a été relevé
 autour : `top`, `log stream`, `sample`, `vm_stat`, `pmset`, et des repères.
 
 Ce script en tire ce qui cloche : les à-coups et leur cause probable, les
-blocages et où était le fil principal, les images longues à préparer, les
+blocages et où était le fil des images, les images longues à préparer, les
 animations trop lentes, les sauts de position, les collisions, puis les
 ressources (processeur, énergie, mémoire, allocations, fils, système) et ce
 qui se passait sur le Mac au moment des à-coups.
@@ -64,6 +64,9 @@ def pairs(tokens):
 class Trial:
     def __init__(self):
         self.header = []
+        # Le fil qui fait les images : celui de l'affichage (ligne SCENE), ou
+        # le fil principal (journaux d'avant, ou dessin sur le GPU).
+        self.frame_thread = "fil principal"
         self.frames = []
         self.events = []
         self.stalls = []      # dict(t, cause, gap, late, samples, asleep, mode, stacks=[(count, text)])
@@ -162,6 +165,8 @@ def parse(path):
                 trial.bilan += "\n" + line
             else:
                 trial.header.append(line)
+                if line.startswith("SCENE") and "fil de l'affichage" in line:
+                    trial.frame_thread = "fil de l'affichage"
                 if kind == "DEBUT":
                     parts = rest.split()
                     trial.start_epoch = float(parts[0])
@@ -219,12 +224,12 @@ def classify(trial, i, normal):
     for stall in trial.stalls:
         if before["t"] - 0.002 <= stall["t"] <= f["t"]:
             where = "endormi" if stall["asleep"] > stall["samples"] / 2 else "occupé"
-            return f"blocage du fil principal ({where})"
+            return f"blocage du {trial.frame_thread} ({where})"
     if f["clock"]:
         if v.get("mv", 0) >= 1:
             return "écran : rafraîchissements sautés par l'horloge"
         if v.get("vs", 0) > interval * 0.5:
-            return "horloge appelée en retard (fil principal pris, ou processus en attente d'un cœur)"
+            return f"horloge appelée en retard ({trial.frame_thread} pris, ou processus en attente d'un cœur)"
         if v.get("q", 0) > interval * 0.5:
             return "battement retenu dans la boucle d'événements"
         if v.get("co", 0) >= 1:
@@ -431,7 +436,7 @@ def report_clock(trial):
 
 
 def report_stalls(trial):
-    section(f"BLOCAGES ET GRANDS RETARDS DU FIL PRINCIPAL (racontés : {len(trial.stalls)}) :")
+    section(f"BLOCAGES ET GRANDS RETARDS DU {trial.frame_thread.upper()} (racontés : {len(trial.stalls)}) :")
     if not trial.stalls:
         print("  aucun")
     for stall in trial.stalls[:40]:
@@ -443,7 +448,7 @@ def report_stalls(trial):
             print(f"      {count:4d} × {short_stack(text)}")
     if len(trial.stalls) > 40:
         print(f"  … et {len(trial.stalls) - 40} autres")
-    # Où le fil principal attendait-il, tous retards confondus ?
+    # Où le fil des images attendait-il, tous retards confondus ?
     tops = Counter()
     for stall in trial.stalls:
         for count, text in stall["stacks"]:
