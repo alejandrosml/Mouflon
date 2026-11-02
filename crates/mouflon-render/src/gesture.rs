@@ -41,6 +41,23 @@ pub(crate) struct Gesturing {
     /// Pattes (voir [`leg_slot`]) : rotation ajoutée (positive : le sabot
     /// part en arrière) et levée.
     pub legs: [(f64, f64); 4],
+    /// Cabré (0 à 1) : tout l'animal tourne autour de ses hanches, l'avant
+    /// en l'air, les pattes de derrière restant à leur place (voir
+    /// [`rearing`]).
+    pub rear: f64,
+}
+
+/// De combien un animal cabré se dresse (radians) : le bélier qui se dresse
+/// avant de charger, l'avant à une trentaine de degrés.
+pub(crate) const REAR_ANGLE: f64 = 0.62;
+
+/// L'animal cabré autour de ses hanches `hips` (repère du dessin) :
+/// l'avant monte, l'arrière reste à sa place.
+pub(crate) fn rearing(rear: f64, hips: peniko::kurbo::Point) -> peniko::kurbo::Affine {
+    let p = hips.to_vec2();
+    peniko::kurbo::Affine::translate(p)
+        * peniko::kurbo::Affine::rotate(-REAR_ANGLE * rear)
+        * peniko::kurbo::Affine::translate(-p)
 }
 
 /// Rang d'une patte dans [`Gesturing::legs`] : devant du côté qu'on voit,
@@ -208,6 +225,43 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             g.head_shift = Vec2::new(1.2 * open, -1.6 * open);
             g.eyes = 0.95 * open;
             g.ears_back = 0.35 * open;
+        }
+        Gesture::Rear => {
+            // Il se dresse en un tiers de seconde, les pattes de devant
+            // repliées, le menton rentré, les oreilles couchées ; tient un
+            // instant en pédalant un peu de l'avant ; puis retombe d'un coup,
+            // tête la première.
+            let up = a * bump(0.0, 0.35, 0.85, 1.1, t);
+            let paddle = up * (TAU * 2.4 * t).sin();
+            g.rear = up;
+            g.head_angle = 0.3 * up + 0.18 * a * bump(1.0, 1.1, 1.15, 1.3, t);
+            g.ears_back = 0.8 * up;
+            g.legs = [
+                (1.15 * up + 0.2 * paddle, 0.0),
+                (0.95 * up - 0.2 * paddle, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+            ];
+            g.tail = -0.3 * up;
+        }
+        Gesture::Invite => {
+            // L'invitation au jeu des agneaux : la tête et l'avant baissés,
+            // les pattes de devant avancées et écartées, les oreilles en
+            // avant, il fixe l'autre en sautillant sur place.
+            let bow = a * smooth(0.0, 0.25, t);
+            let hop = (TAU * 2.2 * t).sin().abs();
+            g.head_angle = 0.32 * bow;
+            g.head_shift = Vec2::new(2.0 * bow, 4.0 * bow);
+            g.body_angle = 0.1 * bow;
+            g.body_shift = Vec2::new(0.0, -2.5 * bow * hop);
+            g.ears_back = -0.6 * bow;
+            g.legs = [
+                (-0.35 * bow, 0.0),
+                (-0.28 * bow, 0.0),
+                (0.05 * bow, 0.0),
+                (0.05 * bow, 0.0),
+            ];
+            g.tail = 0.4 * bow * (TAU * 3.0 * t).sin();
         }
         Gesture::Scratch => {
             // Un sabot arrière remonte gratter le ventre, à petits coups

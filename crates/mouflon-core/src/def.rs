@@ -512,10 +512,16 @@ pub enum Gesture {
     Bleat,
     /// Se gratte d'un sabot arrière, à petits coups rapides.
     Scratch,
+    /// Se cabre : l'avant se dresse sur les pattes de derrière, celles de
+    /// devant repliées, puis retombe (le bélier, avant de charger).
+    Rear,
+    /// Invite un autre à jouer : tête et avant baissés, il le fixe en
+    /// sautillant sur place.
+    Invite,
 }
 
 impl Gesture {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Shake,
         Self::Stretch,
         Self::Paw,
@@ -526,6 +532,8 @@ impl Gesture {
         Self::Yawn,
         Self::Bleat,
         Self::Scratch,
+        Self::Rear,
+        Self::Invite,
     ];
 
     /// Son nom dans un `pet.toml` (`motion = "shake"`…).
@@ -542,6 +550,8 @@ impl Gesture {
             Self::Yawn => "yawn",
             Self::Bleat => "bleat",
             Self::Scratch => "scratch",
+            Self::Rear => "rear",
+            Self::Invite => "invite",
         }
     }
 

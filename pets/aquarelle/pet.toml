@@ -305,6 +305,16 @@ next = [
     { to = "stand", weight = 1 },
 ]
 
+# L'invitation au jeu : il fixe un autre agneau, la tête et l'avant baissés,
+# en sautillant. Le moteur la propose de lui-même, surtout aux actifs, quand
+# un voisin de la famille est à deux ou trois longueurs ; l'autre accepte
+# souvent, et ils s'élancent l'un vers l'autre (`play_lunge`).
+[[behavior]]
+name = "play_invite"
+motion = "invite"
+duration = 1.4
+next = [{ to = "stand", weight = 2 }, { to = "gambol", weight = 1 }, { to = "look", weight = 1 }]
+
 [[behavior]]
 name = "fall"
 motion = "fall"
@@ -417,6 +427,14 @@ name = "back_up"
 motion = "back"
 speed = 38.0
 duration = [1.0, 1.6]
+next = [{ to = "rear", weight = 3 }, { to = "charge", weight = 2 }]
+
+# Se cabre : l'avant se dresse sur les pattes de derrière, celles de devant
+# repliées, puis retombe d'un coup, tête la première ; et il charge.
+[[behavior]]
+name = "rear"
+motion = "rear"
+duration = 1.15
 next = "charge"
 
 # Fonce, tête basse, oreilles couchées.

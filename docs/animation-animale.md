@@ -143,6 +143,12 @@ tasse tous les deux. Lainou, en images, a ses courses (`joue`).
 Avant chaque saut, un animal dessiné se ramasse 0,12 s, le corps écrasé :
 l'anticipation des animateurs, que l'œil attend.
 
+L'invitation au jeu (essai 19) : de temps en temps, un agneau qui en a envie
+(surtout chez les actifs) fixe un voisin de sa famille, à une ou trois
+longueurs, la tête et l'avant baissés, en sautillant ; l'autre accepte le
+plus souvent s'il est actif, et ils s'élancent l'un vers l'autre jusqu'au
+coup de front.
+
 ### Se coucher, se relever
 
 Le bovin se couche l'avant d'abord (il tombe sur les carpes, puis
@@ -179,6 +185,7 @@ le bord d'une fenêtre. Couché, `chew = true` : il rumine bol après bol
 | Se gratter | d'un sabot arrière, ou contre un support : 8 % des soins chez l'agneau (le toilettage à la bouche : 39 %) | `scratch` : un postérieur remonte gratter le ventre à petits coups rapides (4 Hz), la tête tournée vers lui, les yeux mi-clos |
 | Taper du pied | face à une menace (un chien), un pied levé puis posé avec force ; rare, et le chien s'arrête souvent | `stamp` : tête haute, oreilles dressées, une patte de devant monte lentement et s'abat ; quand le pointeur file tout près |
 | Gratter le sol | menace (bélier), et avant l'agnelage ; **pas** avant de se coucher | `paw` : un antérieur racle le sol, tête basse ; avant qu'un énervé ne charge |
+| Se cabrer | le mouflon canadien (bighorn) se dresse sur ses pattes de derrière avant le choc ; le mouflon de Corse, lui, recule de quelques mètres puis fonce tête baissée, sans se cabrer (OFB) | `rear` : tout l'animal tourne autour de ses hanches, l'avant dressé d'une trentaine de degrés, les pattes de devant repliées, le menton rentré, les oreilles couchées, puis il retombe d'un coup et charge ; le Mannequin et Aquarelle le font souvent après avoir reculé, le mouflon de Corse jamais |
 | Charger | le bélier recule, baisse la tête, fonce (le mouflon canadien se cabre, puis ≈ 40 km/h) | `paw`, puis le plus souvent `back` (il recule de quelques pas sans se retourner, tête basse), puis `charge` : tête basse, oreilles couchées, au galop ; s'il atteint un autre animal, le choc les tasse tous les deux |
 | Bêler | aigu bouche ouverte : isolement, stress ; grave bouche fermée : brebis et agneau proches ; sinon rare | `bleat` et les sons `mouth = true` : la bouche s'ouvre en 0,1 s, un léger vibrato |
 | Renifler | le museau tendu vers l'autre | `sniff` : quand deux moutons se croisent |
@@ -279,10 +286,21 @@ une oreille tressaille, ou, une fois sur trois, une patte.
 - Un clignement accompagne presque tous les grands mouvements du regard, et
   tout tour de tête de plus de 17°.
 
+- La pupille du mouton (de la chèvre, du cheval) est une fente horizontale,
+  dans un iris doré ou ambré : elle élargit le champ de vision à
+  l'horizontale et voit net le sol devant les pattes. Quand la tête descend
+  brouter, chaque œil tourne dans son orbite (cyclovergence), d'une
+  cinquantaine de degrés, peut-être plus : la pupille reste parallèle au sol
+  (Banks et al. 2015, *Science Advances*).
+
 **Dans Mouflon** : 0,27 s par clignement (fermé en 0,08 s, clos 0,03 s,
 rouvert en 0,16 s), toutes les 2,5 à 8 s, doublé une fois sur cinq ; il
 cligne aussi en faisant demi-tour. Les gestes ferment les yeux à leur façon
-(s'ébrouer, bâiller, sonné…).
+(s'ébrouer, bâiller, sonné…). Depuis l'essai 19, les pupilles sont des
+fentes horizontales dans un iris ambré, et le moteur les garde à
+l'horizontale quand la tête penche (en broutant, en courant, tenu en l'air),
+jusqu'à 0,9 radian (52°) : au-delà (une culbute), elles penchent avec la
+tête.
 
 ## 8. Le vent et la météo
 
@@ -312,7 +330,7 @@ l'écran restent fluides).
 | Le corps d'après les pieds | hauteur = min √(L² − Δx²) des pattes d'appui ; tangage d'après l'avant et l'arrière | approché : garrot et croupe calés sur les mi-appuis (le même résultat, sans calcul) |
 | Dynamique du second ordre (t3ssel8r) | un ressort réglé par une fréquence, un amortissement et une « réponse » (dépassement, anticipation) | oui : oreilles, queue, inclinaison, écrasement, balancement sont des ressorts amortis |
 | Ressorts à amortissement critique, inertialisation (Holden) | passer d'une pose à l'autre sans à-coup, en amortissant l'écart | oui : tous les poids (allures, poses, gestes, posture) s'approchent de leur cible en douceur |
-| Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | pas encore (nos queues sont d'une pièce) |
+| Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | à notre façon (essai 19) : une queue en deux ou trois morceaux est une chaîne de ressorts amortis, chacun suivant le précédent avec un temps de retard (2,2 puis 1,8 Hz) : un coup de queue descend jusqu'au bout, elle ondule |
 | Bruit de Perlin au repos (Improv) | de petits mouvements qui ne se répètent pas | en partie : regards, oreilles, queue et clignements tirés au hasard, respiration |
 | Clignements et regard (Eyes Alive) | clignements asymétriques, liés aux tours de tête | oui (voir plus haut) |
 | Principes de Disney (Lasseter) | écrasement à volume constant, anticipation, le timing fait le poids, les parties lâches traînent | écrasement à l'atterrissage, il se ramasse avant de sauter, secousse qui file de la tête à la queue, oreilles et queue en retard sur le corps ; gratter le sol et reculer avant de charger |
@@ -321,19 +339,20 @@ l'écran restent fluides).
 
 ## 10. Ce qui reste à faire
 
-Fait depuis (essai 18) : les regroupements, les jeux d'agneaux (sauts
-tordus, demi-tours en l'air, courses, coups de front), le bélier qui recule
-avant de charger, le sommeil la tête au sol et les pattes qui tressaillent,
-l'anticipation avant un saut. Reste :
+Fait à l'essai 18 : les regroupements, les jeux d'agneaux (sauts tordus,
+demi-tours en l'air, courses, coups de front), le bélier qui recule avant de
+charger, le sommeil la tête au sol et les pattes qui tressaillent,
+l'anticipation avant un saut. À l'essai 19 : le bélier qui se cabre, l'agneau
+qui invite au jeu, les queues qui ondulent, les pupilles horizontales.
+Reste :
 
-- Le bélier qui se cabre avant de charger (le mouflon canadien).
+- La toison qui bouge au vent et quand il court (des mèches qui traînent).
+- Le bélier en rut : le flehmen (lèvre retroussée), le cou tendu vers la
+  brebis.
+- L'agneau qui tète, la brebis qui l'appelle (un bêlement grave, bouche
+  fermée).
 - Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
   la tête au sol, ce que font nos moutons).
-- Une queue en chaîne de Verlet.
-- Les pupilles du mouton, horizontales, qui restent à l'horizontale quand
-  la tête descend brouter.
-- Un agneau qui invite au jeu (reculer, baisser la tête, fixer l'autre)
-  plutôt que d'attendre de croiser quelqu'un.
 
 ## Sources
 
@@ -345,6 +364,7 @@ Allures et biomécanique :
 - Dagg 1973, les allures des mammifères : <https://www.originalwisdom.com/wp-content/uploads/bsk-pdf-manager/2019/03/Dagg_1973_Gaits-in-mammals.pdf>
 - Heglund & Taylor 1988, vitesse et cadence : <https://www.originalwisdom.com/wp-content/uploads/bsk-pdf-manager/2019/10/Heglund-and-Taylor_1988_Speed-and-stride-frequency-and-energy-cost-per-stride-how-do-they-change-with-body-size-and-gait.pdf>
 - Jayes & Alexander 1978 (tableau des transitions) : <https://arxiv.org/pdf/2111.01674>
+- Les pupilles horizontales et la rotation de l'œil en broutant, Banks et al. 2015 : <https://theconversation.com/revealed-why-animals-pupils-come-in-different-shapes-and-sizes-45796>
 - Le pas du mouton : Agostinho 2012 <https://link.springer.com/article/10.1186/1746-6148-8-87> ; Mérinos <https://www.frontiersin.org/journals/bioengineering-and-biotechnology/articles/10.3389/fbioe.2024.1370101/full> ; Diogo 2021 <https://pmc.ncbi.nlm.nih.gov/articles/PMC8415828> ; mouton de montagne autrichien <https://doi.org/10.3920/CEP150008>
 - Lee 2011, la chèvre : <https://pmc.ncbi.nlm.nih.gov/articles/PMC3163420>
 - Rhodin 2022, les mouvements de la tête, du garrot et de la croupe : <https://doi.org/10.3390/ani12213053>

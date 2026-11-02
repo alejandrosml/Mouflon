@@ -356,7 +356,7 @@ impl SkeletonArt {
         let root = root_transform(s, facing, g, h, hold);
 
         // --- Les os avec un rôle, comme s'ils étaient libres (repère de la toile).
-        let engine = self.engine(&p, s, stride, g, h, u);
+        let engine = self.engine(&p, s, facing, stride, g, h, u);
         let mut free = vec![Affine::IDENTITY; count];
         let mut bones = vec![Affine::IDENTITY; count];
         for (i, bone) in sk.bones.iter().enumerate() {
@@ -378,14 +378,44 @@ impl SkeletonArt {
             let parent = bone.parent.map_or(Affine::IDENTITY, |b| bones[b]);
             bones[i] = parent * engine_local * keyed;
         }
+        // Cabré : tout l'animal tourne autour de ses hanches, sauf les
+        // pattes de derrière, qui restent où elles sont.
+        let mut root = root;
+        if engine.act.rear > 0.0 {
+            let hind =
+                |role: Option<BoneRole>| matches!(role, Some(BoneRole::Leg { front: false, .. }));
+            let hips: Vec<Point> = sk
+                .bones
+                .iter()
+                .filter(|b| hind(b.role))
+                .map(|b| Point::new(f64::from(b.at.x), f64::from(b.at.y)))
+                .collect();
+            if !hips.is_empty() {
+                let n = hips.len() as f64;
+                let at = Point::new(
+                    hips.iter().map(|p| p.x).sum::<f64>() / n,
+                    hips.iter().map(|p| p.y).sum::<f64>() / n,
+                );
+                let rear = crate::gesture::rearing(engine.act.rear, at);
+                root *= rear;
+                let back = rear.inverse();
+                for (i, bone) in sk.bones.iter().enumerate() {
+                    if hind(bone.role) {
+                        bones[i] = back * bones[i];
+                    }
+                }
+            }
+        }
         SkeletonPose { root, bones }
     }
 
     /// Les mouvements du moteur pour cette image (voir [`Engine::bone`]).
+    #[allow(clippy::too_many_arguments)]
     fn engine(
         &self,
         p: &PoseSignals,
         s: &PoseSignals,
+        facing: f32,
         stride: f64,
         g: Point,
         h: f64,
@@ -425,6 +455,7 @@ impl SkeletonArt {
         Engine {
             signals: *p,
             all: *s,
+            facing,
             g,
             u,
             h,
@@ -455,6 +486,8 @@ struct Engine {
     signals: PoseSignals,
     /// Tous les signaux (le regard, les clignements, la respiration…).
     all: PoseSignals,
+    /// Tourné vers la droite (1) ou la gauche (-1).
+    facing: f32,
     g: Point,
     u: f64,
     h: f64,
@@ -581,7 +614,18 @@ impl Engine {
                     parent * scale_about(at, 1.0, open)
                 }
             }
-            BoneRole::Pupil => parent * Affine::translate((look.x * u * 2.6, look.y * u * 2.0)),
+            // Elles suivent le regard, et restent à l'horizontale quand la
+            // tête penche (l'angle de la tête : celui du parent).
+            BoneRole::Pupil => {
+                let head = parent.as_coeffs()[1].atan2(parent.as_coeffs()[0]);
+                parent
+                    * Affine::translate((look.x * u * 2.6, look.y * u * 2.0))
+                    * rotate_about(at, crate::animate::level_pupils(s, self.facing, head))
+            }
+            // Une queue en plusieurs os : le premier suit l'arrière du corps,
+            // les suivants chacun le précédent, avec un temps de retard.
+            BoneRole::Tail if rank == 1 => parent * rotate_about(at, f(s.tail_mid)),
+            BoneRole::Tail if rank >= 2 => parent * rotate_about(at, f(s.tail_tip)),
             BoneRole::Tail => {
                 Affine::translate((self.act.body_shift.x * u, self.bob + self.drop_back))
                     * rotate_about(at, f(s.tail) - 0.2 * dangle + self.act.tail)
@@ -825,6 +869,31 @@ mod tests {
         let eye = pose.bones[4] * Point::new(300.0, 130.0);
         let head = pose.bones[2] * Point::new(300.0, 130.0);
         assert!((eye - head).hypot() < 1e-6);
+    }
+
+    #[test]
+    fn a_skeleton_keeps_its_slit_pupils_level_while_grazing() {
+        let toml = format!(
+            "{TOML}
+            [[bone]]
+            name = \"pupille\"
+            parent = \"oeil\"
+            at = [300, 130]
+            role = \"pupil\"
+            "
+        );
+        let art = art(&toml);
+        let signals = PoseSignals {
+            graze: 1.0,
+            ..PoseSignals::default()
+        };
+        let pose = art.pose(&signals, 1.0, 0.0);
+        let tilt = |t: Affine| {
+            let [a, b, ..] = t.as_coeffs();
+            (b / a).atan()
+        };
+        assert!(tilt(pose.bones[2]).abs() > 0.5, "la tête broute");
+        assert!(tilt(pose.bones[5]).abs() < 0.02, "{}", tilt(pose.bones[5]));
     }
 
     #[test]

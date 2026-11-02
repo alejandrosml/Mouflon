@@ -147,9 +147,18 @@ et le choc qui tasse les deux) ; **le recul avant la charge** (`Motion::Back`) ;
 `sleep_low`, `twitch`, `twist` de `PoseSignals`). Rien de plus cher : mille
 animaux en tas, 1,38 ms par pas.
 
+Depuis l'essai 19 : **le bélier qui se cabre** (geste `rear` : tout l'animal
+tourne autour de ses hanches, les pattes de derrière restent où elles sont,
+pour les rigs comme pour les squelettes) ; **l'invitation au jeu**
+(`Flock::step_invites`) ; **la soucoupe qu'on percute** (`Flock::hit_saucers`
+et les phases `Hit`, `Flee`, `Crash`, `Wreck`, `Limp` de la soucoupe, qui
+fume) ; **les queues en chaîne** (parties `tail-mid` et `tail-tip`, ou
+plusieurs os `tail` ; signaux `tail_mid` et `tail_tip`) ; **les pupilles
+horizontales**, gardées à l'horizontale par le dessin (`level_pupils`).
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
-plus d'animaux, et la soucoupe qu'on peut percuter.
+plus d'animaux.
 
 ## 1. Ce que disent les essais
 

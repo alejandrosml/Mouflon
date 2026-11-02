@@ -43,10 +43,12 @@ throw them across the desktop.
   sheep, chosen by speed relative to leg length, hooves that never slide;
   grazing one bite a second with a step to the next tuft, chewing the cud
   bolus after bolus; shaking off at 6 Hz, stretching on getting up,
-  scratching, yawning, bleating mouth open, stamping, pawing and backing up
-  before a charge; lambs at play (stiff and twisting leaps, spins in the
-  air, races, head butts), a crouch before every leap; sleep with the head
-  on the ground and twitching legs; ears that tell their mood (raised when
+  scratching, yawning, bleating mouth open, stamping, pawing, backing up and
+  rearing before a charge; lambs at play (stiff and twisting leaps, spins in
+  the air, races, head butts, inviting each other to play), a crouch before
+  every leap; sleep with the head on the ground and twitching legs; slit
+  pupils that stay level when the head bows to graze; tails that sway down
+  their length; ears that tell their mood (raised when
   angry, back when afraid or in the wind, drooping when calm, lopsided when
   surprised); a flock that follows the one who sets off, catches yawns and
   alarms, gathers together from time to time, and turns its back to the
@@ -151,7 +153,9 @@ Now and then comes a surprise (option *Surprises*, on by default): a gust of
 wind blows by (leaves fly past, pets in the air drift, those on the ground lean
 into it), or a flying saucer, drawn by Mouflon, comes to borrow a pet: it draws
 it up in its beam, carries it a little further and sets it down, then flies
-off. You can take the pet back from it. `MOUFLON_SURPRISE=vent` or
+off. You can take the pet back from it, or throw another pet at it: hit
+(its body, not its beam), it drops what it held, smokes, then flees at full
+speed or crashes, smokes on the ground and limps away. `MOUFLON_SURPRISE=vent` or
 `MOUFLON_SURPRISE=soucoupe` brings one a few seconds after launch.
 
 With *Realistic physics* (on by default), each pet is a rigid body with a mass,
@@ -375,10 +379,7 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 ### Roadmap
 
-- A livelier flying saucer: hit by a thrown pet, it smokes, then flees at full
-  speed or crashes to the ground (hitting only its beam does nothing).
-- More of real sheep life: a ram rearing before it charges, a lamb inviting
-  another to play, a tail that sways as a chain, horizontal pupils (see
+- More of real sheep life (see
   [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
@@ -434,9 +435,11 @@ se laissent attraper et lancer à travers le bureau.
   seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
   après bol ; l'ébrouement à 6 Hz, l'étirement en se relevant, le grattage,
   le bâillement, le bêlement bouche ouverte, le pied qui tape, le sol gratté
-  et le recul avant une charge ; les jeux d'agneaux (sauts raides ou tordus,
-  demi-tours en l'air, courses, coups de front), l'élan pris avant chaque
-  saut ; le sommeil la tête au sol, les pattes qui tressaillent ; des
+  et le recul avant une charge, le bélier qui se cabre ; les jeux d'agneaux
+  (sauts raides ou tordus, demi-tours en l'air, courses, coups de front,
+  invitations à jouer), l'élan pris avant chaque saut ; le sommeil la tête
+  au sol, les pattes qui tressaillent ; des pupilles en fente qui restent à
+  l'horizontale quand la tête descend brouter ; des queues qui ondulent ; des
   oreilles qui disent l'humeur (dressées de colère, en arrière de peur ou
   dans le vent, pendantes au calme, asymétriques de surprise) ; un troupeau
   qui suit celui qui part, attrape les bâillements et les alertes, se
@@ -550,7 +553,10 @@ De temps en temps vient une surprise (option « Surprises », cochée d'origine)
 un coup de vent passe (des feuilles volent, les animaux en l'air dérivent, ceux
 au sol se penchent contre lui), ou une soucoupe volante, dessinée par Mouflon,
 vient emprunter un animal : elle l'aspire dans son faisceau, l'emporte un peu
-plus loin et le dépose, puis repart. On peut le lui reprendre.
+plus loin et le dépose, puis repart. On peut le lui reprendre, ou lui lancer
+un autre animal dessus : percutée (son corps, pas son faisceau), elle lâche
+ce qu'elle tenait, fume, puis s'enfuit en trombe, ou s'écrase, fume au sol et
+repart en boitant.
 `MOUFLON_SURPRISE=vent` ou `MOUFLON_SURPRISE=soucoupe` en fait venir une
 quelques secondes après le lancement.
 
@@ -786,12 +792,7 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 
 ### Feuille de route
 
-- Une soucoupe volante plus vivante : percutée par un animal lancé, elle fume,
-  puis s'enfuit en trombe ou s'écrase au sol (viser seulement son rayon ne lui
-  fait rien).
-- Davantage de la vie des moutons : le bélier qui se cabre avant de
-  charger, l'agneau qui invite un autre à jouer, une queue qui ondule en
-  chaîne, les pupilles horizontales (voir
+- Davantage de la vie des moutons (voir
   [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.

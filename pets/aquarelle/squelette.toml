@@ -78,6 +78,14 @@ parent = "tete"
 at = [878, 480]
 role = "eye"
 
+# La pupille du mouton, une fente horizontale : elle suit le regard et reste
+# à l'horizontale quand la tête penche.
+[[bone]]
+name = "pupille"
+parent = "oeil"
+at = [879, 481]
+role = "pupil"
+
 # La mâchoire s'ouvre autour de sa charnière, sous la joue, à hauteur de la
 # bouche : pour ruminer, bêler, bâiller.
 [[bone]]
@@ -135,10 +143,21 @@ image = "morceaux/oreille-pres.png"
 bone = "tete"
 image = "morceaux/toupet.png"
 
-# L'œil ouvert, et la paupière peinte qui le remplace quand il se ferme.
+# L'œil ouvert (l'iris ambré, la pupille, les reflets), et la paupière
+# peinte qui le remplace quand il se ferme.
 [[piece]]
 bone = "oeil"
 image = "morceaux/oeil.png"
+eyes = "open"
+
+[[piece]]
+bone = "pupille"
+image = "morceaux/pupille.png"
+eyes = "open"
+
+[[piece]]
+bone = "oeil"
+image = "morceaux/reflet.png"
 eyes = "open"
 
 [[piece]]

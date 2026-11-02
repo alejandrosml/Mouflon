@@ -77,9 +77,13 @@ impl Energy {
                 | Gesture::Yawn
                 | Gesture::Brace
                 | Gesture::Scratch => Self::Rest,
-                Gesture::Paw | Gesture::Stamp | Gesture::Sniff | Gesture::Daze | Gesture::Bleat => {
-                    Self::Neutral
-                }
+                Gesture::Paw
+                | Gesture::Stamp
+                | Gesture::Sniff
+                | Gesture::Daze
+                | Gesture::Bleat
+                | Gesture::Rear
+                | Gesture::Invite => Self::Neutral,
             },
             Motion::Script(script) => {
                 Self::by_name(&behavior.name).unwrap_or_else(|| Self::by_steps(script))

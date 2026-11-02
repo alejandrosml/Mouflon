@@ -926,18 +926,44 @@ fn paint_ear(p: &Palette, base: (f32, f32), tip: (f32, f32), far: bool) -> Layer
 
 const EYE: (f32, f32) = (918.0 + HO.0, 440.0 + HO.1);
 
+/// L'œil ouvert : un iris ambré, cerclé de sombre (la pupille et les
+/// reflets sont des morceaux à part, posés par-dessus).
 fn paint_eye() -> Layer {
     let mut layer = Layer::new();
     let (x, y) = EYE;
     let eye = mask_of(&ellipse(x, y, 15.0, 19.0));
     dab(&mut layer, &eye, None, hex(0x2A2125), 1.0);
-    // Un iris brun, à peine visible, en bas de l'œil.
-    let iris = blur(&mask_of(&ellipse(x + 1.0, y + 7.0, 10.0, 8.0)), 3);
-    dab(&mut layer, &iris, Some(&eye), hex(0x6B4A3F), 0.55);
-    let big = mask_of(&ellipse(x + 5.0, y - 7.0, 6.0, 6.5));
-    dab(&mut layer, &big, None, hex(0xFFFFFF), 0.95);
-    let small = mask_of(&ellipse(x - 5.0, y + 8.0, 2.8, 2.8));
-    dab(&mut layer, &small, None, hex(0xFFFFFF), 0.8);
+    let iris = mask_of(&ellipse(x + 1.0, y + 1.0, 12.0, 15.5));
+    dab(&mut layer, &iris, Some(&eye), hex(0x9C6624), 1.0);
+    // Plus clair au milieu, plus sombre au bord : un lavis doré.
+    let warm = blur(&mask_of(&ellipse(x + 1.5, y + 2.0, 8.5, 11.0)), 3);
+    dab(&mut layer, &warm, Some(&iris), hex(0xD9A445), 0.85);
+    let glow = blur(&mask_of(&ellipse(x + 2.0, y + 4.0, 5.0, 6.0)), 3);
+    dab(&mut layer, &glow, Some(&iris), hex(0xEBC46B), 0.6);
+    layer
+}
+
+/// La pupille : une fente horizontale, que le moteur garde à l'horizontale
+/// quand la tête penche.
+fn paint_pupil() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let slit = blur(
+        &stroke_mask(&smooth_open(&[(x - 7.5, y + 1.5), (x + 9.5, y + 1.5)]), 6.5),
+        1,
+    );
+    dab(&mut layer, &slit, None, hex(0x1A1416), 0.97);
+    layer
+}
+
+/// Les reflets de la cornée, qui ne tournent pas avec la pupille.
+fn paint_glint() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let big = mask_of(&ellipse(x + 5.0, y - 7.0, 4.6, 5.0));
+    dab(&mut layer, &big, None, hex(0xFFFFFF), 0.92);
+    let small = mask_of(&ellipse(x - 5.0, y + 9.0, 2.2, 2.2));
+    dab(&mut layer, &small, None, hex(0xFFFFFF), 0.7);
     layer
 }
 
@@ -994,6 +1020,8 @@ fn main() {
         ("oreille-pres", paint_ear(&p, EAR_NEAR.0, EAR_NEAR.1, false)),
         ("toupet", paint_topknot(&p)),
         ("oeil", paint_eye()),
+        ("pupille", paint_pupil()),
+        ("reflet", paint_glint()),
         ("oeil-ferme", paint_closed_eye()),
     ];
     let mut preview = Layer::new();

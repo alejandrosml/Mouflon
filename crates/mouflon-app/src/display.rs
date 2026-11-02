@@ -1737,6 +1737,7 @@ fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
         PetEvent::Startled => "sursaute (pointeur rapide)".to_owned(),
         PetEvent::Napping => "s'endort (utilisateur parti)".to_owned(),
         PetEvent::Woken => "se réveille (utilisateur revenu)".to_owned(),
+        PetEvent::HitSaucer => "percute une soucoupe".to_owned(),
         PetEvent::Sound { sound, clip } => format!(
             "son {} ({})",
             pet.def()

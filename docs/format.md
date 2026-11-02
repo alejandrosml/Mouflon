@@ -103,6 +103,10 @@ Gestes sur place, que le moteur anime de lui-même pour un dessin vectoriel
 ou un squelette (`duration` dit combien de temps ils durent) : `shake`
 (s'ébroue : une secousse six fois par seconde, de la tête à la queue),
 `stretch` (s'étire : le cou tendu, puis une patte arrière ; 2,4 s),
+`rear` (se cabre : l'avant se dresse sur les pattes de derrière, celles de
+devant repliées, puis retombe d'un coup ; 1,15 s ; le bélier avant de
+charger), `invite` (l'invitation au jeu des agneaux : tête et avant
+baissés, il fixe l'autre en sautillant),
 `scratch` (se gratte d'un sabot arrière), `paw` (gratte le sol d'un sabot de
 devant, tête basse), `stamp` (tape du pied, tête haute : l'alarme), `sniff`
 (renifle, le museau tendu), `daze` (sonné : la tête tourne, les yeux
@@ -271,6 +275,18 @@ speed = 110.0
 duration = 0.8
 on_meet = "play_butt"         # … et se cognent
 ```
+
+### Invitations à jouer
+
+Un animal qui a les comportements `play_invite` (le geste `invite`) et
+`play_lunge` (un `charge` dont l'`on_meet` mène au coup de front) invite de
+lui-même un voisin à jouer, toutes les 20 à 60 secondes s'il en a envie
+(toujours s'il est actif, une fois sur trois tel quel, rarement énervé,
+jamais calme) : un voisin de sa famille, libre, sur le même rebord, à une ou
+trois longueurs. Il se tourne vers lui et joue `play_invite` ; une seconde
+plus tard, l'autre accepte (le plus souvent s'il est actif, rarement s'il
+est calme) : tous deux se font face et jouent `play_lunge`. Sinon,
+l'invitation finit comme son comportement le prévoit.
 
 ### Regroupements
 

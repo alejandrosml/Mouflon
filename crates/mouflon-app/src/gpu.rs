@@ -638,6 +638,8 @@ mod tests {
                 beam,
                 beam_len: 180.0,
                 lights: 0.4,
+                smoke: 0.0,
+                smoke_time: 0.0,
             };
             let mut list = DisplayList::new(
                 (f64::from(canvas.width) * 2.0) as u32,
@@ -818,6 +820,8 @@ mod tests {
                 beam,
                 beam_len: 180.0,
                 lights: 0.4,
+                smoke: 0.0,
+                smoke_time: 0.0,
             };
             let mut list = DisplayList::new(
                 (f64::from(canvas.width) * 2.0) as u32,

@@ -68,6 +68,12 @@ const TAKEOFF_SQUASH: f32 = 0.14;
 /// largeur), en ordre serré.
 const REGROUP_EVERY: (f32, f32) = (300.0, 720.0);
 const REGROUP_SPACING: f32 = 0.8;
+/// Un agneau a envie d'en inviter un autre à jouer toutes les 20 à 60 s ;
+/// l'autre répond au bout de ce temps (secondes).
+const INVITE_EVERY: (f32, f32) = (20.0, 60.0);
+const INVITE_ANSWER: f32 = 1.0;
+/// Il invite un voisin de sa famille à cette distance (fois sa largeur).
+const INVITE_REACH: (f32, f32) = (1.2, 3.0);
 /// En broutant : une station d'herbe (secondes), puis un pas en avant qui
 /// dure ceci, à cette vitesse (en foulées par seconde).
 const GRAZE_STATION: f32 = 8.5;
@@ -161,6 +167,8 @@ pub enum PetEvent {
     Napping,
     /// L'utilisateur est revenu : il se réveille.
     Woken,
+    /// Lancé, il a percuté une soucoupe volante.
+    HitSaucer,
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
@@ -280,6 +288,11 @@ pub struct PoseSignals {
     pub ear: f32,
     /// Queue (radians).
     pub tail: f32,
+    /// Une queue en plusieurs morceaux : de combien le deuxième, puis le
+    /// dernier, tournent par rapport au précédent (radians). Chacun suit le
+    /// précédent avec un temps de retard : la queue ondule.
+    pub tail_mid: f32,
+    pub tail_tip: f32,
     /// Paupières : 0 ouvertes, 1 fermées.
     pub blink: f32,
     /// Respiration (-1 à 1).
@@ -446,6 +459,9 @@ struct Anim {
     /// Prochain frémissement d'oreille, prochain coup de queue (secondes).
     ear_timer: f32,
     tail: Spring,
+    /// Le milieu et le bout de la queue (angles absolus, comme `tail`).
+    tail_mid: Spring,
+    tail_tip: Spring,
     tail_timer: f32,
     trot: f32,
     stride_scale: f32,
@@ -497,6 +513,8 @@ impl Anim {
             // l'usage, gardent exactement leurs tirages.
             ear_timer: 3.5,
             tail: Spring::new(3.2, 0.2),
+            tail_mid: Spring::new(2.2, 0.3),
+            tail_tip: Spring::new(1.8, 0.3),
             tail_timer: 5.0,
             tail_phase: rng.range(0.0, TAU),
             blink: 0.0,
@@ -707,6 +725,10 @@ pub struct Pet {
     goal: Option<f32>,
     /// Le regroupement auquel il prendra part : où aller, et quand partir.
     regroup: Option<(f32, f32)>,
+    /// Sa prochaine envie d'inviter un autre à jouer (secondes ; jamais s'il
+    /// ne sait pas jouer), et l'invitation en cours.
+    invite_in: f32,
+    invite: Option<Invite>,
     /// Dans combien de temps il s'endort (l'utilisateur est parti).
     nap_in: Option<f32>,
     /// Dans combien de temps il se réveille (l'utilisateur est revenu).
@@ -1004,6 +1026,7 @@ impl Pet {
     }
 
     fn bare(id: u32, def: Arc<PetDef>, mut rng: Rng, pos: Vec2) -> Self {
+        let plays = def.behavior_index("play_invite").is_some();
         let def_back_top = def.physics.height * BACK_HEIGHT;
         let voice = rng.fork(0x534F_554E_4453);
         let facing = if rng.chance(0.5) { 1.0 } else { -1.0 };
@@ -1052,6 +1075,14 @@ impl Pet {
             takeoff: None,
             goal: None,
             regroup: None,
+            // Sans tirage au hasard : ceux qui ne jouent pas gardent leurs
+            // tirages ; les autres se décalent d'après leur numéro.
+            invite_in: if plays {
+                INVITE_EVERY.0 + (id % 7) as f32 * 4.0
+            } else {
+                f32::INFINITY
+            },
+            invite: None,
             nap_in: None,
             wake_in: None,
             wind: 0.0,
@@ -2809,6 +2840,12 @@ impl Pet {
         a.ear.step(dt);
         a.tail.target = (inertia * 0.00025).clamp(-0.6, 0.6);
         a.tail.step(dt);
+        // La queue en chaîne : chaque morceau suit le précédent avec un temps
+        // de retard, et l'élan descend jusqu'au bout (elle ondule).
+        a.tail_mid.target = a.tail.value + a.tail_phase.sin() * (0.03 + a.walk * 0.07);
+        a.tail_mid.step(dt);
+        a.tail_tip.target = a.tail_mid.value;
+        a.tail_tip.step(dt);
 
         // Balancement dans le repère de l'écran : tiré vers la droite, le corps
         // reste en arrière, à gauche (rotation positive, y vers le bas).
@@ -3160,6 +3197,7 @@ impl Pet {
             .and_then(|l| l.fade)
             .map_or(1.0, |f| f.clamp(0.0, 1.0));
         let opacity = opacity * fade;
+        let tail_base = a.tail.value + a.tail_phase.sin() * (0.03 + a.walk * 0.07);
         PetView {
             id: self.id,
             // Tenu, il est dessiné exactement sous le curseur, sans attendre
@@ -3186,7 +3224,9 @@ impl Pet {
                 squash: a.squash.value,
                 lean: a.lean.value,
                 ear: a.ear.value,
-                tail: a.tail.value + a.tail_phase.sin() * (0.03 + a.walk * 0.07),
+                tail: tail_base,
+                tail_mid: a.tail_mid.value - tail_base,
+                tail_tip: a.tail_tip.value - a.tail_mid.value,
                 blink: a.blink,
                 breath: a.breath_phase.sin(),
                 look: a.look,
@@ -3221,6 +3261,14 @@ impl Pet {
             grip: self.hold.map(|hold| hold.target),
         }
     }
+}
+
+/// Un agneau en invite un autre à jouer : lequel, et dans combien de temps
+/// l'autre répond (secondes).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Invite {
+    partner: u32,
+    wait: f32,
 }
 
 /// Le troupeau : tous les animaux, avancés ensemble à pas fixe.
@@ -3701,6 +3749,7 @@ impl Flock {
             }
             self.echo();
             self.step_regroup(TICK);
+            self.step_invites(TICK);
             self.adopt_children(world);
             self.accumulator -= TICK;
         }
@@ -3790,9 +3839,56 @@ impl Flock {
             let pet = self.pets.iter_mut().find(|p| p.id == saucer.target());
             saucer.step(TICK, pet, world);
         }
+        self.hit_saucers(world, input);
         let before = self.saucers.len();
         self.saucers.retain(|s| !s.is_gone());
         if self.saucers.len() != before {
+            self.generation += 1;
+        }
+    }
+
+    /// Un animal en l'air qui percute une soucoupe (son corps, pas son
+    /// faisceau) assez vite : il rebondit dessus en culbutant, elle lâche
+    /// ce qu'elle tenait et fume.
+    fn hit_saucers(&mut self, world: &World, input: &Input) {
+        for s in 0..self.saucers.len() {
+            if !self.saucers[s].can_be_hit() {
+                continue;
+            }
+            let saucer = &self.saucers[s];
+            let (center, speed) = (saucer.view().pos, saucer.velocity());
+            let carried = saucer.holds().then(|| saucer.target());
+            let hitter = self.pets.iter().position(|pet| {
+                let body = pet.body();
+                pet.support == Support::Air
+                    && !pet.is_held()
+                    && Some(pet.id) != carried
+                    && (pet.vel - speed).length() >= crate::surprise::HIT_SPEED
+                    && saucer.touches(body.center, body.half.x.min(body.half.y) * 0.8)
+            });
+            let Some(i) = hitter else {
+                continue;
+            };
+            if self.saucers[s].hit() {
+                let target = self.saucers[s].target();
+                if let Some(pet) = self.pets.iter_mut().find(|p| p.id == target) {
+                    pet.release(world);
+                }
+            }
+            // Il rebondit sur elle, en culbutant.
+            let pet = &mut self.pets[i];
+            let away = pet.body().center - center;
+            let dir = if away.length() > 1e-3 {
+                away * (1.0 / away.length())
+            } else {
+                Vec2::new(0.0, 1.0)
+            };
+            let rel = (pet.vel - speed).length();
+            let push = dir * (0.45 * rel + 120.0) + speed * 0.3;
+            if !pet.knock(push, world, input) {
+                pet.vel = push;
+            }
+            pet.events.push(PetEvent::HitSaucer);
             self.generation += 1;
         }
     }
@@ -4000,6 +4096,135 @@ impl Flock {
             }
         }
         self.echo_sources = sources;
+    }
+
+    /// Libre de jouer : posé, éveillé, à lui, sans rien de prévu (ni
+    /// regroupement, ni invitation), au repos ou en promenade.
+    fn free_to_play(&self, index: usize) -> bool {
+        let pet = &self.pets[index];
+        matches!(pet.support, Support::Ground { .. })
+            && pet.def.rules != Rules::DesktopPet
+            && pet.can_react()
+            && !pet.is_asleep()
+            && pet.hold.is_none()
+            && pet.regroup.is_none()
+            && pet.goal.is_none()
+            && pet.invite.is_none()
+            && !self.is_still(index)
+            && matches!(
+                pet.def.energy(pet.behavior),
+                crate::Energy::Rest | crate::Energy::Walk
+            )
+    }
+
+    /// Les agneaux s'invitent à jouer : de temps en temps, un agneau qui en
+    /// a envie fixe un voisin de sa famille, tête basse, en sautillant
+    /// (`play_invite`) ; l'autre accepte d'autant plus volontiers qu'il est
+    /// actif, et ils s'élancent l'un vers l'autre (`play_lunge`, qui finit
+    /// en coup de front).
+    fn step_invites(&mut self, dt: f32) {
+        // Les réponses.
+        for i in 0..self.pets.len() {
+            let Some(mut invite) = self.pets[i].invite else {
+                continue;
+            };
+            invite.wait -= dt;
+            if invite.wait > 0.0 {
+                self.pets[i].invite = Some(invite);
+                continue;
+            }
+            self.pets[i].invite = None;
+            if self.pets[i].behavior_name() != "play_invite" {
+                continue;
+            }
+            let Some(j) = self.pets.iter().position(|p| p.id == invite.partner) else {
+                continue;
+            };
+            if !self.free_to_play(j) {
+                continue;
+            }
+            let (a, b) = (&self.pets[i], &self.pets[j]);
+            let width = a.def.physics.width.max(1.0);
+            if (b.pos.x - a.pos.x).abs() > width * (INVITE_REACH.1 + 0.5) || a.support != b.support
+            {
+                continue;
+            }
+            let accept = match b.temper {
+                Temper::Lively => 0.85,
+                Temper::Rowdy => 0.6,
+                Temper::Even => 0.5,
+                Temper::Calm => 0.2,
+            };
+            let (Some(lunge_a), Some(lunge_b)) = (
+                a.def.behavior_index("play_lunge"),
+                b.def.behavior_index("play_lunge"),
+            ) else {
+                continue;
+            };
+            if !self.pets[j].rng.chance(accept) {
+                continue;
+            }
+            let side = (self.pets[j].pos.x - self.pets[i].pos.x).signum();
+            let (a, b) = self.pair_mut(i as u32, j as u32);
+            a.face(side);
+            b.face(-side);
+            a.enter(lunge_a);
+            b.enter(lunge_b);
+        }
+        // Les envies d'inviter.
+        for i in 0..self.pets.len() {
+            let pet = &mut self.pets[i];
+            if pet.invite_in.is_infinite() {
+                continue;
+            }
+            pet.invite_in -= dt;
+            if pet.invite_in > 0.0 {
+                continue;
+            }
+            pet.invite_in = pet.rng.range(INVITE_EVERY.0, INVITE_EVERY.1);
+            let wants = match pet.temper {
+                Temper::Lively => 1.0,
+                Temper::Even => 0.3,
+                Temper::Rowdy => 0.15,
+                Temper::Calm => 0.0,
+            };
+            if !pet.rng.chance(wants) || !self.free_to_play(i) {
+                continue;
+            }
+            let pet = &self.pets[i];
+            let Some(index) = pet.def.behavior_index("play_invite") else {
+                continue;
+            };
+            let width = pet.def.physics.width.max(1.0);
+            let family = pet.def.meta.category();
+            let partner = (0..self.pets.len())
+                .filter(|&j| j != i)
+                .filter(|&j| {
+                    let other = &self.pets[j];
+                    let dx = (other.pos.x - pet.pos.x).abs();
+                    other.support == pet.support
+                        && other.def.meta.category() == family
+                        && other.def.behavior_index("play_lunge").is_some()
+                        && (INVITE_REACH.0 * width..=INVITE_REACH.1 * width).contains(&dx)
+                        && self.free_to_play(j)
+                })
+                .min_by(|&a, &b| {
+                    let d = |j: usize| (self.pets[j].pos.x - pet.pos.x).abs();
+                    d(a).total_cmp(&d(b))
+                });
+            let Some(j) = partner else {
+                continue;
+            };
+            let partner = self.pets[j].id;
+            let side = (self.pets[j].pos.x - self.pets[i].pos.x).signum();
+            let pet = &mut self.pets[i];
+            pet.face(side);
+            pet.enter(index);
+            pet.invite = Some(Invite {
+                partner,
+                wait: INVITE_ANSWER,
+            });
+        }
     }
 
     /// De temps en temps (toutes les 5 à 12 minutes), le troupeau se
@@ -5200,6 +5425,40 @@ mod tests {
     }
 
     #[test]
+    fn a_flick_of_the_tail_runs_down_to_its_tip() {
+        // Un coup de queue : le milieu suit la base avec un temps de retard,
+        // le bout suit le milieu, plus tard encore (elle ondule).
+        let world = world();
+        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "stand");
+        pet.behavior_length = 60.0;
+        run(&mut pet, &world, 1.0);
+        pet.anim.tail.kick(8.0);
+        let (mut peaks, mut best) = ([0.0f32; 3], [f32::NEG_INFINITY; 3]);
+        let mut t = 0.0;
+        for _ in 0..(1.0 / TICK) as usize {
+            pet.step(TICK, &world, &Input::default());
+            t += TICK;
+            let a = &pet.anim;
+            for (k, value) in [a.tail.value, a.tail_mid.value, a.tail_tip.value]
+                .into_iter()
+                .enumerate()
+            {
+                if value > best[k] {
+                    (best[k], peaks[k]) = (value, t);
+                }
+            }
+        }
+        assert!(peaks[0] < peaks[1] && peaks[1] < peaks[2], "{peaks:?}");
+        assert!(best[2] > 0.2, "le bout aussi a bougé : {best:?}");
+        // Le dessin reçoit les angles de chaque morceau par rapport au
+        // précédent.
+        let view = pet.view(1.0).pose;
+        let a = &pet.anim;
+        assert!((view.tail + view.tail_mid - a.tail_mid.value).abs() < 1e-5);
+        assert!((view.tail_mid + view.tail_tip - (a.tail_tip.value - view.tail)).abs() < 1e-5);
+    }
+
+    #[test]
     fn a_drawn_sheep_crouches_before_it_leaps() {
         // L'anticipation : un mouton dessiné se ramasse, puis bondit.
         let world = world();
@@ -5250,9 +5509,13 @@ mod tests {
         assert_eq!(pet.support, Support::Ground { surface: ledge.id });
         assert!(pet.position().x > ledge.x0, "{}", pet.position().x);
         assert_eq!(pet.facing, 1.0);
-        // Au bout du recul, il charge.
+        // Au bout du recul, il se cabre souvent, puis charge.
         pet.behavior_length = 0.0;
         run(&mut pet, &world, 0.1);
+        if pet.behavior_name() == "rear" {
+            assert!((pet.position().x - ledge.x0).abs() < 60.0);
+            run(&mut pet, &world, 1.2);
+        }
         assert_eq!(pet.behavior_name(), "charge");
     }
 
@@ -5320,6 +5583,59 @@ mod tests {
         assert!(apart > 100.0, "ils ont reculé : {apart}");
         assert!(butt > 30.0 && butt < 70.0, "front contre front : {butt}");
         assert!(squash[0] > 0.04 && squash[1] > 0.03, "{squash:?}");
+    }
+
+    #[test]
+    fn a_lively_lamb_invites_a_neighbour_to_play() {
+        // Deux agneaux actifs, à deux longueurs : l'un invite l'autre, tête
+        // basse ; l'autre accepte le plus souvent, et ils s'élancent l'un
+        // vers l'autre jusqu'au coup de front.
+        let mannequin = bundled("mannequin");
+        let (mut invited, mut butted) = (0, 0);
+        for round in 0..10u64 {
+            let world = world();
+            let mut flock = Flock::new();
+            flock.set_mood(Mood::Lively);
+            let a = flock.spawn(Arc::clone(&mannequin), round * 11 + 1, &world, None);
+            let b = flock.spawn(Arc::clone(&mannequin), round * 11 + 2, &world, None);
+            put(&mut flock, &world, a, 500.0, 1.0, "stand");
+            put(&mut flock, &world, b, 630.0, 1.0, "graze");
+            for pet in flock.pets_mut() {
+                pet.behavior_length = 600.0;
+                pet.invite_in = 0.5;
+            }
+            let (mut seen_invite, mut seen_butt) = (false, false);
+            for _ in 0..(4.0 / TICK) as usize {
+                advance(&mut flock, &world, TICK);
+                for pet in flock.pets() {
+                    seen_invite |= pet.behavior_name() == "play_invite";
+                    if pet.behavior_name() == "play_butt" {
+                        seen_butt = true;
+                        let other = flock.pets().iter().find(|p| p.id() != pet.id()).unwrap();
+                        // Front contre front : tournés l'un vers l'autre.
+                        assert!(pet.facing * (other.pos.x - pet.pos.x) > 0.0);
+                    }
+                }
+            }
+            invited += usize::from(seen_invite);
+            butted += usize::from(seen_butt);
+        }
+        assert_eq!(invited, 10);
+        assert!(butted >= 5, "{butted} coups de front sur 10 invitations");
+        // Un calme n'invite personne.
+        let world = world();
+        let mut flock = Flock::new();
+        flock.set_mood(Mood::Calm);
+        let a = flock.spawn(Arc::clone(&mannequin), 1, &world, None);
+        let b = flock.spawn(Arc::clone(&mannequin), 2, &world, None);
+        put(&mut flock, &world, a, 500.0, 1.0, "stand");
+        put(&mut flock, &world, b, 630.0, 1.0, "stand");
+        for pet in flock.pets_mut() {
+            pet.behavior_length = 600.0;
+            pet.invite_in = 0.5;
+        }
+        advance(&mut flock, &world, 3.0);
+        assert!(flock.pets().iter().all(|p| p.behavior_name() == "stand"));
     }
 
     #[test]
@@ -5613,6 +5929,102 @@ mod tests {
                 start,
                 after.position()
             );
+        }
+    }
+
+    #[test]
+    fn a_sheep_thrown_at_a_saucer_makes_it_smoke_then_flee_or_crash() {
+        let mannequin = bundled("mannequin");
+        let (mut fled, mut crashed) = (0, 0);
+        for seed in 0..8u64 {
+            let world = world();
+            let mut flock = Flock::new();
+            let target = flock.spawn(Arc::clone(&mannequin), 1, &world, None);
+            put(&mut flock, &world, target, 400.0, 1.0, "sleep");
+            flock.get_mut(target).unwrap().behavior_length = 600.0;
+            flock.invite_saucer(&world, seed).unwrap();
+            let thrower = flock.spawn(Arc::clone(&mannequin), 2, &world, None);
+            put(&mut flock, &world, thrower, 1100.0, -1.0, "stand");
+            flock.get_mut(thrower).unwrap().behavior_length = 600.0;
+            // Elle prend le dormeur dans son faisceau.
+            while !flock.saucers()[0].holds() {
+                advance(&mut flock, &world, TICK);
+            }
+            advance(&mut flock, &world, 0.5);
+            // On lui lance l'autre mouton dessus, à toute vitesse.
+            let at = flock.saucers()[0].view().pos;
+            {
+                let pet = flock.get_mut(thrower).unwrap();
+                assert!(pet.force("fall"));
+                pet.support = Support::Air;
+                pet.ground_ref = None;
+                pet.pos = at + Vec2::new(-160.0, 30.0);
+                pet.prev_pos = pet.pos;
+                pet.vel = Vec2::new(900.0, -60.0);
+            }
+            let mut hit = false;
+            for _ in 0..(0.5 / TICK) as usize {
+                advance(&mut flock, &world, TICK);
+                let saucer = &flock.saucers()[0];
+                if !saucer.can_be_hit() {
+                    hit = true;
+                    break;
+                }
+            }
+            assert!(hit, "percutée");
+            let saucer = &flock.saucers()[0];
+            assert!(saucer.view().smoke > 0.9 && !saucer.holds());
+            let pet = flock.pets().iter().find(|p| p.id() == thrower).unwrap();
+            assert!(pet.vel.x < 0.0, "il rebondit : {:?}", pet.vel);
+            let held = flock.pets().iter().find(|p| p.id() == target).unwrap();
+            assert!(!held.is_held(), "elle a lâché le dormeur");
+            // Puis elle s'enfuit, ou tombe, fume au sol et repart.
+            let mut lowest = f32::MIN;
+            for _ in 0..(12.0 / TICK) as usize {
+                advance(&mut flock, &world, TICK);
+                if let Some(saucer) = flock.saucers().first() {
+                    lowest = lowest.max(saucer.view().pos.y);
+                }
+            }
+            assert!(flock.saucers().is_empty(), "elle est partie");
+            let floor = world.floor_under(400.0).unwrap().y;
+            if lowest > floor - 60.0 {
+                crashed += 1;
+            } else {
+                fled += 1;
+            }
+        }
+        assert!(fled > 0 && crashed > 0, "{fled} fuites, {crashed} chutes");
+    }
+
+    #[test]
+    fn a_pet_thrown_through_the_beam_does_not_hit_the_saucer() {
+        let mannequin = bundled("mannequin");
+        let world = world();
+        let mut flock = Flock::new();
+        let target = flock.spawn(Arc::clone(&mannequin), 1, &world, None);
+        put(&mut flock, &world, target, 400.0, 1.0, "sleep");
+        flock.get_mut(target).unwrap().behavior_length = 600.0;
+        flock.invite_saucer(&world, 1).unwrap();
+        let thrower = flock.spawn(Arc::clone(&mannequin), 2, &world, None);
+        put(&mut flock, &world, thrower, 1100.0, -1.0, "stand");
+        while flock.saucers()[0].view().beam < 0.3 {
+            advance(&mut flock, &world, TICK);
+        }
+        let at = flock.saucers()[0].view().pos;
+        {
+            let pet = flock.get_mut(thrower).unwrap();
+            assert!(pet.force("fall"));
+            pet.support = Support::Air;
+            pet.ground_ref = None;
+            // À travers le faisceau, bien sous la soucoupe.
+            pet.pos = at + Vec2::new(-200.0, 150.0);
+            pet.prev_pos = pet.pos;
+            pet.vel = Vec2::new(900.0, -150.0);
+        }
+        for _ in 0..(0.5 / TICK) as usize {
+            advance(&mut flock, &world, TICK);
+            assert!(flock.saucers()[0].can_be_hit());
         }
     }
 

@@ -24,16 +24,18 @@ const BEAM_PIXELS: f64 = 1.5;
 
 /// Marge autour du dessin (points).
 const MARGIN: f32 = 22.0;
+/// Au-dessus d'elle, la place de la fumée quand on l'a percutée (points).
+const SMOKE_ROOM: f32 = 90.0;
 
 /// Taille de la fenêtre de la soucoupe, et où est son centre dedans.
 #[must_use]
 pub fn saucer_canvas() -> Canvas {
     let width = SAUCER_WIDTH + 2.0 * MARGIN;
-    let height = SAUCER_HEIGHT + BEAM_MAX + 2.0 * MARGIN;
+    let height = SMOKE_ROOM + SAUCER_HEIGHT + BEAM_MAX + 2.0 * MARGIN;
     Canvas {
         width: width.ceil(),
         height: height.ceil(),
-        anchor: CoreVec2::new(width * 0.5, MARGIN + SAUCER_HEIGHT * 0.5),
+        anchor: CoreVec2::new(width * 0.5, SMOKE_ROOM + MARGIN + SAUCER_HEIGHT * 0.5),
     }
 }
 
@@ -214,7 +216,52 @@ pub fn paint_saucer(view: &SaucerView, frame: &Frame, style: &Style, out: &mut D
         out.push(hull.draw(body, 1.0));
     }
 
-    // Les lumières, qui clignotent l'une après l'autre.
+    // Percutée, elle fume : des bouffées sombres qui montent, grossissent,
+    // pâlissent et s'effacent (droites, quelle que soit son inclinaison).
+    let smoke = f64::from(view.smoke.clamp(0.0, 1.0));
+    if smoke > 0.01 {
+        let t = f64::from(view.smoke_time);
+        let (dark, light) = if style.dark {
+            ((120.0, 120.0, 128.0), (205.0, 205.0, 212.0))
+        } else {
+            ((70.0, 68.0, 76.0), (170.0, 170.0, 178.0))
+        };
+        for k in 0..10 {
+            let kf = f64::from(k);
+            let phase = (t * 0.75 + kf / 10.0).fract();
+            let x = -w * 0.1 + (t * 1.3 + kf * 1.7).sin() * 6.0 + (kf - 4.5) * 1.4 + phase * 14.0;
+            let y = -h * 0.42 - phase * 78.0;
+            let r = 6.0 + phase * 24.0;
+            let mix = |a: f64, b: f64| (a + (b - a) * phase) as u8;
+            let color = rgba(
+                mix(dark.0, light.0),
+                mix(dark.1, light.1),
+                mix(dark.2, light.2),
+                1.0,
+            );
+            let alpha = (smoke * (1.0 - phase) * (phase * 4.0).min(1.0) * 0.85) as f32;
+            let c = Point::new(x, y);
+            out.disc(
+                c,
+                r,
+                at,
+                Paint::Radial {
+                    start: c,
+                    start_radius: 0.0,
+                    end: c,
+                    end_radius: r as f32,
+                    stops: stops(&[
+                        (0.0, color.with_alpha(alpha)),
+                        (0.6, color.with_alpha(alpha * 0.7)),
+                        (1.0, color.with_alpha(0.0)),
+                    ]),
+                    extend: Extend::Pad,
+                },
+            );
+        }
+    }
+
+    // Les lumières, qui clignotent l'une après l'autre (mal, si elle fume).
     let colors = [
         rgba(255, 212, 90, 1.0),
         rgba(255, 122, 182, 1.0),
@@ -226,7 +273,11 @@ pub fn paint_saucer(view: &SaucerView, frame: &Frame, style: &Style, out: &mut D
         let x = u * w * 0.8;
         let y = h * 0.2 + (1.0 - (2.0 * u).powi(2)) * h * 0.08;
         let blink = (f64::from(view.lights) * std::f64::consts::TAU - k * 0.9).sin();
-        let on = 0.45 + 0.55 * blink.max(0.0);
+        let mut on = 0.45 + 0.55 * blink.max(0.0);
+        if smoke > 0.01 {
+            let flicker = (f64::from(view.lights) * 13.0 + k * 2.1).sin() > 0.35;
+            on *= if flicker { 0.25 } else { 1.0 };
+        }
         let color = *color;
         let c = Point::new(x, y);
         out.disc(
@@ -263,10 +314,11 @@ mod tests {
     #[test]
     fn the_saucer_needs_no_vector_paths() {
         let canvas = saucer_canvas();
-        for (beam, len, tilt, dark) in [
-            (0.0, 0.0, 0.0, false),
-            (0.6, 120.0, 0.1, false),
-            (1.0, BEAM_MAX, -0.2, true),
+        for (beam, len, tilt, dark, smoke) in [
+            (0.0, 0.0, 0.0, false, 0.0),
+            (0.6, 120.0, 0.1, false, 0.0),
+            (1.0, BEAM_MAX, -0.2, true, 0.0),
+            (0.0, 0.0, 0.3, false, 1.0),
         ] {
             let view = SaucerView {
                 pos: CoreVec2::new(400.0, 300.0),
@@ -274,6 +326,8 @@ mod tests {
                 beam,
                 beam_len: len,
                 lights: 0.3,
+                smoke,
+                smoke_time: 1.2,
             };
             let frame = Frame {
                 origin: CoreVec2::new(400.0 - canvas.anchor.x, 300.0 - canvas.anchor.y),

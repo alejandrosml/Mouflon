@@ -7,7 +7,10 @@
 //! - La soucoupe ([`Saucer`]) arrive au-dessus d'un animal posé, l'aspire
 //!   dans son faisceau (elle le tient comme la main de l'utilisateur : il
 //!   pend et se balance), l'emporte un peu plus loin, le lâche, puis s'en
-//!   va. On peut le lui reprendre : elle renonce et repart.
+//!   va. On peut le lui reprendre : elle renonce et repart. Un animal lancé
+//!   qui la percute (son corps, pas son faisceau) la fait fumer : elle
+//!   s'enfuit en trombe, ou tombe, reste un moment au sol à fumer, puis
+//!   repart en boitant.
 //!
 //! Tout reste déterministe : les surprises ne tirent au sort qu'avec la
 //! graine qu'on leur donne.
@@ -90,6 +93,16 @@ enum Phase {
     Drop,
     /// Elle s'en va.
     Leave,
+    /// Percutée : elle tangue et fume.
+    Hit,
+    /// Elle s'enfuit en trombe, en fumant.
+    Flee,
+    /// Elle tombe en fumant.
+    Crash,
+    /// Au sol, elle fume.
+    Wreck,
+    /// Elle repart en boitant.
+    Limp,
     Gone,
 }
 
@@ -105,6 +118,9 @@ pub struct SaucerView {
     pub beam_len: f32,
     /// Phase du clignotement de ses lumières (tours).
     pub lights: f32,
+    /// Percutée : la fumée (de 0 à 1) et depuis quand elle fume (secondes).
+    pub smoke: f32,
+    pub smoke_time: f32,
 }
 
 /// Une soucoupe volante en visite.
@@ -126,6 +142,13 @@ pub struct Saucer {
     beam: f32,
     beam_len: f32,
     lights: f32,
+    /// Percutée : ce qu'elle fera ensuite (s'enfuir ou tomber), sa fumée,
+    /// depuis quand, et son inclinaison propre (elle tangue, puis gît
+    /// penchée).
+    flee: bool,
+    smoke: f32,
+    smoke_time: f32,
+    spin: f32,
     rng: Rng,
 }
 
@@ -136,6 +159,16 @@ const LIFT: f32 = 2.0;
 const CARRY: f32 = 2.8;
 const DROP: f32 = 0.6;
 const LEAVE: f32 = 1.7;
+const HIT: f32 = 0.8;
+const FLEE: f32 = 1.0;
+const WRECK: f32 = 3.5;
+const LIMP: f32 = 2.6;
+/// Sa chute (pt/s²) : un peu moins que la pesanteur, elle plane encore.
+const FALL: f32 = 1500.0;
+
+/// La vitesse d'un animal par rapport à elle, au-delà de laquelle il la
+/// percute (pt/s) ; en deçà, il ne fait que la frôler.
+pub const HIT_SPEED: f32 = 220.0;
 
 /// Hauteur de la soucoupe au-dessus du sol de l'animal qu'elle vient prendre.
 const ABOVE: f32 = 190.0;
@@ -171,6 +204,10 @@ impl Saucer {
             beam: 0.0,
             beam_len: 0.0,
             lights: 0.0,
+            flee: false,
+            smoke: 0.0,
+            smoke_time: 0.0,
+            spin: 0.0,
             rng,
         }
     }
@@ -207,11 +244,54 @@ impl Saucer {
     pub fn view(&self) -> SaucerView {
         SaucerView {
             pos: self.pos,
-            tilt: (self.vel.x * 0.0005).clamp(-0.32, 0.32),
+            tilt: (self.vel.x * 0.0005).clamp(-0.32, 0.32) + self.spin,
             beam: self.beam,
             beam_len: self.beam_len,
             lights: self.lights,
+            smoke: self.smoke,
+            smoke_time: self.smoke_time,
         }
+    }
+
+    /// Peut-on la percuter (elle ne l'est pas déjà) ?
+    #[must_use]
+    pub fn can_be_hit(&self) -> bool {
+        !matches!(
+            self.phase,
+            Phase::Hit | Phase::Flee | Phase::Crash | Phase::Wreck | Phase::Limp | Phase::Gone
+        )
+    }
+
+    /// Le point `p` (un animal de rayon `radius`) touche-t-il son corps (la
+    /// coque ou le dôme, pas le faisceau) ?
+    #[must_use]
+    pub fn touches(&self, p: Vec2, radius: f32) -> bool {
+        let inside = |center: Vec2, rx: f32, ry: f32| {
+            let d = p - center;
+            (d.x / (rx + radius)).powi(2) + (d.y / (ry + radius)).powi(2) <= 1.0
+        };
+        let (w, h) = (SAUCER_WIDTH, SAUCER_HEIGHT);
+        inside(self.pos + Vec2::new(0.0, h * 0.08), w * 0.5, h * 0.27)
+            || inside(self.pos + Vec2::new(0.0, -h * 0.12), w * 0.24, h * 0.42)
+    }
+
+    /// L'animal qu'elle tient dans son faisceau, s'il y en a un.
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        self.grip.is_some()
+    }
+
+    /// Percutée : elle lâche ce qu'elle tient, tangue, fume, puis s'enfuit
+    /// ou tombe (au hasard). Renvoie `true` si elle tenait l'animal qu'elle
+    /// était venue chercher (qu'il faut lâcher).
+    pub fn hit(&mut self) -> bool {
+        let held = self.grip.take().is_some();
+        self.flee = self.rng.chance(0.5);
+        self.smoke = 1.0;
+        self.smoke_time = 0.0;
+        self.beam = 0.0;
+        self.go(Phase::Hit, self.pos);
+        held
     }
 
     /// Sa vitesse (pt/s).
@@ -366,7 +446,98 @@ impl Saucer {
                     self.phase = Phase::Gone;
                 }
             }
+            Phase::Hit => {
+                // Elle tangue, de moins en moins, et commence à fumer.
+                let sway = (1.0 - self.t / HIT).max(0.0);
+                self.spin = 0.35 * sway * (self.t * 22.0).sin();
+                self.pos = self.to + Vec2::new((self.t * 31.0).sin() * 4.0 * sway, self.t * 10.0);
+                if self.t >= HIT {
+                    if self.flee {
+                        let side = if self.pos.x > arena.x + arena.w * 0.5 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        let away = Vec2::new(
+                            self.pos.x + side * (arena.w * 0.7 + SAUCER_WIDTH),
+                            arena.top() - SAUCER_HEIGHT * 4.0,
+                        );
+                        self.go(Phase::Flee, away);
+                    } else {
+                        self.vel = Vec2::new(self.rng.range(-80.0, 80.0), 0.0);
+                        self.go(Phase::Crash, self.pos);
+                    }
+                }
+            }
+            Phase::Flee => {
+                // En trombe, de plus en plus vite, en zigzaguant un peu.
+                let u = (self.t / FLEE).clamp(0.0, 1.0);
+                self.spin = 0.25 * (self.t * 14.0).sin() * (1.0 - u);
+                self.pos = self.from.lerp(self.to, u * u * u)
+                    + Vec2::new(0.0, (self.t * 17.0).sin() * 6.0);
+                if self.t >= FLEE {
+                    self.phase = Phase::Gone;
+                }
+            }
+            Phase::Crash => {
+                // Elle tombe en tournoyant jusqu'au sol (le sol de l'écran
+                // sous elle), puis s'y pose, penchée.
+                let mut vel = self.vel;
+                vel.y += FALL * dt;
+                vel.x *= (-1.5 * dt).exp();
+                self.pos += vel * dt;
+                self.spin = (self.spin + dt * 1.6 * if vel.x < 0.0 { -1.0 } else { 1.0 })
+                    .clamp(-0.45, 0.45);
+                let floor = world
+                    .floor_under(self.pos.x)
+                    .map_or(arena.bottom(), |f| f.y);
+                let rest = floor - SAUCER_HEIGHT * 0.3;
+                if self.pos.y >= rest {
+                    self.pos.y = rest;
+                    self.spin = 0.22 * if self.spin < 0.0 { -1.0 } else { 1.0 };
+                    self.go(Phase::Wreck, self.pos);
+                }
+                // La vitesse de ce pas sert à tomber (et à la dessiner penchée).
+                self.vel = vel;
+                self.prev = self.pos;
+                self.lights += dt * 4.0;
+                return;
+            }
+            Phase::Wreck => {
+                // Au sol, elle fume ; les lumières clignotent mal.
+                self.pos = self.to;
+                if self.t >= WRECK {
+                    let side = if self.pos.x > arena.x + arena.w * 0.5 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    let away =
+                        Vec2::new(self.pos.x + side * 360.0, arena.top() - SAUCER_HEIGHT * 3.0);
+                    self.go(Phase::Limp, away);
+                }
+            }
+            Phase::Limp => {
+                // Elle repart en boitant : par à-coups, penchée, en fumant
+                // de moins en moins.
+                let u = (self.t / LIMP).clamp(0.0, 1.0);
+                let hop = (self.t * 7.0).sin().abs() * 10.0 * (1.0 - u);
+                self.spin = 0.22 * (1.0 - u) * if self.spin < 0.0 { -1.0 } else { 1.0 }
+                    + 0.08 * (self.t * 9.0).sin();
+                self.pos = self.from.lerp(self.to, u * u) - Vec2::new(0.0, hop);
+                if self.t >= LIMP {
+                    self.phase = Phase::Gone;
+                }
+            }
             Phase::Gone => {}
+        }
+        if self.smoke > 0.0 {
+            self.smoke_time += dt;
+            // Elle fume tant qu'elle est au sol ; en partant, la fumée
+            // s'éclaircit.
+            if matches!(self.phase, Phase::Limp | Phase::Flee) {
+                self.smoke = (self.smoke - dt * 0.35).max(0.15);
+            }
         }
         self.vel = (self.pos - self.prev) * (1.0 / dt.max(1e-4));
         self.prev = self.pos;

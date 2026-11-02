@@ -9,7 +9,7 @@ use std::f64::consts::PI;
 
 use mouflon_core::{PoseSignals, RUN_STRIDE};
 
-use crate::gesture::{ears_turn, gesturing, leg_slot, with_posture};
+use crate::gesture::{ears_turn, gesturing, leg_slot, rearing, with_posture};
 use peniko::kurbo::{Affine, Point, Vec2};
 
 use crate::rig::{Part, Rig};
@@ -222,6 +222,22 @@ pub(crate) fn stepping(cycle: f64, duty: f64, amplitude: f64, front: bool) -> (f
 /// `ln 0,5 / ln 0,38` : l'antérieur au plus haut à 38 % de son vol.
 const FORE_LIFT_SKEW: f64 = 0.716;
 
+/// De combien tourner les pupilles (radians, dans le repère du dessin) pour
+/// qu'elles restent à l'horizontale : la pupille du mouton est une fente
+/// horizontale, et son œil tourne dans l'orbite quand la tête penche
+/// (jusqu'à une cinquantaine de degrés en broutant). `head_angle` : la tête
+/// dans le dessin ; s'y ajoutent ce qui penche le personnage entier
+/// (l'élan, le balancement quand on le tient, la culbute).
+pub(crate) fn level_pupils(s: &PoseSignals, facing: f32, head_angle: f64) -> f64 {
+    let f = |v: f32| f64::from(v);
+    let side = if facing < 0.0 { -1.0 } else { 1.0 };
+    let tilt = head_angle + f(s.lean) * 0.6 + f(s.local_swing(facing)) + side * f(s.roll);
+    (-tilt).clamp(-PUPIL_TURN, PUPIL_TURN)
+}
+
+/// Jusqu'où l'œil tourne dans son orbite (radians).
+const PUPIL_TURN: f64 = 0.9;
+
 /// Le point le plus bas d'une boîte une fois transformée (ses quatre coins).
 pub(crate) fn lowest_point(t: &Affine, b: peniko::kurbo::Rect) -> f64 {
     [
@@ -405,11 +421,17 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     let closed = (f(s.blink) + act.eyes * (1.0 - f(s.blink))).min(1.0);
     let open = (1.0 - 0.94 * closed).max(0.06);
     parts[Part::Eyes.index()] = scale_about(rig.pivot(Part::Eyes), 1.0, open);
-    parts[Part::Pupils.index()] = Affine::translate((look.x * u * 2.6, look.y * u * 2.0));
+    // Les pupilles suivent le regard, et restent à l'horizontale quand la
+    // tête penche.
+    parts[Part::Pupils.index()] = Affine::translate((look.x * u * 2.6, look.y * u * 2.0))
+        * rotate_about(rig.pivot(Part::Pupils), level_pupils(s, facing, head_angle));
 
-    // La queue suit l'arrière du corps.
+    // La queue suit l'arrière du corps ; ses morceaux suivent chacun le
+    // précédent, avec un temps de retard.
     parts[Part::Tail.index()] = Affine::translate((act.body_shift.x * u, bob + drop_back))
         * rotate_about(rig.pivot(Part::Tail), f(s.tail) - 0.2 * dangle + act.tail);
+    parts[Part::TailMid.index()] = rotate_about(rig.pivot(Part::TailMid), f(s.tail_mid));
+    parts[Part::TailTip.index()] = rotate_about(rig.pivot(Part::TailTip), f(s.tail_tip));
 
     // --- Pattes. Le balayage de l'appui couvre exactement la distance que le
     // corps parcourt pendant ce temps : les sabots restent où ils sont posés.
@@ -473,12 +495,46 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             * scale_about(hip, 1.0, stretch);
     }
 
+    // Cabré : tout l'animal tourne autour de ses hanches, sauf les pattes
+    // de derrière, qui restent où elles sont.
+    let mut root = root;
+    if act.rear > 0.0 {
+        let hips = hips_of(rig);
+        let rear = rearing(act.rear, hips);
+        root *= rear;
+        let back = rear.inverse();
+        for part in [Part::LegBackNear, Part::LegBackFar] {
+            parts[part.index()] = back * parts[part.index()];
+        }
+    }
+
     PoseTransforms { root, parts }
+}
+
+/// Les hanches : le milieu des articulations des pattes de derrière (à
+/// défaut, l'arrière du bas du corps).
+fn hips_of(rig: &Rig) -> Point {
+    let legs: Vec<Point> = [Part::LegBackNear, Part::LegBackFar]
+        .into_iter()
+        .filter(|&p| rig.has_part(p))
+        .map(|p| rig.pivot(p))
+        .collect();
+    if legs.is_empty() {
+        let b = rig.part_bounds(Part::Body);
+        Point::new(b.min_x() + b.width() * 0.25, b.max_y())
+    } else {
+        let n = legs.len() as f64;
+        Point::new(
+            legs.iter().map(|p| p.x).sum::<f64>() / n,
+            legs.iter().map(|p| p.y).sum::<f64>() / n,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mouflon_core::Gesture;
 
     const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
         <g id="leg-front-near"><rect x="70" y="60" width="8" height="36" fill="#333"/></g>
@@ -550,6 +606,94 @@ mod tests {
             lowest > 90.0 && lowest < 96.0,
             "tête au plus bas en {lowest}"
         );
+    }
+
+    #[test]
+    fn a_rearing_ram_rises_on_its_hind_legs() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <g id="leg-back-near"><rect x="26" y="60" width="8" height="36" fill="#333"/></g>
+            <g id="leg-front-near"><rect x="70" y="60" width="8" height="36" fill="#333"/></g>
+            <g id="body"><ellipse cx="50" cy="55" rx="35" ry="22" fill="#999"/></g>
+            <g id="head"><circle cx="85" cy="35" r="12" fill="#888"/></g>
+            <circle id="pivot-leg-back-near" cx="30" cy="64" r="1"/>
+            <circle id="pivot-leg-front-near" cx="74" cy="64" r="1"/>
+            <circle id="pivot-ground" cx="50" cy="96" r="1"/>
+        </svg>"##;
+        let rig = Rig::parse(svg.as_bytes()).unwrap();
+        let rearing = PoseSignals {
+            gesture: Some(Gesture::Rear),
+            gesture_amount: 1.0,
+            gesture_time: 0.6,
+            ..PoseSignals::default()
+        };
+        let hoof = |s: &PoseSignals, part: Part, x: f64| {
+            let p = pose(&rig, s, 1.0, 0.0);
+            p.root * p.part(part) * Point::new(x, 96.0)
+        };
+        let still = PoseSignals::default();
+        // Les sabots de derrière restent où ils sont ; ceux de devant montent
+        // bien au-dessus du sol, la tête aussi.
+        let back = hoof(&rearing, Part::LegBackNear, 30.0) - hoof(&still, Part::LegBackNear, 30.0);
+        assert!(back.hypot() < 1e-6, "{back:?}");
+        let front = hoof(&rearing, Part::LegFrontNear, 74.0);
+        assert!(front.y < 96.0 - 20.0, "{front:?}");
+        let p = pose(&rig, &rearing, 1.0, 0.0);
+        let head = p.root * p.part(Part::Head) * Point::new(85.0, 35.0);
+        assert!(head.y < 35.0 - 15.0, "{head:?}");
+        // Retombé, il est de nouveau sur ses quatre pattes.
+        let down = PoseSignals {
+            gesture_time: 1.3,
+            ..rearing
+        };
+        assert!((hoof(&down, Part::LegFrontNear, 74.0).y - 96.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn slit_pupils_stay_level_when_the_head_bows() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <g id="body"><ellipse cx="50" cy="55" rx="35" ry="22" fill="#999"/></g>
+            <g id="head"><circle cx="80" cy="35" r="15" fill="#888"/>
+                <g id="eyes"><circle cx="84" cy="32" r="3" fill="#fff"/>
+                    <g id="pupils"><rect x="82" y="31.5" width="4" height="1" fill="#000"/></g>
+                </g>
+            </g>
+            <circle id="pivot-ground" cx="50" cy="96" r="1"/>
+        </svg>"##;
+        let rig = Rig::parse(svg.as_bytes()).unwrap();
+        for (graze, lean, facing) in [
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (1.0, 0.0, -1.0),
+            (0.0, 0.25, 1.0),
+        ] {
+            let signals = PoseSignals {
+                graze,
+                lean,
+                ..PoseSignals::default()
+            };
+            let p = pose(&rig, &signals, facing, 0.0);
+            let head = p.root * p.part(Part::Head);
+            let pupils = head * p.part(Part::Eyes) * p.part(Part::Pupils);
+            let tilt = |t: Affine| {
+                let [a, b, ..] = t.as_coeffs();
+                (b / a).atan()
+            };
+            // La tête penche pour brouter ; la fente reste à l'horizontale.
+            if graze > 0.0 {
+                assert!(tilt(head).abs() > 0.5, "{}", tilt(head));
+            }
+            assert!(
+                tilt(pupils).abs() < 0.02,
+                "{graze} {facing} : {}",
+                tilt(pupils)
+            );
+        }
+        // Au-delà de ce que l'œil peut tourner, la fente penche un peu.
+        let upside = PoseSignals {
+            roll: 2.0,
+            ..PoseSignals::default()
+        };
+        assert!((level_pupils(&upside, 1.0, 0.0) + PUPIL_TURN).abs() < 1e-9);
     }
 
     #[test]

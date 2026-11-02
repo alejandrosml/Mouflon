@@ -37,6 +37,9 @@
 //! `jeux` : les jeux d'agneaux d'un animal qui les connaît (le Mannequin,
 //! Aquarelle) : deux agneaux reculent, s'élancent et se cognent le front, un
 //! bélier recule avant de charger ; puis sauts tordus et demi-tours en l'air.
+//!
+//! `soucoupe` : une soucoupe emporte un animal ; on lui en lance un autre
+//! dessus : elle le lâche, fume, puis s'enfuit ou tombe.
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -139,6 +142,12 @@ fn main() -> Result<(), Error> {
         let frames = out_dir.join("frames");
         std::fs::create_dir_all(&frames)?;
         let count = render_greeting(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "soucoupe" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_saucer_hit(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
     if mode == "jeux" {
@@ -646,6 +655,118 @@ fn render_surprises(
                 "{t:4.1} s : {} ; soucoupes {}",
                 states.join(", "),
                 flock.saucers().len()
+            );
+        }
+    }
+    Ok(frames)
+}
+
+/// Une soucoupe emporte un animal ; la main en lance un autre dessus.
+fn render_saucer_hit(
+    def: &Arc<mouflon_core::PetDef>,
+    art: &PetArt,
+    dir: &Path,
+) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&[], LedgeOptions::default());
+    let mut flock = Flock::new();
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    give_reach(&mut flock, art);
+    let mut thrower = None;
+    let duration = 14.0;
+    let frames = (duration * RATE as f32) as u32;
+    let mut grab_from = Vec2::ZERO;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        if at(1.2) {
+            if let Some(pet) = flock.get_mut(a) {
+                pet.force("sleep");
+            }
+            flock.invite_saucer(&world, 5);
+            thrower = Some(flock.spawn(Arc::clone(def), 8, &world, Some(760.0)));
+            give_reach(&mut flock, art);
+        }
+        // La main prend l'autre, recule, puis le lance sur la soucoupe.
+        let saucer = flock.saucers().first().map(|s| s.view().pos);
+        if let (Some(id), Some(target)) = (thrower, saucer) {
+            let aim = target + Vec2::new(-30.0, 0.0);
+            let back = target + Vec2::new(-260.0, 40.0);
+            if let Some(pet) = flock.get_mut(id) {
+                if at(6.6) {
+                    grab_from = pet.position() - Vec2::new(0.0, 30.0);
+                    pet.grab(grab_from, &world);
+                }
+                if pet.is_held() && t < 7.3 {
+                    let u = ((t - 6.6) / 0.7).clamp(0.0, 1.0);
+                    pet.drag_to(grab_from.lerp(back, ease(u)));
+                } else if pet.is_held() && t < 7.42 {
+                    let u = ((t - 7.3) / 0.12).clamp(0.0, 1.0);
+                    pet.drag_to(back.lerp(aim, u));
+                }
+                if at(7.42) {
+                    pet.release(&world);
+                }
+            }
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[]);
+        let frame_of_screen = Frame {
+            origin: Vec2::ZERO,
+            scale: SCALE,
+        };
+        for saucer in flock.saucers() {
+            mouflon_render::saucer::paint_saucer(
+                &saucer.view(),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 5) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0})",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y
+                    )
+                })
+                .collect();
+            let saucers: Vec<String> = flock
+                .saucers()
+                .iter()
+                .map(|s| {
+                    let v = s.view();
+                    format!("({:.0},{:.0}) fumée {:.2}", v.pos.x, v.pos.y, v.smoke)
+                })
+                .collect();
+            println!(
+                "{t:4.1} s : {} ; soucoupe {}",
+                states.join(", "),
+                saucers.join(" ")
             );
         }
     }
@@ -1696,6 +1817,7 @@ fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
         ground(gesture(Gesture::Yawn, 0.9)),
         ground(gesture(Gesture::Bleat, 0.4)),
         ground(gesture(Gesture::Scratch, 0.8)),
+        ground(gesture(Gesture::Rear, 0.6)),
         // Aux aguets (oreilles dressées), puis couché qui rumine (mâchoire).
         ground(PoseSignals {
             ears_back: -1.0,

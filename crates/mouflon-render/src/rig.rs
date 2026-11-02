@@ -6,9 +6,10 @@
 //! - Le personnage regarde vers la **droite**.
 //! - Chaque partie animée est un groupe `<g>` dont l'`id` est l'un des noms
 //!   de [`Part`] : `body`, `head`, `ear-near`, `ear-far`, `eyes`, `pupils`,
-//!   `tail`, `leg-front-near`, `leg-front-far`, `leg-back-near`, `leg-back-far`.
-//!   Toutes sont facultatives ; une partie peut en contenir d'autres
-//!   (`eyes` dans `head`, `pupils` dans `eyes`).
+//!   `tail`, `leg-front-near`, `leg-front-far`, `leg-back-near`, `leg-back-far`,
+//!   `jaw`, `tail-mid`, `tail-tip`. Toutes sont facultatives ; une partie
+//!   peut en contenir d'autres (`eyes` dans `head`, `pupils` dans `eyes`,
+//!   `tail-mid` dans `tail`, `tail-tip` dans `tail-mid`).
 //! - Le pivot de chaque partie (épaule, hanche, cou, base d'oreille…) est un
 //!   petit cercle d'`id` `pivot-<partie>`, par exemple `pivot-head`. Le point
 //!   d'appui au sol est `pivot-ground`. Les pivots ne sont jamais dessinés.
@@ -39,10 +40,15 @@ pub enum Part {
     /// La mâchoire du bas (facultative), portée par la tête : elle s'ouvre
     /// autour de son articulation, près de la joue.
     Jaw,
+    /// Une queue en plusieurs morceaux (facultatifs) : le milieu, dans
+    /// `tail`, et le bout, dans `tail-mid`. Chacun suit le précédent avec un
+    /// temps de retard.
+    TailMid,
+    TailTip,
 }
 
 impl Part {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Body,
         Self::Head,
         Self::EarNear,
@@ -55,6 +61,8 @@ impl Part {
         Self::LegBackNear,
         Self::LegBackFar,
         Self::Jaw,
+        Self::TailMid,
+        Self::TailTip,
     ];
 
     #[must_use]
@@ -72,6 +80,8 @@ impl Part {
             Self::LegBackNear => "leg-back-near",
             Self::LegBackFar => "leg-back-far",
             Self::Jaw => "jaw",
+            Self::TailMid => "tail-mid",
+            Self::TailTip => "tail-tip",
         }
     }
 
@@ -191,6 +201,8 @@ impl Rig {
             Part::Head => Point::new(b.min_x() + b.width() * 0.3, b.max_y() - b.height() * 0.2),
             Part::EarNear | Part::EarFar => Point::new(b.center().x, b.max_y()),
             Part::Tail => Point::new(b.max_x(), b.center().y),
+            // Un morceau de queue pend de son attache, en haut.
+            Part::TailMid | Part::TailTip => Point::new(b.center().x, b.min_y()),
             Part::Body => Point::new(b.center().x, b.max_y()),
             // La charnière : l'arrière de la mâchoire, vers la joue.
             Part::Jaw => Point::new(b.min_x(), b.min_y() + b.height() * 0.3),

@@ -99,9 +99,9 @@ Un `role` dit ce que le moteur fait de l'os de lui-même :
 | `head` | regarde le curseur, hoche au pas, se baisse pour dormir, va au sol pour brouter | le cou |
 | `ear` | bat en tombant, frémit, tombe en dormant | base de l'oreille |
 | `eye` | cligne (s'écrase, ou laisse place à une paupière peinte), se ferme en dormant | milieu de l'œil |
-| `pupil` | suit le curseur | — |
+| `pupil` | suit le regard, et reste à l'horizontale quand la tête penche (la fente du mouton) ; les reflets, sur l'œil, par-dessus | centre de la pupille |
 | `jaw` | s'ouvre pour mâcher, ruminer, bêler, bâiller (enfant de la tête) | la charnière, sous la joue, à hauteur de la bouche |
-| `tail` | se balance, bat de temps en temps | base de la queue |
+| `tail` | se balance, bat de temps en temps ; plusieurs os `tail` à la suite (chacun enfant du précédent) font une queue en chaîne : chacun suit le précédent avec un temps de retard, elle ondule | base de la queue (puis l'attache de chaque morceau) |
 | `leg-front-near`, `leg-back-near` | pas, trot, galop, sauts, gestes (gratter le sol, taper du pied, se gratter), pattes repliées couché | hanche ou épaule |
 | `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
 

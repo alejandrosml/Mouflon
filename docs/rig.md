@@ -37,9 +37,10 @@ Toutes sont facultatives.
 | `head` | regard, hochement au pas, tête basse en dormant, au sol pour brouter | cou |
 | `ear-near`, `ear-far` | battent en tombant, frémissent, tombent en dormant | base de l'oreille |
 | `eyes` (dans `head`) | clignements, yeux fermés en dormant | centre des yeux |
-| `pupils` (dans `eyes`) | suivent le curseur | — |
+| `pupils` (dans `eyes`) | suivent le regard, et restent à l'horizontale quand la tête penche (la pupille du mouton est une fente horizontale ; son œil tourne d'une cinquantaine de degrés en broutant) : mets-y l'iris et la fente, et les reflets après le groupe | centre de la pupille |
 | `jaw` (dans `head`) | s'ouvre pour mâcher, ruminer, bêler, bâiller | la charnière, sous la joue, à hauteur de la bouche |
 | `tail` | balancement, coups de queue | base de la queue |
+| `tail-mid` (dans `tail`), `tail-tip` (dans `tail-mid`) | une longue queue en morceaux : chacun suit le précédent avec un temps de retard, elle ondule | l'attache de chaque morceau |
 | `leg-front-near`, `leg-back-near` | pas, galop, sauts, pattes repliées couché | hanche ou épaule |
 | `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
 

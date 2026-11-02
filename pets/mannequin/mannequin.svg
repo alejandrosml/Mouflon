@@ -31,9 +31,10 @@
       <stop offset="0" stop-color="#ffffff"/>
       <stop offset="1" stop-color="#e4e8f1"/>
     </linearGradient>
-    <radialGradient id="iris" cx="0.42" cy="0.38" r="0.7">
-      <stop offset="0" stop-color="#3a3445"/>
-      <stop offset="1" stop-color="#120f18"/>
+    <radialGradient id="iris" cx="0.45" cy="0.4" r="0.62">
+      <stop offset="0" stop-color="#e6bd5c"/>
+      <stop offset="0.55" stop-color="#c98f34"/>
+      <stop offset="1" stop-color="#7c4f1b"/>
     </radialGradient>
     <radialGradient id="blush" cx="0.5" cy="0.5" r="0.5">
       <stop offset="0" stop-color="#f29ab0" stop-opacity="0.55"/>
@@ -115,9 +116,12 @@
       <ellipse cx="117.31" cy="50.59" rx="4.51" ry="5.06" transform="rotate(-12 117.31 50.59)" fill="url(#sclera)"/>
       <g id="pupils">
         <circle cx="118.14" cy="51.05" r="3.27" fill="url(#iris)"/>
-        <circle cx="117.13" cy="49.49" r="1.15" fill="#ffffff"/>
-        <circle cx="119.24" cy="52.34" r="0.51" fill="#ffffff" fill-opacity="0.85"/>
+        <circle cx="118.14" cy="51.05" r="3.02" fill="none" stroke="#5a3712" stroke-width="0.5" stroke-opacity="0.8"/>
+        <rect x="115.79" y="50.2" width="4.7" height="1.7" rx="0.85" fill="#16121a"/>
+        <circle id="pivot-pupils" cx="118.14" cy="51.05" r="0.6"/>
       </g>
+      <circle cx="117.13" cy="49.49" r="1.05" fill="#ffffff" fill-opacity="0.95"/>
+      <circle cx="119.3" cy="52.4" r="0.45" fill="#ffffff" fill-opacity="0.8"/>
       <ellipse cx="117.31" cy="50.59" rx="6.9" ry="7.45" transform="rotate(-12 117.31 50.59)" fill="none" stroke="url(#skin)" stroke-width="3.13"/>
       <ellipse cx="117.31" cy="50.59" rx="5.34" ry="5.89" transform="rotate(-12 117.31 50.59)" fill="none" stroke="#2b3042" stroke-width="0.97" stroke-opacity="0.55"/>
       <path d="M112.34 49.67C113.26 44.89 119.7 43.78 122.46 48.2" fill="none" stroke="#2b3042" stroke-width="1.24" stroke-linecap="round"/>
