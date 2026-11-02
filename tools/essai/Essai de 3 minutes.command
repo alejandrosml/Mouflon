@@ -16,13 +16,16 @@
 #
 # Variables : MOUFLON_ESSAI_DUREE (secondes, 180 par défaut) ;
 # MOUFLON_ESSAI_CI=1 pour la CI (pas de notification, la fenêtre reste) ;
-# MOUFLON_ESSAI_SCENE=1 pour une seule fenêtre par écran (voir l'autre
-# fichier, « … (une fenêtre par écran).command »).
+# MOUFLON_ESSAI_GPU=1 pour dessiner les animaux sur le GPU au lieu des
+# calques Core Animation (voir l'autre fichier, « … (GPU).command ») ;
+# MOUFLON_ESSAI_INSTANTANES=1 pour des instantanés de ce qui est à l'écran
+# (dans instantanes/ ; chacun retient l'affichage quelques millisecondes).
 
 set -u
 DUREE="${MOUFLON_ESSAI_DUREE:-180}"
 CI="${MOUFLON_ESSAI_CI:-}"
-SCENE="${MOUFLON_ESSAI_SCENE:-}"
+GPU="${MOUFLON_ESSAI_GPU:-}"
+INSTANTANES="${MOUFLON_ESSAI_INSTANTANES:-}"
 
 # Le dossier du projet : celui de ce fichier, ou deux crans au-dessus
 # (tools/essai/ dans le dépôt).
@@ -35,7 +38,7 @@ if [ ! -x "$BIN" ]; then
     echo "Mouflon introuvable : $APP"
     exit 1
 fi
-OUT="$racine/essais/$(date +%Y-%m-%d_%Hh%M)${SCENE:+-une-fenetre}"
+OUT="$racine/essais/$(date +%Y-%m-%d_%Hh%M)${GPU:+-gpu}"
 mkdir -p "$OUT"
 REPERES="$OUT/reperes.txt"
 debut=$(date +%s)
@@ -65,8 +68,8 @@ arrete() {
     done
 }
 
-if [ -n "$SCENE" ]; then
-    echo "Une seule fenêtre par écran pour tous les animaux (essai de comparaison)."
+if [ -n "$GPU" ]; then
+    echo "Les animaux dessinés sur le GPU (essai de comparaison)."
 fi
 echo "Essai de $DUREE secondes de Mouflon. Laisse cette fenêtre ouverte :"
 echo "elle se fermera d'elle-même. Sers-toi des animaux comme d'habitude."
@@ -137,7 +140,8 @@ touch "$OUT/.debut"
 debut=$(date +%s)
 repere "lancement de Mouflon"
 MOUFLON_ESSAI="$DUREE" MOUFLON_ESSAI_COLLISIONS=1 \
-    MOUFLON_ESSAI_ANIMAUX=lainou,pelote MOUFLON_SCENE="${SCENE:+1}" \
+    MOUFLON_ESSAI_ANIMAUX=lainou,pelote MOUFLON_GPU="${GPU:+1}" \
+    MOUFLON_INSTANTANES="${INSTANTANES:+$OUT/instantanes}" \
     MOUFLON_JOURNAL="$OUT/journal.log" \
     RUST_LOG=warn,mouflon=info,mouflon_core=info,mouflon_render=info,mouflon_platform=info \
     "$BIN" > "$OUT/sortie.log" 2>&1 &

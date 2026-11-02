@@ -13,6 +13,7 @@ mod icon;
 mod library;
 mod menu;
 mod quick;
+mod scene;
 mod settings;
 mod settings_window;
 mod stats;
@@ -94,7 +95,7 @@ fn main() {
         log::error!("{e}");
     }
     app.shutdown();
-    // On sort sans détruire les fenêtres des animaux une à une : ce sont des
+    // On sort sans détruire les fenêtres des écrans une à une : ce sont des
     // panneaux dont la classe a changé après leur création, et AppKit, en
     // les libérant, échoue à défaire certaines de ses observations internes
     // (NSRangeException, l'app « quitte de manière imprévue »). Elles sont

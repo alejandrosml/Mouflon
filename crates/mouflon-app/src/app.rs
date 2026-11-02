@@ -1,4 +1,4 @@
-//! Boucle de l'application : simulation, fenêtres des animaux, entrées et menu.
+//! Boucle de l'application : simulation, scène (une fenêtre par écran), entrées et menu.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -12,24 +12,23 @@ use mouflon_core::{
     WindowRect, World, exact_dock,
 };
 use mouflon_platform as platform;
-use mouflon_render::{Canvas, DisplayList, Frame, PetArt, SpriteKey, Style, paint_pet};
+use mouflon_render::{PetArt, Style};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::monitor::MonitorHandle;
-use winit::window::{Theme, Window, WindowId, WindowLevel};
+use winit::window::{Theme, Window, WindowId};
 
-use crate::gpu::{Gpu, Job, PetSurface};
 use crate::library::{Entry, Library};
 use crate::menu::{Action, PetChoice, PetMenuState};
+use crate::scene::Scene;
 use crate::settings::{Paths, Settings};
 use crate::settings_window::Shown;
 use crate::watch::{Snapshot, Watcher};
 
 /// Relevé des écrans (le reste se relève sur un fil à part).
 const SCREEN_POLL: Duration = Duration::from_secs(2);
-/// Au lancement, les fenêtres des animaux restent vides un court instant :
+/// Au lancement, les fenêtres des écrans restent vides un court instant :
 /// le temps que macOS les affiche et que tout soit en route avant que le
 /// premier animal ne tombe.
 const SETTLE: Duration = Duration::from_millis(300);
@@ -85,62 +84,6 @@ enum TrialStep {
     Add(usize),
 }
 
-struct PetWindow {
-    pet: u32,
-    window: Arc<Window>,
-    surface: PetSurface,
-    canvas: Canvas,
-    art: Arc<PetArt>,
-    scale: f64,
-    /// Coin haut gauche demandé pour la fenêtre (repère commun, points).
-    position: Option<(f64, f64)>,
-    /// Coin haut gauche où la fenêtre se trouve vraiment : macOS refuse de
-    /// placer une fenêtre plus haut que la barre des menus.
-    placed: (f64, f64),
-    /// Écart entre les deux au dernier dessin.
-    drawn_offset: (f64, f64),
-    hittest: bool,
-    last_render: Option<Instant>,
-    /// Dernière image dessinée d'un animal en sprites.
-    sprite: Option<SpriteKey>,
-    /// Écran où se trouve la fenêtre, et sa fréquence (images par seconde) :
-    /// sur un écran plus lent que l'horloge, on dessine moins souvent (sinon
-    /// l'affichage ferait attendre toute l'app).
-    monitor: Option<MonitorHandle>,
-    hz: f64,
-    /// Ce qu'on y dessine à cette image (gardé d'une image à l'autre pour ne
-    /// pas réallouer) : toutes les fenêtres partent ensuite au GPU d'un coup.
-    list: DisplayList,
-}
-
-/// La fenêtre d'une soucoupe en visite (voir `mouflon_core::Saucer`) : elle
-/// laisse passer les clics.
-struct SaucerWindow {
-    saucer: u32,
-    window: Arc<Window>,
-    surface: PetSurface,
-    scale: f64,
-    position: Option<(f64, f64)>,
-    placed: (f64, f64),
-    list: DisplayList,
-}
-
-/// Essai d'une autre façon d'afficher (`MOUFLON_SCENE=1`) : une seule
-/// fenêtre transparente par écran, où se dessinent tous les animaux (et les
-/// soucoupes), au lieu d'une fenêtre par animal qu'on déplace à chaque
-/// image. Elle ne prend les clics que quand le curseur est sur un animal.
-/// De quoi comparer, dans le journal d'un essai, ce que coûtent les
-/// déplacements de fenêtres et ce que coûte un grand dessin.
-struct Stage {
-    /// Le rectangle de l'écran (repère commun, points).
-    rect: Rect,
-    window: Arc<Window>,
-    surface: PetSurface,
-    scale: f64,
-    hittest: bool,
-    list: DisplayList,
-}
-
 /// Une surprise (voir `mouflon_core::surprise`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Surprise {
@@ -167,16 +110,13 @@ pub struct App {
     library: Library,
     world: World,
     flock: Flock,
-    windows: HashMap<WindowId, PetWindow>,
-    saucer_windows: HashMap<WindowId, SaucerWindow>,
-    /// Une fenêtre par écran au lieu d'une par animal (voir [`Stage`]).
-    staged: bool,
-    stages: HashMap<WindowId, Stage>,
+    /// Une fenêtre transparente par écran, où se posent tous les animaux.
+    scene: Scene,
+    /// Le dessin de chaque animal à l'écran (son numéro → son dessin).
+    arts: HashMap<u32, Arc<PetArt>>,
     /// Surprises à venir : quand, et laquelle si elle est imposée (un essai,
     /// `MOUFLON_SURPRISE`) ; sinon tirée au sort.
     surprises: Vec<(Instant, Option<Surprise>)>,
-    gpu: Option<Gpu>,
-    list: DisplayList,
     style: Style,
     pointer: Pointer,
     paused: bool,
@@ -264,8 +204,8 @@ pub struct App {
     menu_flock: Option<(usize, Vec<usize>)>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     menu_generation: Option<u64>,
-    /// Génération du troupeau pour laquelle les fenêtres sont à jour.
-    windows_generation: Option<u64>,
+    /// Génération du troupeau pour laquelle les dessins sont à jour.
+    pets_generation: Option<u64>,
     /// Ouverture à l'ouverture de session, telle que le système l'a dite à
     /// la dernière ouverture des réglages (c'est lui qui la garde).
     login: platform::LoginItem,
@@ -274,6 +214,9 @@ pub struct App {
     menu_pet: Option<(u32, Option<usize>)>,
     /// Vitrine de la CI (`MOUFLON_VITRINE`) : images de la fenêtre des réglages.
     showcase: Option<Showcase>,
+    /// Instantanés de la scène (`MOUFLON_INSTANTANES`) : le dossier, et
+    /// quand les prendre.
+    snapshots: Option<(std::path::PathBuf, Vec<Instant>)>,
 }
 
 /// La vitrine de la CI : à l'heure dite, la fenêtre des réglages s'ouvre,
@@ -323,35 +266,13 @@ const VOLUME: f32 = 0.55;
 /// Mention de copyright de la fenêtre « À propos ».
 const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
 
-/// Coin haut gauche où se trouve vraiment la fenêtre (repère commun).
-/// Sur macOS, un déplacement est immédiat et peut être corrigé par le
-/// système (une fenêtre ne monte pas au-dessus de la barre des menus) ;
-/// ailleurs, il peut n'être fait qu'un peu plus tard : on s'en tient à la
-/// position demandée.
-fn placed_at(window: &Window, scale: f64) -> Option<(f64, f64)> {
-    if !cfg!(target_os = "macos") {
-        return None;
-    }
-    let p = window.outer_position().ok()?.to_logical::<f64>(scale);
-    Some((p.x, p.y))
-}
-
 fn local_hour() -> f32 {
     let now = chrono::Local::now();
     now.hour() as f32 + now.minute() as f32 / 60.0
 }
 
 /// Le curseur est-il sur le corps de l'animal ? Hors du corps, la fenêtre
-/// laisse passer les clics vers les applications en dessous.
-/// Le dessin d'un animal en images doit-il suivre un nouvel écart entre sa
-/// fenêtre et lui ? Seulement d'un point au moins : macOS arrondit la place
-/// des fenêtres, et redessiner pour un demi-point (un pixel) coûtait, à un
-/// animal qui marche, trois ou quatre rendus de plus que ses propres images.
-/// L'écart exact revient à l'image suivante de l'animal.
-fn shifted(offset: (f64, f64), drawn: (f64, f64)) -> bool {
-    (offset.0 - drawn.0).abs() >= 1.0 || (offset.1 - drawn.1).abs() >= 1.0
-}
-
+/// de l'écran laisse passer les clics vers les applications en dessous.
 fn hit_test(cursor: Vec2, view: &PetView<'_>, art: &PetArt) -> bool {
     let g = view.ground;
     let (half, height) = art.body;
@@ -384,13 +305,9 @@ impl App {
             library,
             world: World::default(),
             flock,
-            windows: HashMap::new(),
-            saucer_windows: HashMap::new(),
-            staged: std::env::var("MOUFLON_SCENE").is_ok_and(|v| !v.is_empty() && v != "0"),
-            stages: HashMap::new(),
+            scene: Scene::new(),
+            arts: HashMap::new(),
             surprises: Vec::new(),
-            gpu: None,
-            list: DisplayList::default(),
             style: Style::default(),
             pointer: Pointer::default(),
             paused: false,
@@ -437,10 +354,11 @@ impl App {
             menu_flock: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu_generation: None,
-            windows_generation: None,
+            pets_generation: None,
             login: platform::LoginItem::Unavailable,
             menu_pet: None,
             showcase: None,
+            snapshots: None,
         }
     }
 
@@ -528,6 +446,8 @@ impl App {
         if screens != self.world.screens() {
             let first = self.world.screens().is_empty();
             self.world.set_screens(screens);
+            // Une fenêtre transparente par écran.
+            self.sync_overlays(event_loop);
             // Écran branché, débranché ou réglé autrement : l'horloge se cale
             // de nouveau sur le plus rapide.
             if !first && self.clock.is_some() {
@@ -767,7 +687,7 @@ impl App {
         }
     }
 
-    fn spawn(&mut self, event_loop: &ActiveEventLoop, index: usize) {
+    fn spawn(&mut self, index: usize) {
         let Some(entry) = self.library.pets.get(index).cloned() else {
             return;
         };
@@ -789,7 +709,7 @@ impl App {
             .wrapping_add(1);
         self.flock
             .spawn(Arc::clone(&entry.def), self.seed, &self.world, None);
-        self.sync_windows(event_loop);
+        self.sync_pets();
     }
 
     /// Lance le décodage des dessins de ces animaux, une espèce par fil, sans
@@ -882,8 +802,8 @@ impl App {
         }
     }
 
-    /// Les images d'une espèce sont compressées : ses fenêtres prennent le
-    /// dessin compressé, et le GPU oublie les images d'avant.
+    /// Les images d'une espèce sont compressées : ses animaux prennent le
+    /// dessin compressé ; les images d'avant s'oublient.
     fn art_compressed(&mut self, id: &str) {
         // Toutes les tailles de l'espèce dont le dessin est prêt (la
         // bibliothèque a pu être rechargée entre-temps : jamais de décodage
@@ -897,28 +817,25 @@ impl App {
         if ready.is_empty() {
             return;
         }
-        let pets = self.flock.pets();
         let mut swapped = 0;
-        for (def, art) in &ready {
-            for pw in self.windows.values_mut() {
-                let same = pets
-                    .iter()
-                    .any(|p| p.id() == pw.pet && Arc::ptr_eq(p.def(), def));
-                if same && !Arc::ptr_eq(&pw.art, art) {
-                    pw.art = Arc::clone(art);
-                    // Redessinée à la prochaine image, avec les images compressées.
-                    pw.sprite = None;
-                    swapped += 1;
-                }
+        for pet in self.flock.pets() {
+            let Some((_, art)) = ready.iter().find(|(def, _)| Arc::ptr_eq(pet.def(), def)) else {
+                continue;
+            };
+            if self
+                .arts
+                .get(&pet.id())
+                .is_some_and(|old| !Arc::ptr_eq(old, art))
+            {
+                self.arts.insert(pet.id(), Arc::clone(art));
+                swapped += 1;
             }
         }
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.forget_unused_images();
-        }
+        self.scene.forget_images();
         if let Some(stats) = &self.stats {
             let bytes: usize = ready.iter().map(|(_, art)| art.image_bytes()).sum();
             stats.note(format_args!(
-                "images de {id} compressées ({:.1} Mo, {swapped} fenêtre(s))",
+                "images de {id} compressées ({:.1} Mo, {swapped} animal(aux))",
                 bytes as f64 / 1e6
             ));
         }
@@ -939,7 +856,7 @@ impl App {
     }
 
     /// Les dessins d'un animal sont prêts : ceux qui l'attendaient arrivent.
-    fn art_ready(&mut self, event_loop: &ActiveEventLoop, id: &str) {
+    fn art_ready(&mut self, id: &str) {
         self.next_frame = None;
         self.decoding.remove(id);
         let count = self.pending.remove(id).unwrap_or(0);
@@ -948,179 +865,67 @@ impl App {
         }
         if let Some(index) = self.library.pets.iter().position(|e| e.def.meta.id == id) {
             for _ in 0..count {
-                self.spawn(event_loop, index);
+                self.spawn(index);
             }
         }
     }
 
-    /// Une fenêtre par animal : on en crée pour les nouveaux venus (dont les
-    /// personnages secondaires des scènes desktopPet) et on ferme celles des partis.
-    fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
-        if self.staged {
-            self.sync_stages(event_loop);
-            return;
-        }
-        // Rien n'a changé dans le troupeau : les fenêtres sont à jour.
+    /// Le dessin de chaque animal : pour les nouveaux venus (dont les
+    /// personnages secondaires des scènes desktopPet), on le cherche et on
+    /// règle ce qui en dépend ; ceux des partis s'oublient.
+    fn sync_pets(&mut self) {
+        // Rien n'a changé dans le troupeau : les dessins sont à jour.
         let generation = self.flock.generation();
-        if self.windows_generation == Some(generation) {
+        if self.pets_generation == Some(generation) {
             return;
         }
-        self.windows_generation = Some(generation);
-        let alive: Vec<u32> = self.flock.pets().iter().map(|p| p.id()).collect();
-        for w in self.windows.values().filter(|w| !alive.contains(&w.pet)) {
-            if let Some(stats) = &self.stats {
-                stats.note(format_args!("fenêtre fermée (n° {})", w.pet));
-            }
-            // Fermée mais jamais libérée (voir `keep_pet_window`).
-            platform::keep_pet_window(&*w.window);
-        }
-        self.windows.retain(|_, w| alive.contains(&w.pet));
-        if self.windows.len() == alive.len() {
-            return;
-        }
-        let pets = self.flock.pets();
-        let missing: Vec<(u32, String, Arc<PetArt>)> = pets
+        self.pets_generation = Some(generation);
+        let flock = &self.flock;
+        self.arts
+            .retain(|id, _| flock.pets().iter().any(|p| p.id() == *id));
+        let missing: Vec<(u32, Arc<PetArt>)> = self
+            .flock
+            .pets()
             .iter()
-            .filter(|p| !self.windows.values().any(|w| w.pet == p.id()))
+            .filter(|p| !self.arts.contains_key(&p.id()))
             .filter_map(|p| {
                 // Dessin de la bibliothèque ; après un rechargement, celui d'un
-                // animal déjà affiché de la même espèce (personnages secondaires).
-                let art = self
-                    .library
-                    .entry_of(p.def())
-                    .and_then(crate::library::Entry::art)
-                    .or_else(|| {
-                        self.windows
-                            .values()
-                            .find(|w| {
-                                pets.iter()
-                                    .any(|q| q.id() == w.pet && Arc::ptr_eq(q.def(), p.def()))
-                            })
-                            .map(|w| Arc::clone(&w.art))
-                    })?;
-                Some((p.id(), p.def().meta.name.clone(), art))
+                // animal déjà montré de la même espèce (personnages secondaires).
+                let art = self.art_of(p).or_else(|| {
+                    self.flock
+                        .pets()
+                        .iter()
+                        .find(|q| Arc::ptr_eq(q.def(), p.def()))
+                        .and_then(|q| self.arts.get(&q.id()))
+                        .cloned()
+                })?;
+                Some((p.id(), art))
             })
             .collect();
-        for (id, name, art) in missing {
-            self.open_window(event_loop, id, &name, art);
+        for (id, art) in missing {
+            if let Some(stats) = &self.stats
+                && let Some(pet) = self.flock.get_mut(id)
+            {
+                stats.note(format_args!("arrivée de {} (n° {id})", pet.def().meta.name));
+            }
+            self.fit_pet(id, art);
         }
     }
 
-    fn open_window(&mut self, event_loop: &ActiveEventLoop, id: u32, name: &str, art: Arc<PetArt>) {
-        if let Some(stats) = &self.stats {
-            stats.note(format_args!("fenêtre ouverte pour {name} (n° {id})"));
-        }
-        // Les collisions partent quand les dessins se touchent.
-        let Some(pet) = self.flock.get_mut(id) else {
-            return;
-        };
-        if let Some((front, back)) = art.reach() {
-            pet.set_reach(front, back);
-        }
-        // Un autre se pose sur ce qu'on voit de lui, même couché.
-        if let Some(tops) = art.tops() {
-            pet.set_tops(tops);
-        }
-        let canvas = art.canvas();
-        let ground = pet.position();
-        let origin = ground - canvas.anchor;
-
-        let attrs = Window::default_attributes()
-            .with_title(format!("Mouflon — {name}"))
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_inner_size(LogicalSize::new(
-                f64::from(canvas.width),
-                f64::from(canvas.height),
-            ))
-            .with_position(LogicalPosition::new(
-                f64::from(origin.x),
-                f64::from(origin.y),
-            ))
-            .with_active(false);
-        #[cfg(target_os = "macos")]
-        let attrs = {
-            use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs.with_has_shadow(false).with_accepts_first_mouse(true)
-        };
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                log::error!("impossible de créer la fenêtre de l'animal : {e}");
-                self.flock.remove(id);
-                return;
+    /// Un animal prend son dessin (à son arrivée, ou à une autre taille) :
+    /// ce qui en dépend pour la simulation suit.
+    fn fit_pet(&mut self, id: u32, art: Arc<PetArt>) {
+        if let Some(pet) = self.flock.get_mut(id) {
+            // Les collisions partent quand les dessins se touchent.
+            if let Some((front, back)) = art.reach() {
+                pet.set_reach(front, back);
             }
-        };
-        platform::prepare_pet_window(&*window);
-        let monitor = window.current_monitor();
-        let hz = window_hz(&window, monitor.as_ref());
-        self.refresh_hz = self.refresh_hz.max(hz);
-        if window.theme() == Some(Theme::Dark) {
-            self.style.dark = true;
-        }
-        let gpu = self.gpu.get_or_insert_with(Gpu::new);
-        let size = window.inner_size();
-        let surface = match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("rendu indisponible : {e}");
-                platform::keep_pet_window(&*window);
-                self.flock.remove(id);
-                return;
-            }
-        };
-        let scale = window.scale_factor();
-        self.windows.insert(
-            window.id(),
-            PetWindow {
-                pet: id,
-                window,
-                surface,
-                canvas,
-                art,
-                scale,
-                position: None,
-                placed: (f64::from(origin.x), f64::from(origin.y)),
-                drawn_offset: (0.0, 0.0),
-                hittest: true,
-                last_render: None,
-                sprite: None,
-                monitor,
-                hz,
-                list: DisplayList::default(),
-            },
-        );
-    }
-
-    /// Met le GPU en route avant la première image : une image d'essai de
-    /// chaque animal du lancement, dessinée hors écran jusqu'au bout.
-    fn warm_up_gpu(&mut self) {
-        let started = Instant::now();
-        let gpu = self.gpu.get_or_insert_with(Gpu::new);
-        let mut done: Vec<Arc<PetArt>> = Vec::new();
-        for pw in self.windows.values() {
-            if done.iter().any(|art| Arc::ptr_eq(art, &pw.art)) {
-                continue;
-            }
-            done.push(Arc::clone(&pw.art));
-            let Some(pet) = self.flock.pets().iter().find(|p| p.id() == pw.pet) else {
-                continue;
-            };
-            let view = pet.view(1.0);
-            let size = pw.window.inner_size();
-            self.list.clear(size.width, size.height);
-            let frame = Frame {
-                origin: view.ground - pw.canvas.anchor,
-                scale: pw.scale,
-            };
-            paint_pet(&pw.art, &view, &frame, &self.style, &mut self.list);
-            if let Err(e) = gpu.warm_up(&self.list) {
-                log::warn!("mise en route du GPU : {e}");
+            // Un autre se pose sur ce qu'on voit de lui, même couché.
+            if let Some(tops) = art.tops() {
+                pet.set_tops(tops);
             }
         }
-        log::info!("GPU en route en {} ms", started.elapsed().as_millis());
+        self.arts.insert(id, art);
     }
 
     /// Reconstruit le menu après un changement de la bibliothèque.
@@ -1226,12 +1031,7 @@ impl App {
 
     /// Un fichier ou un dossier d'animal déposé sur un animal : on l'installe,
     /// et l'animal visé laisse sa place au nouveau venu (comme dans desktopPet).
-    fn install_pet(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        path: &std::path::Path,
-        target: Option<u32>,
-    ) {
+    fn install_pet(&mut self, path: &std::path::Path, target: Option<u32>) {
         match self.library.install(path) {
             Ok(id) => {
                 log::info!("animal installé : {id} ({})", path.display());
@@ -1249,7 +1049,7 @@ impl App {
                         self.settings.save(&paths.settings);
                     }
                 }
-                self.spawn(event_loop, index);
+                self.spawn(index);
             }
             Err(e) => log::warn!("impossible d'installer {} : {e}", path.display()),
         }
@@ -1271,18 +1071,16 @@ impl App {
 
     /// Avant de quitter : le journal d'un essai interrompu (Quitter pendant
     /// l'essai) reçoit son bilan et part sur le disque, et les fenêtres des
-    /// animaux ne seront jamais libérées (voir `keep_pet_window`).
+    /// écrans ne seront jamais libérées (voir `keep_pet_window`).
     pub fn shutdown(&mut self) {
         if let Some(stats) = &mut self.stats {
             stats.finish();
         }
-        for pw in self.windows.values() {
-            platform::keep_pet_window(&*pw.window);
-        }
+        self.scene.shutdown();
     }
 
     /// Une étape de l'essai, notée au journal.
-    fn trial_step(&mut self, event_loop: &ActiveEventLoop, step: TrialStep) {
+    fn trial_step(&mut self, step: TrialStep) {
         if let Some(stats) = &self.stats {
             let (TrialStep::Goodbye(index) | TrialStep::Add(index)) = step;
             let name = self
@@ -1299,7 +1097,7 @@ impl App {
         }
         match step {
             TrialStep::Goodbye(index) => self.goodbye_one(index),
-            TrialStep::Add(index) => self.spawn(event_loop, index),
+            TrialStep::Add(index) => self.spawn(index),
         }
     }
 
@@ -1370,7 +1168,7 @@ impl App {
         for id in gone {
             self.flock.remove(id);
         }
-        // Chaque fenêtre prend tout de suite la nouvelle taille, sans se fermer.
+        // Chacun prend tout de suite son dessin à la nouvelle taille.
         let refits: Vec<(u32, Arc<PetArt>)> = self
             .flock
             .pets()
@@ -1384,42 +1182,13 @@ impl App {
             })
             .collect();
         for (pet, art) in refits {
-            self.refit_window(pet, art);
+            self.fit_pet(pet, art);
         }
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.forget_unused_images();
-        }
+        self.scene.forget_images();
         log::info!(
             "taille des animaux : × {size} ({} à l'écran)",
             self.flock.pets().len()
         );
-    }
-
-    /// La fenêtre d'un animal prend son nouveau dessin (une autre taille),
-    /// sans se fermer.
-    fn refit_window(&mut self, pet: u32, art: Arc<PetArt>) {
-        let Some(pw) = self.windows.values_mut().find(|w| w.pet == pet) else {
-            return;
-        };
-        pw.canvas = art.canvas();
-        if let Some(pet) = self.flock.get_mut(pet) {
-            if let Some((front, back)) = art.reach() {
-                pet.set_reach(front, back);
-            }
-            if let Some(tops) = art.tops() {
-                pet.set_tops(tops);
-            }
-        }
-        pw.art = art;
-        let requested = LogicalSize::new(f64::from(pw.canvas.width), f64::from(pw.canvas.height));
-        if let Some(size) = pw.window.request_inner_size(requested)
-            && let Some(gpu) = self.gpu.as_ref()
-        {
-            gpu.resize(&mut pw.surface, size.width, size.height);
-        }
-        pw.position = None;
-        pw.last_render = None;
-        pw.sprite = None;
     }
 
     /// Change la taille d'un seul animal (son menu). Son dessin à cette
@@ -1502,7 +1271,7 @@ impl App {
         if !rescaled {
             return;
         }
-        self.refit_window(id, art);
+        self.fit_pet(id, art);
         self.compress_later(entry);
         // Les tailles dont plus personne ne se sert sont oubliées, et leurs
         // images avec.
@@ -1515,9 +1284,7 @@ impl App {
             .collect();
         self.library
             .forget_unused_sizes(|def| used.iter().any(|u| Arc::ptr_eq(u, def)));
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.forget_unused_images();
-        }
+        self.scene.forget_images();
         log::info!("n° {id} : taille × {}", entry.size);
     }
 
@@ -1532,10 +1299,10 @@ impl App {
                 let index = self
                     .library
                     .default_index(self.settings.default_pet.as_deref());
-                self.spawn(event_loop, index);
+                self.spawn(index);
             }
             Action::Add(index) => {
-                self.spawn(event_loop, index);
+                self.spawn(index);
                 self.make_favorite(index);
             }
             Action::RemoveOne(index) => self.goodbye_one(index),
@@ -1550,7 +1317,7 @@ impl App {
             Action::SetSounds(on) => self.set_sounds(on),
             Action::SetSize(index) => {
                 self.set_size(index);
-                self.sync_windows(event_loop);
+                self.sync_pets();
             }
             Action::SetPetSize(pet, index) => self.set_pet_size(pet, index),
             Action::SetCollisions(on) => self.set_collisions(on),
@@ -1784,82 +1551,17 @@ impl App {
         }
     }
 
-    /// Une fenêtre par écran (voir [`Stage`]) : refaites quand les écrans
-    /// changent.
-    fn sync_stages(&mut self, event_loop: &ActiveEventLoop) {
-        let screens: Vec<Rect> = self.world.screens().iter().map(|s| s.frame).collect();
-        let same = self.stages.len() == screens.len()
-            && self
-                .stages
-                .values()
-                .all(|stage| screens.contains(&stage.rect));
-        if same {
-            return;
-        }
-        for stage in self.stages.values() {
-            platform::keep_pet_window(&*stage.window);
-        }
-        self.stages.clear();
-        for rect in screens {
-            let attrs = Window::default_attributes()
-                .with_title("Mouflon — scène")
-                .with_decorations(false)
-                .with_transparent(true)
-                .with_resizable(false)
-                .with_window_level(WindowLevel::AlwaysOnTop)
-                .with_inner_size(LogicalSize::new(f64::from(rect.w), f64::from(rect.h)))
-                .with_position(LogicalPosition::new(f64::from(rect.x), f64::from(rect.y)))
-                .with_active(false);
-            #[cfg(target_os = "macos")]
-            let attrs = {
-                use winit::platform::macos::WindowAttributesExtMacOS;
-                attrs.with_has_shadow(false).with_accepts_first_mouse(true)
-            };
-            let window = match event_loop.create_window(attrs) {
-                Ok(w) => Arc::new(w),
-                Err(e) => {
-                    log::error!("impossible de créer la fenêtre de l'écran : {e}");
-                    continue;
-                }
-            };
-            platform::prepare_pet_window(&*window);
-            let _ = window.set_cursor_hittest(false);
-            let gpu = self.gpu.get_or_insert_with(Gpu::new);
-            let size = window.inner_size();
-            let surface = match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("rendu de l'écran indisponible : {e}");
-                    platform::keep_pet_window(&*window);
-                    continue;
-                }
-            };
-            let scale = window.scale_factor();
-            log::info!(
-                "scène : une fenêtre pour l'écran {:.0}×{:.0} en {:.0},{:.0}",
-                rect.w,
-                rect.h,
-                rect.x,
-                rect.y
-            );
+    /// Une fenêtre transparente par écran (voir [`Scene`]) : refaites quand
+    /// les écrans changent.
+    fn sync_overlays(&mut self, event_loop: &ActiveEventLoop) {
+        let screens = self.world.screens().to_vec();
+        for note in self.scene.sync_screens(event_loop, &screens) {
+            log::info!("{note}");
             if let Some(stats) = &self.stats {
-                stats.note(format_args!(
-                    "scène : fenêtre de l'écran {:.0}×{:.0}",
-                    rect.w, rect.h
-                ));
+                stats.note(&note);
             }
-            self.stages.insert(
-                window.id(),
-                Stage {
-                    rect,
-                    window,
-                    surface,
-                    scale,
-                    hittest: false,
-                    list: DisplayList::default(),
-                },
-            );
         }
+        self.refresh_monitors();
     }
 
     /// Le dessin d'un animal, s'il est prêt (jamais de décodage ici).
@@ -1870,97 +1572,25 @@ impl App {
             .and_then(crate::library::Entry::art)
     }
 
-    /// L'animal sous le curseur (le plus en avant), pour une fenêtre d'écran.
+    /// L'animal sous le curseur (le plus en avant).
     fn pet_under_cursor(&self) -> Option<u32> {
-        let cursor = self.cursor()?;
+        self.pet_at(self.cursor()?, 1.0)
+    }
+
+    /// L'animal au point `p` (le plus en avant), à l'instant `alpha` entre
+    /// deux pas. Les personnages secondaires laissent passer les clics.
+    fn pet_at(&self, p: Vec2, alpha: f32) -> Option<u32> {
         self.flock
             .pets()
             .iter()
             .rev()
-            .filter(|p| !p.is_child())
-            .find(|p| {
-                self.art_of(p)
-                    .is_some_and(|art| hit_test(cursor, &p.view(1.0), &art))
+            .filter(|pet| !pet.is_child())
+            .find(|pet| {
+                self.arts
+                    .get(&pet.id())
+                    .is_some_and(|art| hit_test(p, &pet.view(alpha), art))
             })
             .map(Pet::id)
-    }
-
-    /// Une fenêtre par soucoupe en visite ; on ferme celles des parties.
-    fn sync_saucers(&mut self, event_loop: &ActiveEventLoop) {
-        if self.staged {
-            // Elles se dessinent dans les fenêtres des écrans.
-            return;
-        }
-        let visiting: Vec<u32> = self
-            .flock
-            .saucers()
-            .iter()
-            .map(mouflon_core::Saucer::id)
-            .collect();
-        for w in self
-            .saucer_windows
-            .values()
-            .filter(|w| !visiting.contains(&w.saucer))
-        {
-            platform::keep_pet_window(&*w.window);
-        }
-        self.saucer_windows
-            .retain(|_, w| visiting.contains(&w.saucer));
-        for id in visiting {
-            if self.saucer_windows.values().any(|w| w.saucer == id) {
-                continue;
-            }
-            let canvas = mouflon_render::saucer::saucer_canvas();
-            let attrs = Window::default_attributes()
-                .with_title("Mouflon — soucoupe")
-                .with_decorations(false)
-                .with_transparent(true)
-                .with_resizable(false)
-                .with_window_level(WindowLevel::AlwaysOnTop)
-                .with_inner_size(LogicalSize::new(
-                    f64::from(canvas.width),
-                    f64::from(canvas.height),
-                ))
-                .with_position(LogicalPosition::new(-10_000.0, -10_000.0))
-                .with_active(false);
-            #[cfg(target_os = "macos")]
-            let attrs = {
-                use winit::platform::macos::WindowAttributesExtMacOS;
-                attrs.with_has_shadow(false)
-            };
-            let window = match event_loop.create_window(attrs) {
-                Ok(w) => Arc::new(w),
-                Err(e) => {
-                    log::error!("impossible de créer la fenêtre de la soucoupe : {e}");
-                    continue;
-                }
-            };
-            platform::prepare_pet_window(&*window);
-            let _ = window.set_cursor_hittest(false);
-            let gpu = self.gpu.get_or_insert_with(Gpu::new);
-            let size = window.inner_size();
-            let surface = match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("rendu de la soucoupe indisponible : {e}");
-                    platform::keep_pet_window(&*window);
-                    continue;
-                }
-            };
-            let scale = window.scale_factor();
-            self.saucer_windows.insert(
-                window.id(),
-                SaucerWindow {
-                    saucer: id,
-                    window,
-                    surface,
-                    scale,
-                    position: None,
-                    placed: (-10_000.0, -10_000.0),
-                    list: DisplayList::default(),
-                },
-            );
-        }
     }
 
     fn set_realistic_physics(&mut self, on: bool) {
@@ -2216,24 +1846,21 @@ impl App {
         event_loop.exit();
     }
 
+    /// L'animal visé par un événement de la fenêtre `window` : celui sous
+    /// le curseur, si c'est la fenêtre d'un écran.
     fn pet_of(&self, window: WindowId) -> Option<u32> {
-        if self.stages.contains_key(&window) {
-            return self.pet_under_cursor();
-        }
-        self.windows.get(&window).map(|w| w.pet)
+        self.scene.overlay(window)?;
+        self.pet_under_cursor()
     }
 
-    /// Fréquence de l'écran de chaque fenêtre (un animal a pu changer d'écran).
+    /// La fréquence du plus rapide des écrans.
     fn refresh_monitors(&mut self) {
-        let mut fastest: f64 = 0.0;
-        for pw in self.windows.values_mut() {
-            let monitor = pw.window.current_monitor();
-            if monitor != pw.monitor {
-                pw.hz = window_hz(&pw.window, monitor.as_ref());
-                pw.monitor = monitor;
-            }
-            fastest = fastest.max(pw.hz);
-        }
+        let fastest = self
+            .scene
+            .overlays()
+            .iter()
+            .map(|overlay| window_hz(&overlay.window, overlay.window.current_monitor().as_ref()))
+            .fold(0.0, f64::max);
         if fastest > 0.0 {
             self.refresh_hz = fastest;
         }
@@ -2332,7 +1959,7 @@ impl App {
         // Un essai fait partir un animal à mi-parcours, puis en fait venir un.
         while !settling && self.trial_steps.first().is_some_and(|(at, _)| now >= *at) {
             let (_, step) = self.trial_steps.remove(0);
-            self.trial_step(event_loop, step);
+            self.trial_step(step);
         }
 
         let input = self.input();
@@ -2376,247 +2003,61 @@ impl App {
             self.play_sounds();
         }
         phases.sounds = lap(&mut mark);
-        self.sync_windows(event_loop);
-        self.sync_saucers(event_loop);
+        self.sync_pets();
         self.sync_menu();
         phases.windows = lap(&mut mark);
 
-        // Fenêtres d'écran (voir `Stage`) : le dessin de chaque animal.
-        let arts: Vec<(u32, Arc<PetArt>)> = if self.staged {
-            self.flock
-                .pets()
-                .iter()
-                .filter_map(|p| Some((p.id(), self.art_of(p)?)))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let Self {
-            windows,
-            saucer_windows,
-            stages,
-            flock,
-            gpu,
-            style,
-            pointer,
-            paused,
-            full_rate_until,
-            ..
-        } = self;
-        // Fenêtres à redessiner, avec l'image et le décalage qu'elles montreront.
-        let mut redraw: Vec<(&mut PetWindow, Option<SpriteKey>, (f64, f64))> = Vec::new();
-        for pw in windows.values_mut() {
-            let Some(pet) = flock.pets().iter().find(|p| p.id() == pw.pet) else {
-                continue;
-            };
-            let view = pet.view(alpha);
-            let scale = pw.scale;
-            // macOS ne place une fenêtre qu'au point entier (deux pixels d'un
-            // écran Retina) : on la demande directement là, sans déplacement
-            // inutile d'un demi-point.
-            let ox = (f64::from(view.ground.x) - f64::from(pw.canvas.anchor.x)).floor();
-            let oy = (f64::from(view.ground.y) - f64::from(pw.canvas.anchor.y)).floor();
-            let moved = pw.position != Some((ox, oy));
-            if moved {
-                let started = Instant::now();
-                pw.window.set_outer_position(LogicalPosition::new(ox, oy));
-                pw.position = Some((ox, oy));
-                pw.placed = placed_at(&pw.window, scale).unwrap_or((ox, oy));
-                let took = started.elapsed();
-                phases.moves += took;
-                phases.worst_move = phases.worst_move.max(took);
+        // La scène : chaque soucoupe, puis chaque animal, à sa place ; une
+        // seule transaction pour tout ce qui change (voir `Scene`).
+        self.scene.begin();
+        if !settling {
+            for saucer in self.flock.saucers() {
+                self.scene
+                    .show_saucer(saucer.id(), &saucer.view(), &self.style);
             }
-            if settling {
-                // Une image vide : la fenêtre s'affiche et l'affichage se met en
-                // route sans que l'animal se voie encore.
-                let size = pw.window.inner_size();
-                pw.list.clear(size.width, size.height);
-                redraw.push((pw, None, (0.0, 0.0)));
-                continue;
-            }
-            // L'animal est dessiné là où il est, même si sa fenêtre n'a pas pu
-            // monter jusque-là : il reste sous le curseur, et ce qui dépasse
-            // de la fenêtre passe derrière la barre des menus (et l'encoche).
-            let offset = (pw.placed.0 - ox, pw.placed.1 - oy);
-            // Les personnages secondaires laissent passer les clics.
-            let hit = pointer.dragging == Some(pw.pet)
-                || (!pet.is_child() && cursor.is_none_or(|c| hit_test(c, &view, &pw.art)));
-            if hit != pw.hittest {
-                let started = Instant::now();
-                let _ = pw.window.set_cursor_hittest(hit);
-                pw.hittest = hit;
-                phases.hittest += started.elapsed();
-                // Le curseur arrive sur un animal : on va peut-être l'attraper.
-                if hit && pointer.dragging.is_none() {
-                    *full_rate_until = Some(now + HOVER_FULL_RATE);
+            for pet in self.flock.pets() {
+                if let Some(art) = self.arts.get(&pet.id()) {
+                    self.scene
+                        .show_pet(pet.id(), art, &pet.view(alpha), &self.style);
                 }
             }
-            if *paused && pw.last_render.is_some() {
-                continue;
-            }
-            let sprite = SpriteKey::of(&pw.art, &view);
-            let needed = if sprite.is_some() {
-                pw.last_render.is_none() || sprite != pw.sprite || shifted(offset, pw.drawn_offset)
-            } else {
-                // En mouvement, au rythme de l'écran où se trouve la fenêtre.
-                let interval = match pet.activity() {
-                    Activity::Moving => Duration::from_secs_f64(1.0 / pw.hz),
-                    Activity::Idle => Duration::from_secs_f64(1.0 / IDLE_FPS),
-                    Activity::Asleep => Duration::from_secs_f64(1.0 / ASLEEP_FPS),
-                };
-                moved
-                    || pw.last_render.is_none_or(|t| {
-                        now.duration_since(t) + Duration::from_millis(2) >= interval
+        }
+        let timings = self.scene.finish();
+        phases.paint += timings.paint + timings.decode;
+        phases.moves += timings.layers;
+        phases.worst_move = phases.worst_move.max(timings.layers);
+        phases.present += timings.commit;
+        phases.renders += timings.repainted;
+        if let Some(gpu) = self.scene.gpu_mut() {
+            let gpu_timings = gpu.take_timings();
+            phases.acquire = gpu_timings.acquire;
+            phases.worst_acquire = gpu_timings.worst_acquire;
+            phases.misses = gpu_timings.misses;
+        }
+
+        // Chaque fenêtre d'écran prend la souris au-dessus d'un animal (ou
+        // pendant qu'on en tient un), et la laisse passer ailleurs.
+        let mark = Instant::now();
+        let hits: Vec<bool> = self
+            .scene
+            .overlays()
+            .iter()
+            .map(|overlay| {
+                self.pointer.dragging.is_some()
+                    || cursor.is_some_and(|c| {
+                        overlay.rect.contains(c) && self.pet_at(c, alpha).is_some()
                     })
-            };
-            if !needed || gpu.is_none() {
-                continue;
-            }
-            let size = pw.window.inner_size();
-            pw.list.clear(size.width, size.height);
-            let frame = Frame {
-                origin: Vec2::new(pw.placed.0 as f32, pw.placed.1 as f32),
-                scale,
-            };
-            let started = Instant::now();
-            paint_pet(&pw.art, &view, &frame, style, &mut pw.list);
-            phases.paint += started.elapsed();
-            redraw.push((pw, sprite, offset));
-        }
-        // Les soucoupes en visite, à chaque image.
-        let mut saucers: Vec<&mut SaucerWindow> = Vec::new();
-        for sw in saucer_windows.values_mut() {
-            let Some(saucer) = flock.saucers().iter().find(|s| s.id() == sw.saucer) else {
-                continue;
-            };
-            if settling || *paused || gpu.is_none() {
-                continue;
-            }
-            let view = saucer.view();
-            let canvas = mouflon_render::saucer::saucer_canvas();
-            let ox = (f64::from(view.pos.x) - f64::from(canvas.anchor.x)).floor();
-            let oy = (f64::from(view.pos.y) - f64::from(canvas.anchor.y)).floor();
-            if sw.position != Some((ox, oy)) {
-                let started = Instant::now();
-                sw.window.set_outer_position(LogicalPosition::new(ox, oy));
-                sw.position = Some((ox, oy));
-                sw.placed = placed_at(&sw.window, sw.scale).unwrap_or((ox, oy));
-                phases.moves += started.elapsed();
-            }
-            let size = sw.window.inner_size();
-            sw.list.clear(size.width, size.height);
-            let frame = Frame {
-                origin: Vec2::new(sw.placed.0 as f32, sw.placed.1 as f32),
-                scale: sw.scale,
-            };
-            let started = Instant::now();
-            mouflon_render::saucer::paint_saucer(&view, &frame, style, &mut sw.list);
-            phases.paint += started.elapsed();
-            saucers.push(sw);
-        }
-        // Une fenêtre par écran : tous ceux qui s'y trouvent, à chaque image.
-        let mut staged: Vec<&mut Stage> = Vec::new();
-        for stage in stages.values_mut() {
-            if gpu.is_none() {
-                continue;
-            }
-            let art_of = |id: u32| arts.iter().find(|(p, _)| *p == id).map(|(_, a)| a);
-            let hit = pointer.dragging.is_some()
-                || cursor.is_some_and(|c| {
-                    stage.rect.contains(c)
-                        && flock.pets().iter().any(|p| {
-                            !p.is_child()
-                                && art_of(p.id())
-                                    .is_some_and(|art| hit_test(c, &p.view(alpha), art))
-                        })
-                });
-            if hit != stage.hittest {
-                let started = Instant::now();
-                let _ = stage.window.set_cursor_hittest(hit);
-                stage.hittest = hit;
-                phases.hittest += started.elapsed();
-                if hit && pointer.dragging.is_none() {
-                    *full_rate_until = Some(now + HOVER_FULL_RATE);
-                }
-            }
-            let size = stage.window.inner_size();
-            stage.list.clear(size.width, size.height);
-            if !settling {
-                let frame = Frame {
-                    origin: Vec2::new(stage.rect.x, stage.rect.y),
-                    scale: stage.scale,
-                };
-                let overlaps = |r: Rect| {
-                    r.x < stage.rect.x + stage.rect.w
-                        && r.x + r.w > stage.rect.x
-                        && r.y < stage.rect.y + stage.rect.h
-                        && r.y + r.h > stage.rect.y
-                };
-                let started = Instant::now();
-                for saucer in flock.saucers() {
-                    let view = saucer.view();
-                    let canvas = mouflon_render::saucer::saucer_canvas();
-                    let at = view.pos - canvas.anchor;
-                    if overlaps(Rect::new(at.x, at.y, canvas.width, canvas.height)) {
-                        mouflon_render::saucer::paint_saucer(&view, &frame, style, &mut stage.list);
-                    }
-                }
-                for pet in flock.pets() {
-                    let Some(art) = art_of(pet.id()) else {
-                        continue;
-                    };
-                    let view = pet.view(alpha);
-                    let canvas = art.canvas();
-                    let at = view.ground - canvas.anchor;
-                    if overlaps(Rect::new(at.x, at.y, canvas.width, canvas.height)) {
-                        paint_pet(art, &view, &frame, style, &mut stage.list);
-                    }
-                }
-                phases.paint += started.elapsed();
-            }
-            staged.push(stage);
-        }
-        if let Some(gpu) = gpu.as_mut()
-            && !(redraw.is_empty() && saucers.is_empty() && staged.is_empty())
-        {
-            let mut jobs: Vec<Job<'_>> = redraw
-                .iter_mut()
-                .map(|(pw, _, _)| Job {
-                    surface: &mut pw.surface,
-                    list: &pw.list,
-                    window: &pw.window,
-                })
-                .collect();
-            jobs.extend(saucers.iter_mut().map(|sw| Job {
-                surface: &mut sw.surface,
-                list: &sw.list,
-                window: &sw.window,
-            }));
-            jobs.extend(staged.iter_mut().map(|stage| Job {
-                surface: &mut stage.surface,
-                list: &stage.list,
-                window: &stage.window,
-            }));
-            let done = gpu.render_all(&mut jobs);
-            drop(jobs);
-            phases.renders += done.iter().filter(|&&ok| ok).count() as u32;
-            for ((pw, sprite, offset), ok) in redraw.into_iter().zip(done) {
-                if settling {
-                    pw.last_render = None;
-                } else if ok {
-                    pw.last_render = Some(now);
-                    pw.sprite = sprite;
-                    pw.drawn_offset = offset;
-                }
+            })
+            .collect();
+        for (index, hit) in hits.into_iter().enumerate() {
+            // Le curseur arrive sur un animal : on va peut-être l'attraper.
+            if self.scene.set_hittest(index, hit) && hit && self.pointer.dragging.is_none() {
+                self.full_rate_until = Some(now + HOVER_FULL_RATE);
             }
         }
-        if let Some(gpu) = self.gpu.as_mut() {
-            let timings = gpu.take_timings();
-            phases.paint += timings.paint;
-            phases.acquire = timings.acquire;
-            phases.present = timings.present;
-            phases.worst_acquire = timings.worst_acquire;
-            phases.misses = timings.misses;
+        phases.hittest += mark.elapsed();
+        if !settling {
+            self.take_snapshots(now);
         }
 
         self.schedule(event_loop, now, settling);
@@ -2624,14 +2065,19 @@ impl App {
             self.showcase(event_loop, now);
         }
 
-        let textures = self.gpu.as_ref().map_or((0, 0), Gpu::texture_usage);
+        let textures = self.scene.image_usage();
+        let (decoded, evicted) = self.scene.take_image_counts();
         if let Some(stats) = &mut self.stats {
             stats.set_textures(textures);
-            // Une fois par espèce (ses fenêtres partagent le même dessin).
+            if decoded + evicted > 0 {
+                stats.counters.images_decoded += decoded;
+                stats.counters.images_evicted += evicted;
+            }
+            // Une fois par dessin (les animaux d'une espèce le partagent).
             let mut arts: Vec<&Arc<PetArt>> = Vec::new();
-            for pw in self.windows.values() {
-                if !arts.iter().any(|a| Arc::ptr_eq(a, &pw.art)) {
-                    arts.push(&pw.art);
+            for art in self.arts.values() {
+                if !arts.iter().any(|a| Arc::ptr_eq(a, art)) {
+                    arts.push(art);
                 }
             }
             stats.set_images(arts.iter().map(|a| a.image_bytes()).sum());
@@ -2681,6 +2127,42 @@ impl App {
                 log::info!("essai terminé : {}", stats.finish());
                 event_loop.exit();
             }
+        }
+    }
+
+    /// Les instantanés de la scène prévus (voir `snapshots`), à leur heure.
+    fn take_snapshots(&mut self, now: Instant) {
+        let Some((dir, times)) = &mut self.snapshots else {
+            return;
+        };
+        let Some(&at) = times.first() else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        times.remove(0);
+        let started = self
+            .stats
+            .as_ref()
+            .map_or(now, crate::stats::FrameStats::begun);
+        let name = format!(
+            "instantane-{:05.1}s",
+            now.duration_since(started).as_secs_f32()
+        );
+        let written = self.scene.snapshot(dir, &name, 1.0);
+        let took = now.elapsed();
+        log::info!(
+            "instantané de la scène : {} image(s) en {} ms",
+            written.len(),
+            took.as_millis()
+        );
+        if let Some(stats) = &self.stats {
+            stats.note(format_args!(
+                "instantané de la scène ({name}, {} image(s), {:.1} ms)",
+                written.len(),
+                took.as_secs_f32() * 1000.0
+            ));
         }
     }
 
@@ -2906,7 +2388,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.settings.frontmost_only,
                 self.settings.walk_under_dock,
                 self.settings.surprises,
-                self.staged,
+                if std::env::var("MOUFLON_GPU").is_ok_and(|v| !v.is_empty() && v != "0") {
+                    "gpu"
+                } else {
+                    "calques"
+                },
                 crate::stats::trial_pets(),
             ));
             // Diagnostics : pile du fil principal quand une image tarde,
@@ -3001,19 +2487,12 @@ impl ApplicationHandler<UserEvent> for App {
         // cela ne doit tomber pendant la première chute.
         let mut mark = Instant::now();
         let mut steps = vec![("menu", mark - begun)];
-        let gpu = self.gpu.get_or_insert_with(Gpu::new);
-        gpu.prepare_ahead();
-        if let Some(gpu) = gpu.describe() {
-            log::info!("GPU : {gpu}");
-            if let Some(stats) = &self.stats {
-                stats.raw(format!("GPU {gpu}"));
-            }
-        }
-        steps.push(("GPU", lap(&mut mark)));
         if self.settings.sounds {
             self.warm_up_sounds();
         }
         steps.push(("sons", lap(&mut mark)));
+        // Le premier relevé, et les écrans : une fenêtre transparente par
+        // écran (voir `Scene`).
         let first = watcher.wait_first(Duration::from_millis(500));
         self.watcher = Some(watcher);
         self.refresh_screens(event_loop);
@@ -3021,18 +2500,36 @@ impl ApplicationHandler<UserEvent> for App {
             Some(snapshot) => self.apply_snapshot(event_loop, snapshot, Instant::now()),
             None => self.refresh_windows(Instant::now()),
         }
-        steps.push(("relevé des fenêtres", lap(&mut mark)));
+        steps.push(("relevé et scène", lap(&mut mark)));
+        // Le GPU, seulement s'il sert (sans calques Core Animation).
+        if let Some(gpu) = self.scene.gpu_mut() {
+            gpu.prepare_ahead();
+            if let Some(gpu) = gpu.describe() {
+                log::info!("GPU : {gpu}");
+                if let Some(stats) = &self.stats {
+                    stats.raw(format!("GPU {gpu}"));
+                }
+            }
+            steps.push(("GPU", lap(&mut mark)));
+        } else if let Some(stats) = &self.stats {
+            stats.raw("SCENE calques Core Animation, une fenêtre par écran");
+        }
         // Les dessins décodés à côté : on attend ceux qui ne sont pas prêts.
         for entry in &species {
             let _ = entry.art();
         }
         steps.push(("fin des dessins", lap(&mut mark)));
         for &i in &starters {
-            self.spawn(event_loop, i);
+            self.spawn(i);
         }
-        steps.push(("fenêtres", lap(&mut mark)));
-        self.warm_up_gpu();
-        steps.push(("image d'essai", lap(&mut mark)));
+        steps.push(("animaux", lap(&mut mark)));
+        // Leurs premières images, prêtes avant qu'ils n'arrivent.
+        for pet in self.flock.pets() {
+            if let Some(art) = self.arts.get(&pet.id()) {
+                self.scene.warm_up(art, &pet.view(1.0), &self.style);
+            }
+        }
+        steps.push(("premières images", lap(&mut mark)));
         self.start_clock();
         self.settle_until = Some(Instant::now() + SETTLE);
         self.last_tick = Instant::now();
@@ -3054,6 +2551,31 @@ impl ApplicationHandler<UserEvent> for App {
             begun.elapsed().as_millis(),
             detail.join(", ")
         );
+        // Instantanés de la scène (`MOUFLON_INSTANTANES=dossier`) : pendant
+        // un essai, à l'arrivée, au coup de vent, à la soucoupe et vers la
+        // fin ; sinon, toutes les trente secondes pendant cinq minutes.
+        if let Some(dir) = std::env::var_os("MOUFLON_INSTANTANES").filter(|d| !d.is_empty()) {
+            let start = Instant::now();
+            let times: Vec<Instant> = match trial {
+                Some(d) => [
+                    Duration::from_secs(4),
+                    Duration::from_secs(12),
+                    d / 3 + Duration::from_secs(2),
+                    d * 2 / 3 + Duration::from_secs(5),
+                    d * 2 / 3 + Duration::from_secs(9),
+                    d.saturating_sub(Duration::from_secs(8)),
+                ]
+                .into_iter()
+                .map(|t| start + t)
+                .collect(),
+                None => (1..=10)
+                    .map(|k| start + Duration::from_secs(30 * k))
+                    .collect(),
+            };
+            let mut times = times;
+            times.sort();
+            self.snapshots = Some((dir.into(), times));
+        }
         if let Some(duration) = trial {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
             self.trial_end = Some(Instant::now() + duration);
@@ -3156,7 +2678,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            UserEvent::ArtReady(id) => self.art_ready(event_loop, &id),
+            UserEvent::ArtReady(id) => self.art_ready(&id),
             UserEvent::ArtCompressed(id) => self.art_compressed(&id),
             UserEvent::PetSizeReady(pet, index) => self.pet_size_ready(pet, index),
             UserEvent::GalleryPreview(index, frames) => {
@@ -3192,7 +2714,7 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -3209,7 +2731,7 @@ impl ApplicationHandler<UserEvent> for App {
                 _ => c.other_window += 1,
             }
         }
-        self.on_window_event(event_loop, window_id, event);
+        self.on_window_event(window_id, event);
         self.handler_done(kind, started);
     }
 
@@ -3255,12 +2777,7 @@ impl App {
         }
     }
 
-    fn on_window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn on_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
         match event {
             // Le curseur arrive sur un animal : on va peut-être l'attraper.
             WindowEvent::CursorEntered { .. } => {
@@ -3315,60 +2832,27 @@ impl App {
                 }
             },
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(stage) = self.stages.get(&window_id) {
-                    let local = position.to_logical::<f64>(stage.scale);
+                if let Some(overlay) = self.scene.overlay(window_id) {
+                    let local = position.to_logical::<f64>(overlay.scale);
                     self.pointer.cursor = Some(Vec2::new(
-                        stage.rect.x + local.x as f32,
-                        stage.rect.y + local.y as f32,
+                        overlay.rect.x + local.x as f32,
+                        overlay.rect.y + local.y as f32,
                     ));
-                }
-                if let Some(pw) = self.windows.get(&window_id)
-                    && pw.position.is_some()
-                {
-                    // Par rapport à l'endroit où la fenêtre est vraiment.
-                    let (ox, oy) = pw.placed;
-                    let local = position.to_logical::<f64>(pw.scale);
-                    self.pointer.cursor =
-                        Some(Vec2::new((ox + local.x) as f32, (oy + local.y) as f32));
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if let Some(stage) = self.stages.get_mut(&window_id) {
-                    stage.scale = scale_factor;
-                }
-                if let Some(pw) = self.windows.get_mut(&window_id) {
-                    pw.scale = scale_factor;
-                    pw.position = None;
-                    pw.last_render = None;
-                }
+                self.scene.scale_changed(window_id, scale_factor);
             }
             WindowEvent::Resized(size) => {
-                if let (Some(stage), Some(gpu)) =
-                    (self.stages.get_mut(&window_id), self.gpu.as_ref())
-                {
-                    gpu.resize(&mut stage.surface, size.width, size.height);
-                }
-                if let (Some(pw), Some(gpu)) = (self.windows.get_mut(&window_id), self.gpu.as_ref())
-                {
-                    gpu.resize(&mut pw.surface, size.width, size.height);
-                    pw.last_render = None;
-                }
+                self.scene.resized(window_id, size.width, size.height);
             }
             WindowEvent::DroppedFile(path) => {
                 let target = self.pet_of(window_id);
-                self.install_pet(event_loop, &path, target);
+                self.install_pet(&path, target);
             }
-            WindowEvent::ThemeChanged(theme) => {
-                self.style.dark = theme == Theme::Dark;
-                for pw in self.windows.values_mut() {
-                    pw.last_render = None;
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                if let Some(pw) = self.windows.get_mut(&window_id) {
-                    pw.last_render = None;
-                }
-            }
+            // Les animaux se redessinent d'eux-mêmes (le thème fait partie
+            // de ce qui les identifie).
+            WindowEvent::ThemeChanged(theme) => self.style.dark = theme == Theme::Dark,
             _ => {}
         }
     }

@@ -49,7 +49,8 @@ const UNIFORM_DRAW: &str = "@group(0) @binding(0) var<uniform> draw: Draw;";
 const IMMEDIATE_DRAW: &str = "var<immediate> draw: Draw;";
 /// Éléments par fenêtre, au plus. Un animal en a rarement plus d'une dizaine
 /// (des feuilles qui volent autour de lui comprises), mais la fenêtre d'un
-/// écran entier (`MOUFLON_SCENE`) les porte tous, avec la soucoupe.
+/// écran entier (dessin sur le GPU, `MOUFLON_GPU`) les porte tous, avec la
+/// soucoupe.
 const MAX_DRAWS: usize = 2048;
 /// Places du tampon de paramètres au départ ; il double quand une image de
 /// toutes les fenêtres en demande davantage.

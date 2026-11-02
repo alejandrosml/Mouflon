@@ -68,24 +68,27 @@ jobs:
       # image, chaque événement, la pile du fil principal quand une image
       # tarde, les ressources du processus, de ses fils et du système ;
       # autour, `sample`, `top`, `log stream`, `vm_stat`, `pmset`, et
-      # `footprint` vers la fin. Tout va dans essais/<date>/, avec l'analyse
-      # (`analyse.txt`). Un plantage, même en quittant (ou un blocage), fait
-      # échouer la construction ; l'app, déjà envoyée, reste téléchargeable.
+      # `footprint` vers la fin. Des instantanés de ce qui est à l'écran
+      # (calques de la scène) vont dans instantanes/. Tout va dans
+      # essais/<date>/, avec l'analyse (`analyse.txt`). Un plantage, même en
+      # quittant (ou un blocage), fait échouer la construction ; l'app, déjà
+      # envoyée, reste téléchargeable.
       - name: Essai de trois minutes
         run: |
-          MOUFLON_ESSAI_CI=1 perl -e 'alarm 480; exec @ARGV' \
+          MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_INSTANTANES=1 perl -e 'alarm 480; exec @ARGV' \
             bash "tools/essai/Essai de 3 minutes.command" | tee essai-console.log
           grep -q "essai terminé" essais/*/sortie.log
 
-      # La même chose en une minute, avec une seule fenêtre par écran
-      # (`MOUFLON_SCENE`, l'autre façon d'afficher, à l'essai) : qu'elle
-      # tourne sans planter. Un échec ne fait pas échouer la construction.
-      - name: Essai d'une minute, une fenêtre par écran
+      # La même chose en une minute, les animaux dessinés sur le GPU
+      # (`MOUFLON_GPU`, l'autre façon d'afficher, gardée pour les autres
+      # systèmes) : qu'elle tourne sans planter. Un échec ne fait pas
+      # échouer la construction.
+      - name: Essai d'une minute, dessin sur le GPU
         continue-on-error: true
         run: |
           MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_DUREE=60 perl -e 'alarm 240; exec @ARGV' \
-            bash "tools/essai/Essai de 3 minutes (une fenêtre par écran).command" | tee essai-scene-console.log
-          grep -q "essai terminé" essais/*-une-fenetre/sortie.log
+            bash "tools/essai/Essai de 3 minutes (GPU).command" | tee essai-gpu-console.log
+          grep -q "essai terminé" essais/*-gpu/sortie.log
 
       # Vitrine : la fenêtre des réglages en images, en plusieurs langues
       # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
@@ -115,7 +118,7 @@ jobs:
           name: essai-journal
           path: |
             essai-console.log
-            essai-scene-console.log
+            essai-gpu-console.log
             essais/
 
       - name: Publier la version

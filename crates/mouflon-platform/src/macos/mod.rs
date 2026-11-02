@@ -9,6 +9,7 @@ mod login;
 mod moves;
 mod popup;
 mod runloop;
+mod scene;
 mod sound;
 mod ui;
 
@@ -20,6 +21,7 @@ pub use login::{login_item, login_item_available, open_login_items_settings, set
 pub use moves::{follow_window_moves, set_window_moves_handler};
 pub use popup::pop_up_menu;
 pub use runloop::{LoopWaker, run_loop_for};
+pub use scene::{SceneImage, SceneLayer, attach_scene, render_scene, scene_transaction};
 pub use sound::{play_sound, warm_up_sounds};
 pub use ui::show_about;
 

@@ -324,10 +324,11 @@ pub struct Beat {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    FrameClock, LoopWaker, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    follow_window_moves, frontmost_pid, keep_pet_window, login_item, login_item_available,
-    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
-    preferred_languages, prepare_pet_window, request_accessibility, run_loop_for, screens,
+    FrameClock, LoopWaker, SceneImage, SceneLayer, accessibility_trusted, attach_scene,
+    control_key_down, cursor_position, dock_frame, follow_window_moves, frontmost_pid,
+    keep_pet_window, login_item, login_item_available, open_accessibility_settings, open_folder,
+    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
+    render_scene, request_accessibility, run_loop_for, scene_transaction, screens,
     set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
     show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
     warm_up_sounds, window_max_fps, windows,
@@ -566,6 +567,65 @@ mod fallback {
         }
     }
 
+    /// Pas de calques Core Animation ici : la scène passe par le GPU.
+    #[derive(Debug, Clone)]
+    pub struct SceneImage {
+        bytes: usize,
+    }
+
+    impl SceneImage {
+        #[must_use]
+        pub fn from_bgra(width: u32, height: u32, bgra: &[u8]) -> Option<Self> {
+            (bgra.len() == width as usize * height as usize * 4)
+                .then_some(Self { bytes: bgra.len() })
+        }
+
+        #[must_use]
+        pub fn byte_size(&self) -> usize {
+            self.bytes
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    pub struct SceneLayer;
+
+    impl SceneLayer {
+        #[must_use]
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn add(&self, _child: &Self) {}
+        pub fn insert(&self, _child: &Self, _index: u32) {}
+        pub fn remove(&self) {}
+        pub fn set_position(&self, _x: f64, _y: f64) {}
+        pub fn set_size(&self, _width: f64, _height: f64) {}
+        pub fn set_transform(&self, _transform: [f64; 6]) {}
+        pub fn set_opacity(&self, _opacity: f32) {}
+        pub fn set_hidden(&self, _hidden: bool) {}
+        pub fn set_image(&self, _image: Option<&SceneImage>) {}
+        pub fn set_smooth(&self, _smooth: bool) {}
+        pub fn set_group_opacity(&self, _group: bool) {}
+    }
+
+    pub fn scene_transaction<R>(change: impl FnOnce() -> R) -> R {
+        change()
+    }
+
+    #[must_use]
+    pub fn attach_scene(_window: &impl raw_window_handle::HasWindowHandle) -> Option<SceneLayer> {
+        None
+    }
+
+    #[must_use]
+    pub fn render_scene(
+        _root: &SceneLayer,
+        _width: u32,
+        _height: u32,
+        _scale: f64,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        None
+    }
+
     /// Pas encore de sons sur ce système.
     pub fn play_sound(_data: &std::sync::Arc<[u8]>, _volume: f32) {}
 
@@ -584,10 +644,11 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    FrameClock, LoopWaker, accessibility_trusted, control_key_down, cursor_position, dock_frame,
-    follow_window_moves, frontmost_pid, keep_pet_window, login_item, login_item_available,
-    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
-    preferred_languages, prepare_pet_window, request_accessibility, run_loop_for, screens,
+    FrameClock, LoopWaker, SceneImage, SceneLayer, accessibility_trusted, attach_scene,
+    control_key_down, cursor_position, dock_frame, follow_window_moves, frontmost_pid,
+    keep_pet_window, login_item, login_item_available, open_accessibility_settings, open_folder,
+    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
+    render_scene, request_accessibility, run_loop_for, scene_transaction, screens,
     set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
     show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
     warm_up_sounds, window_max_fps, windows,

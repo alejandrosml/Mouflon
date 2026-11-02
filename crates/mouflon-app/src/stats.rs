@@ -101,15 +101,15 @@ pub struct Phases {
     pub sounds: Duration,
     /// Fenêtres ouvertes ou fermées.
     pub windows: Duration,
-    /// Fenêtres déplacées.
+    /// Calques mis à jour (ou fenêtres déplacées).
     pub moves: Duration,
-    /// Dessin : listes d'affichage et travail de Vello.
+    /// Dessin : listes d'affichage, morceaux, images décompressées.
     pub paint: Duration,
-    /// Attente d'une image d'écran libre.
+    /// Attente d'une image d'écran libre (GPU).
     pub acquire: Duration,
-    /// Recopie dans la fenêtre et envoi à l'écran.
+    /// Envoi au compositeur : la transaction des calques (ou le rendu GPU).
     pub present: Duration,
-    /// Fenêtres redessinées.
+    /// Animaux redessinés.
     pub renders: u32,
     /// Zones cliquables des fenêtres changées (au gré du curseur).
     pub hittest: Duration,
@@ -241,6 +241,9 @@ pub struct Counters {
     /// Gestionnaires lents (hors images) et le plus lent, en ms.
     pub slow_handlers: u32,
     pub slowest_handler: f32,
+    /// Images décompressées pour les calques de la scène, et oubliées.
+    pub images_decoded: u32,
+    pub images_evicted: u32,
 }
 
 /// Un animal à une image : ce que le journal en garde.
@@ -555,7 +558,8 @@ impl FrameStats {
                 "SH {at:.4} horloge {} fondus {} sautes {} appel_max_ms {:.1} passage_max_ms {:.1} \
                  minuterie_max_ms {:.1} dmax {:.1} amax {:.1} rates {} allocs_principal {} \
                  ko_principal {:.0} souris {} clics {} survols {} redessins {} fenetres {} \
-                 battements {} app {} attentes {} lents {} plus_lent_ms {:.1}",
+                 battements {} app {} attentes {} lents {} plus_lent_ms {:.1} \
+                 images_faites {} images_oubliees {}",
                 period.beats,
                 period.coalesced,
                 period.missed,
@@ -577,6 +581,8 @@ impl FrameStats {
                 c.waits,
                 c.slow_handlers,
                 c.slowest_handler,
+                c.images_decoded,
+                c.images_evicted,
             );
             *period = Period::default();
             match &self.journal {
@@ -589,7 +595,8 @@ impl FrameStats {
         }
     }
 
-    /// Images des animaux gardées sur le GPU (nombre, octets), pour les résumés.
+    /// Images prêtes à l'affichage (calques ou GPU : nombre, octets), pour
+    /// les résumés.
     pub fn set_textures(&mut self, textures: (usize, usize)) {
         self.textures = textures;
     }
