@@ -1525,18 +1525,19 @@ impl Pet {
     }
 
     /// Le replace d'un coup à l'abscisse `x` (un mur, un bord de l'écran, un
-    /// bout de rebord) : son dessin y glisse (voir `Pet::smooth`), ou y
-    /// apparaît s'il vient de plus loin que sa largeur (un animal desktopPet
-    /// sorti de l'écran qui revient par le bord).
+    /// bout de rebord) : son dessin y glisse (voir `Pet::smooth`). Revenu de
+    /// plus loin que sa largeur (un animal desktopPet sorti de l'écran, qui
+    /// y rebondit), son dessin repart d'à côté, encore hors de vue, et
+    /// rentre en glissant.
     pub(super) fn snap_x(&mut self, x: f32) {
         let moved = x - self.pos.x;
         self.pos.x = x;
-        if moved.abs() > self.def.physics.width {
-            self.prev_pos.x = x;
-            self.smooth.x = 0.0;
-            self.prev_smooth.x = 0.0;
-        } else {
-            self.smooth.x -= moved;
+        self.smooth.x -= moved;
+        let reach = self.def.physics.width;
+        if self.smooth.x.abs() > reach {
+            let cut = self.smooth.x - self.smooth.x.signum() * reach;
+            self.smooth.x -= cut;
+            self.prev_smooth.x -= cut;
         }
     }
 

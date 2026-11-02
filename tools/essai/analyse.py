@@ -566,8 +566,27 @@ def report_animations(trial):
         print(f"  {key:<16} {t:7.1f} s  {rate:5.1f} images/s  {v:6.0f} pt/s{flag}")
 
 
+# Ce que le dessin d'un animal peut faire de plus que sa vitesse sans sauter :
+# rejoindre son corps replacé d'un coup par la simulation (au plus
+# `SMOOTH_SPEED` du cœur, en points par seconde), et rouler sur un coin
+# (points par radian, en taille 1).
+GLIDE_SPEED = 1000.0
+ROLL_REACH = 50.0
+
+
+def pet_size(trial):
+    """La taille des animaux (ligne REGLAGES), 1 par défaut."""
+    for line in trial.header:
+        if line.startswith("REGLAGES"):
+            tokens = line.split()
+            if "taille" in tokens:
+                return number(tokens[tokens.index("taille") + 1]) or 1.0
+    return 1.0
+
+
 def report_jumps(trial):
     jumps = []
+    size = pet_size(trial)
     for a, b in zip(trial.frames, trial.frames[1:]):
         dt = b["gap"] / 1000
         for pid, p in b["pets"].items():
@@ -576,9 +595,12 @@ def report_jumps(trial):
                 continue
             dist = ((p["x"] - q["x"]) ** 2 + (p["y"] - q["y"]) ** 2) ** 0.5
             expected = (abs(p["vx"]) + abs(p["vy"]) + abs(q["vx"]) + abs(q["vy"])) * 0.5 * dt
-            if dist > max(6.0, 3 * expected):
+            # Ce qu'on voit sans saut : la vitesse (avec de la marge), la
+            # glissade du dessin vers son corps, et le roulis.
+            allowed = 3 * expected + GLIDE_SPEED * dt + abs(p["roll"] - q["roll"]) * ROLL_REACH * size
+            if dist > max(6.0 * size, allowed):
                 jumps.append((b["t"], pid, p["behavior"], dist, expected))
-    section(f"SAUTS DE POSITION (plus de 3 fois la vitesse) : {len(jumps)}")
+    section(f"SAUTS DE POSITION (au-delà de la vitesse, d'une glissade et du roulis) : {len(jumps)}")
     by_behavior = Counter(behavior for _, _, behavior, _, _ in jumps)
     if by_behavior:
         print("  par comportement : " + ", ".join(f"{k} {v}" for k, v in by_behavior.most_common(8)))
