@@ -2868,7 +2868,7 @@ impl Flock {
                 }
                 if self.collisions {
                     let mut near = std::mem::take(&mut self.near);
-                    self.collide(near.update(&self.pets), world, input);
+                    self.collide(near.update(&self.pets, false).reach, world, input);
                     self.near = near;
                 } else {
                     self.meet(world, input);
@@ -3015,12 +3015,13 @@ impl Flock {
             }
         }
         if self.collisions {
-            // Les mêmes paires proches pour les chocs entre corps et les
-            // heurts : les corps séparés n'ont bougé que de la marge.
+            // Les paires proches, faites une fois pour les chocs entre corps
+            // et pour les heurts : les corps séparés n'ont bougé que de la
+            // marge.
             let mut near = std::mem::take(&mut self.near);
-            let pairs = near.update(&self.pets);
-            self.collide_bodies(pairs, tracker.world(), input);
-            self.collide(pairs, tracker.world(), input);
+            let pairs = near.update(&self.pets, true);
+            self.collide_bodies(pairs.bodies, tracker.world(), input);
+            self.collide(pairs.reach, tracker.world(), input);
             self.near = near;
         } else {
             self.meet(tracker.world(), input);
@@ -3066,7 +3067,7 @@ impl Flock {
     /// et l'autre parfois avec lui (`petSide` de desktopPet).
     fn meet(&mut self, world: &World, input: &Input) {
         let mut near = std::mem::take(&mut self.near);
-        for &(i, j) in near.update(&self.pets) {
+        for &(i, j) in near.update(&self.pets, false).reach {
             if self.is_still(i as usize) || self.is_still(j as usize) {
                 continue;
             }

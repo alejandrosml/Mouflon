@@ -218,16 +218,22 @@ pub struct Obb {
 }
 
 impl Obb {
+    /// Ses axes : un seul sinus pour les deux, aucun debout (le plus
+    /// souvent, au sol).
     fn axes(&self) -> [Vec2; 2] {
-        [
-            Vec2::new(1.0, 0.0).rotated(self.angle),
-            Vec2::new(0.0, 1.0).rotated(self.angle),
-        ]
+        if self.angle == 0.0 {
+            return [Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
+        }
+        let (s, c) = self.angle.sin_cos();
+        [Vec2::new(c, s), Vec2::new(-s, c)]
     }
 
     #[must_use]
     pub fn corners(&self) -> [Vec2; 4] {
-        let [ax, ay] = self.axes();
+        self.corners_with(self.axes())
+    }
+
+    fn corners_with(&self, [ax, ay]: [Vec2; 2]) -> [Vec2; 4] {
         let (x, y) = (ax * self.half.x, ay * self.half.y);
         let c = self.center;
         [c - x - y, c + x - y, c + x + y, c - x + y]
@@ -258,7 +264,11 @@ impl Obb {
     /// milieu d'un côté qui lui fait face.
     #[must_use]
     pub fn support(&self, dir: Vec2) -> Vec2 {
-        let corners = self.corners();
+        self.support_with(self.axes(), dir)
+    }
+
+    fn support_with(&self, axes: [Vec2; 2], dir: Vec2) -> Vec2 {
+        let corners = self.corners_with(axes);
         let best = corners
             .iter()
             .map(|c| c.dot(dir))
@@ -279,9 +289,9 @@ impl Obb {
         (c - r, c + r)
     }
 
-    /// Rayon du cercle qui le contient, autour de son centre.
-    fn radius(&self) -> f32 {
-        self.half.length()
+    /// Carré du rayon du cercle qui le contient, autour de son centre.
+    fn radius_squared(&self) -> f32 {
+        self.half.dot(self.half)
     }
 }
 
@@ -299,10 +309,12 @@ pub struct Contact {
 #[must_use]
 pub fn obb_contact(a: &Obb, b: &Obb) -> Option<Contact> {
     // Leurs cercles ne se touchent pas : leurs rectangles non plus.
-    // (Un peu de marge : jamais écarté à tort par un arrondi.)
-    let reach = a.radius() + b.radius() + 0.01;
+    // (ra + rb)² = ra² + rb² + 2 ra rb, avec une seule racine ; un peu de
+    // marge : jamais écarté à tort par un arrondi.
+    let (ra2, rb2) = (a.radius_squared(), b.radius_squared());
+    let reach = ra2 + rb2 + 2.0 * (ra2 * rb2).sqrt() + 0.1;
     let apart = b.center - a.center;
-    if apart.dot(apart) > reach * reach {
+    if apart.dot(apart) > reach {
         return None;
     }
     let (axes_a, axes_b) = (a.axes(), b.axes());
@@ -324,7 +336,7 @@ pub fn obb_contact(a: &Obb, b: &Obb) -> Option<Contact> {
     }
     // Entre le point de `a` le plus avancé vers `b` et celui de `b` le plus
     // avancé vers `a`.
-    let point = (a.support(normal) + b.support(-normal)) * 0.5;
+    let point = (a.support_with(axes_a, normal) + b.support_with(axes_b, -normal)) * 0.5;
     Some(Contact {
         normal,
         depth,
