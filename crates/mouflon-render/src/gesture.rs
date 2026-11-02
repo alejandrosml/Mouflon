@@ -241,7 +241,8 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
 
 /// La posture de l'humeur ou de l'élan, ajoutée au geste : tête basse,
 /// oreilles couchées ou dressées ; en l'air, pattes raides et tête secouée
-/// (un agneau qui saute).
+/// (un agneau qui saute), ou le corps qui se tord (un agneau qui joue) ;
+/// une patte qui tressaille dans le sommeil.
 pub(crate) fn with_posture(mut g: Gesturing, s: &PoseSignals) -> Gesturing {
     let low = f64::from(s.head_low);
     g.head_angle += 0.42 * low;
@@ -252,6 +253,25 @@ pub(crate) fn with_posture(mut g: Gesturing, s: &PoseSignals) -> Gesturing {
         let toss = (f64::from(s.clock) * TAU * 2.2).sin();
         g.head_angle += 0.18 * stiff * toss;
         g.body_angle += 0.06 * stiff * toss;
+    }
+    // Le saut tordu d'un agneau : le corps se tord, la tête part de l'autre
+    // côté, les pattes de derrière ruent, celles de devant se replient.
+    let twist = f64::from(s.twist);
+    if twist > 0.0 {
+        let w = (f64::from(s.clock) * TAU * 1.8).sin();
+        g.body_angle += 0.22 * twist * w;
+        g.head_angle -= 0.25 * twist * w;
+        g.body_squash += 0.04 * twist * w;
+        g.legs[leg_slot(false, true)].0 += 0.7 * twist;
+        g.legs[leg_slot(false, false)].0 += 0.55 * twist;
+        g.legs[leg_slot(true, true)].0 -= 0.35 * twist;
+        g.tail += 0.5 * twist * w;
+    }
+    // Une patte qui tressaille dans le sommeil.
+    let twitch = f64::from(s.twitch);
+    if twitch > 0.0 {
+        g.legs[leg_slot(true, true)].0 -= 0.25 * twitch;
+        g.ear += 0.1 * twitch;
     }
     g
 }

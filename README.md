@@ -43,11 +43,14 @@ throw them across the desktop.
   sheep, chosen by speed relative to leg length, hooves that never slide;
   grazing one bite a second with a step to the next tuft, chewing the cud
   bolus after bolus; shaking off at 6 Hz, stretching on getting up,
-  scratching, yawning, bleating mouth open, stamping, pawing before a
-  charge, lamb leaps; ears that tell their mood (raised when angry, back
-  when afraid or in the wind, drooping when calm, lopsided when surprised);
-  a flock that follows the one who sets off, catches yawns and alarms, and
-  turns its back to the wind. All of it, with its sources:
+  scratching, yawning, bleating mouth open, stamping, pawing and backing up
+  before a charge; lambs at play (stiff and twisting leaps, spins in the
+  air, races, head butts), a crouch before every leap; sleep with the head
+  on the ground and twitching legs; ears that tell their mood (raised when
+  angry, back when afraid or in the wind, drooping when calm, lopsided when
+  surprised); a flock that follows the one who sets off, catches yawns and
+  alarms, gathers together from time to time, and turns its back to the
+  wind. All of it, with its sources:
   [docs/animation-animale.md](docs/animation-animale.md) (in French).
 - **Compatible with desktopPet**: Mouflon reads the pets of
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 and the
@@ -370,9 +373,8 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 - A livelier flying saucer: hit by a thrown pet, it smokes, then flees at full
   speed or crashes to the ground (hitting only its beam does nothing).
-- More of real sheep life: the flock gathering together from time to time,
-  lambs at play (twisting leaps, races, head butts), a ram backing up before
-  it charges, sleep with the head on the flank (see
+- More of real sheep life: a ram rearing before it charges, a lamb inviting
+  another to play, a tail that sways as a chain, horizontal pupils (see
   [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
@@ -428,11 +430,14 @@ se laissent attraper et lancer à travers le bureau.
   seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
   après bol ; l'ébrouement à 6 Hz, l'étirement en se relevant, le grattage,
   le bâillement, le bêlement bouche ouverte, le pied qui tape, le sol gratté
-  avant une charge, les sauts d'agneau ; des oreilles qui disent l'humeur
-  (dressées de colère, en arrière de peur ou dans le vent, pendantes au
-  calme, asymétriques de surprise) ; un troupeau qui suit celui qui part,
-  attrape les bâillements et les alertes, et tourne le dos au vent. Tout
-  cela, avec ses sources : [docs/animation-animale.md](docs/animation-animale.md).
+  et le recul avant une charge ; les jeux d'agneaux (sauts raides ou tordus,
+  demi-tours en l'air, courses, coups de front), l'élan pris avant chaque
+  saut ; le sommeil la tête au sol, les pattes qui tressaillent ; des
+  oreilles qui disent l'humeur (dressées de colère, en arrière de peur ou
+  dans le vent, pendantes au calme, asymétriques de surprise) ; un troupeau
+  qui suit celui qui part, attrape les bâillements et les alertes, se
+  regroupe de temps en temps et tourne le dos au vent. Tout cela, avec ses
+  sources : [docs/animation-animale.md](docs/animation-animale.md).
 - **Compatible desktopPet** : Mouflon lit tels quels les animaux de
   [desktopPet](https://github.com/Adrianotiger/desktopPet) (eSheep 64 et ceux
   de la communauté), avec toutes leurs scènes : escalade des bords de l'écran,
@@ -776,9 +781,9 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 - Une soucoupe volante plus vivante : percutée par un animal lancé, elle fume,
   puis s'enfuit en trombe ou s'écrase au sol (viser seulement son rayon ne lui
   fait rien).
-- Davantage de la vie des moutons : le troupeau qui se regroupe de temps en
-  temps, les jeux d'agneaux (sauts tordus, courses, coups de front), le
-  bélier qui recule avant de charger, le sommeil la tête sur le flanc (voir
+- Davantage de la vie des moutons : le bélier qui se cabre avant de
+  charger, l'agneau qui invite un autre à jouer, une queue qui ondule en
+  chaîne, les pupilles horizontales (voir
   [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.

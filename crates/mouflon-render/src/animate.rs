@@ -222,6 +222,19 @@ pub(crate) fn stepping(cycle: f64, duty: f64, amplitude: f64, front: bool) -> (f
 /// `ln 0,5 / ln 0,38` : l'antérieur au plus haut à 38 % de son vol.
 const FORE_LIFT_SKEW: f64 = 0.716;
 
+/// Le point le plus bas d'une boîte une fois transformée (ses quatre coins).
+pub(crate) fn lowest_point(t: &Affine, b: peniko::kurbo::Rect) -> f64 {
+    [
+        Point::new(b.min_x(), b.min_y()),
+        Point::new(b.max_x(), b.min_y()),
+        Point::new(b.min_x(), b.max_y()),
+        Point::new(b.max_x(), b.max_y()),
+    ]
+    .into_iter()
+    .map(|corner| (*t * corner).y)
+    .fold(f64::NEG_INFINITY, f64::max)
+}
+
 /// Le personnage entier, autour de son point d'appui `g` (repère du dessin,
 /// `h` : sa hauteur) : écrasement, inclinaison, balancement et étirement
 /// quand on le tient par `hold`, retournement, culbute. L'écrasement de
@@ -328,6 +341,17 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             + sleep * h * 0.06
             + act.head_shift.y * u,
     );
+    let low = f(s.sleep_low);
+    if low > 0.0 && rig.has_part(Part::Head) {
+        // Endormi la tête au sol, le cou tendu : elle penche et descend
+        // jusqu'à poser le menton.
+        let bow = 0.3;
+        let turn = rotate_about(head_pivot, head_angle + bow);
+        let lowest = lowest_point(&turn, head_bounds) + head_shift.y;
+        let lower = (g.y - u - lowest).max(0.0);
+        head_angle += low * bow;
+        head_shift += Vec2::new(low * u, low * lower);
+    }
     if graze > 0.0 && rig.has_part(Part::Head) {
         // Bouche au ras du sol, juste devant les pattes de devant : la tête
         // pivote vers le bas, et le cou (dans la laine) l'abaisse du reste.
@@ -525,6 +549,25 @@ mod tests {
             lowest > 90.0 && lowest < 96.0,
             "tête au plus bas en {lowest}"
         );
+    }
+
+    #[test]
+    fn a_sleeping_sheep_lays_its_chin_on_the_ground() {
+        let rig = Rig::parse(SVG.as_bytes()).unwrap();
+        let head = rig.part_bounds(Part::Head);
+        let lowest = |sleep_low: f32| {
+            let signals = PoseSignals {
+                sit: 1.0,
+                sleep: 1.0,
+                sleep_low,
+                ..PoseSignals::default()
+            };
+            let p = pose(&rig, &signals, 1.0, 0.0);
+            lowest_point(&p.part(Part::Head), head)
+        };
+        let (up, down) = (lowest(0.0), lowest(1.0));
+        assert!(down > up + 5.0, "{up} {down}");
+        assert!(down > 90.0 && down < 96.0, "menton en {down}");
     }
 
     #[test]

@@ -103,6 +103,8 @@ envie = [
     # calme broute et se repose.
     { to = "fonce", weight = 4, when = "rowdy" },
     { to = "course", weight = 2, when = "lively" },
+    { to = "joue", weight = 2, when = "lively" },
+    { to = "joue", weight = 4, when = ["lively", "evening"] },  # les agneaux courent surtout le soir
     { to = "saute", weight = 3, when = "lively" },
     { to = "content", weight = 2, when = "lively" },
     { to = "brouter_debut", weight = 3, when = "calm" },
@@ -221,6 +223,28 @@ name = "demi_tour"
 fps = 12
 turns = true
 next = [{ to = "marche", weight = 3 }, { to = "repos", weight = 1 }]
+
+# La course des agneaux (surtout les actifs) : ils filent en bande jusqu'au
+# bout, font demi-tour et reviennent, en sautant de temps en temps.
+[[behavior]]
+name = "joue"
+strip = "course"
+contagious = 0.5
+sound = { name = "clochette", frame = 3, chance = 0.25 }
+fps = 14
+loops = [3, 5]
+move = [12, 0]
+on_wall = "joue_tour"
+on_edge = "joue_tour"
+on_meet = [{ to = "se_cogne", weight = 1 }, { to = "surpris", weight = 1 }]
+next = [{ to = "joue_tour", weight = 3 }, { to = "saute", weight = 1 }, { to = "marche", weight = 1 }]
+
+[[behavior]]
+name = "joue_tour"
+strip = "demi_tour"
+fps = 14
+turns = true
+next = [{ to = "joue", weight = 3 }, { to = "saute", weight = 1 }, { to = "repos", weight = 1 }]
 
 # Lancé contre le bord de l'écran : il recule, sonné, puis fait demi-tour.
 [[behavior]]

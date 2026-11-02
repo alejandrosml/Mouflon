@@ -1572,6 +1572,32 @@ fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
             Some(26.0),
             vec![],
         ),
+        // Saut tordu : le corps se tord, la tête part de l'autre côté, les
+        // pattes de derrière ruent (deux moments de la torsion).
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                twist: 1.0,
+                clock: 0.139,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                twist: 1.0,
+                clock: 0.417,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
         ground(gesture(Gesture::Shake, 0.55)),
         ground(gesture(Gesture::Shake, 0.61)),
         ground(gesture(Gesture::Stretch, 0.75)),
@@ -1594,6 +1620,22 @@ fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
         ground(PoseSignals {
             sit: 1.0,
             jaw: 0.22,
+            ..base
+        }),
+        // Endormi la tête au sol, puis une patte qui tressaille.
+        ground(PoseSignals {
+            sit: 1.0,
+            sleep: 1.0,
+            blink: 1.0,
+            sleep_low: 1.0,
+            ..base
+        }),
+        ground(PoseSignals {
+            sit: 1.0,
+            sleep: 1.0,
+            blink: 1.0,
+            sleep_low: 1.0,
+            twitch: 1.0,
             ..base
         }),
     ];

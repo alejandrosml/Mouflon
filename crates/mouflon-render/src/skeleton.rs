@@ -517,6 +517,18 @@ impl Engine {
                         + sleep * self.h * 0.06
                         + act.head_shift.y * u,
                 );
+                let low = f(s.sleep_low);
+                if low > 0.0
+                    && let Some(head) = art.carried[index]
+                {
+                    // Endormi la tête au sol, le cou tendu.
+                    let bow = 0.3;
+                    let turn = rotate_about(at, angle + bow);
+                    let lowest = crate::animate::lowest_point(&turn, head) + shift.y;
+                    let lower = (self.g.y - u - lowest).max(0.0);
+                    angle += low * bow;
+                    shift += Vec2::new(low * u, low * lower);
+                }
                 if self.graze > 0.0
                     && let Some(head) = art.carried[index]
                 {
@@ -813,6 +825,24 @@ mod tests {
         let eye = pose.bones[4] * Point::new(300.0, 130.0);
         let head = pose.bones[2] * Point::new(300.0, 130.0);
         assert!((eye - head).hypot() < 1e-6);
+    }
+
+    #[test]
+    fn a_sleeping_skeleton_lays_its_head_down() {
+        let art = art(TOML);
+        let muzzle = |sleep_low: f32| {
+            let signals = PoseSignals {
+                sit: 1.0,
+                sleep: 1.0,
+                sleep_low,
+                ..PoseSignals::default()
+            };
+            let pose = art.pose(&signals, 1.0, 0.0);
+            (pose.bones[2] * Point::new(320.0, 160.0)).y
+        };
+        let (up, down) = (muzzle(0.0), muzzle(1.0));
+        assert!(down > up + 10.0, "{up} {down}");
+        assert!(down <= 281.0, "museau sous le sol : {down}");
     }
 
     #[test]

@@ -122,6 +122,27 @@ domestiques, surtout les jeunes.
 animaux actifs (tempérament) en font volontiers, et « Tous ensemble » fait
 sauter tout le troupeau.
 
+### Les jeux d'agneaux
+
+Les agneaux jouent surtout entre 7 et 12 jours, puis entre 37 et 54 jours
+(Augustsson 2018) : le « gambol », un saut rapide où le corps et la tête se
+tordent ; le « pivot », un tour raide dans un petit saut ; la course, à trois
+ou plus, aller et retour, trois fois plus le soir ; les coups de tête, où
+chacun recule puis s'élance front contre front. L'invitation au jeu :
+reculer, baisser la tête, fixer l'autre.
+
+**Dans Mouflon** (`pets/mannequin/pet.toml`, surtout chez les actifs) :
+`gambol` (`twist = true` : en l'air, le corps se tord, la tête part de
+l'autre côté, les pattes de derrière ruent ; il en enchaîne souvent
+plusieurs), `pivot` (`spin = true` : un petit bond sur place, retourné en
+l'air), `race` (une course contagieuse jusqu'au bout, demi-tour, retour ;
+plus le soir), et les coups de front : deux actifs qui se croisent reculent
+ensemble (`back`, 1,1 s), s'élancent (`charge`) et se cognent ; le choc les
+tasse tous les deux. Lainou, en images, a ses courses (`joue`).
+
+Avant chaque saut, un animal dessiné se ramasse 0,12 s, le corps écrasé :
+l'anticipation des animateurs, que l'œil attend.
+
 ### Se coucher, se relever
 
 Le bovin se couche l'avant d'abord (il tombe sur les carpes, puis
@@ -158,7 +179,7 @@ le bord d'une fenêtre. Couché, `chew = true` : il rumine bol après bol
 | Se gratter | d'un sabot arrière, ou contre un support : 8 % des soins chez l'agneau (le toilettage à la bouche : 39 %) | `scratch` : un postérieur remonte gratter le ventre à petits coups rapides (4 Hz), la tête tournée vers lui, les yeux mi-clos |
 | Taper du pied | face à une menace (un chien), un pied levé puis posé avec force ; rare, et le chien s'arrête souvent | `stamp` : tête haute, oreilles dressées, une patte de devant monte lentement et s'abat ; quand le pointeur file tout près |
 | Gratter le sol | menace (bélier), et avant l'agnelage ; **pas** avant de se coucher | `paw` : un antérieur racle le sol, tête basse ; avant qu'un énervé ne charge |
-| Charger | le bélier recule, baisse la tête, fonce (le mouflon canadien se cabre, puis ≈ 40 km/h) | `charge` : tête basse, oreilles couchées, au galop |
+| Charger | le bélier recule, baisse la tête, fonce (le mouflon canadien se cabre, puis ≈ 40 km/h) | `paw`, puis le plus souvent `back` (il recule de quelques pas sans se retourner, tête basse), puis `charge` : tête basse, oreilles couchées, au galop ; s'il atteint un autre animal, le choc les tasse tous les deux |
 | Bêler | aigu bouche ouverte : isolement, stress ; grave bouche fermée : brebis et agneau proches ; sinon rare | `bleat` et les sons `mouth = true` : la bouche s'ouvre en 0,1 s, un léger vibrato |
 | Renifler | le museau tendu vers l'autre | `sniff` : quand deux moutons se croisent |
 | Sonné | — | `daze` : la tête décrit de petits cercles, les yeux mi-clos, les oreilles pendantes ; après un atterrissage rude, puis il s'ébroue |
@@ -223,6 +244,15 @@ bâillement (`yawn`, 0,15) et les sauts d'agneau (`pronk`, 0,3) se
 propagent. Celui qui vient d'imiter attend 25 s avant d'imiter de nouveau,
 et ce qu'il imite ne se propage pas plus loin : pas de va-et-vient sans fin.
 
+Toutes les cinq à douze minutes, le troupeau se regroupe : sur un même
+rebord, au moins trois animaux d'une même famille, libres et bien
+dispersés, se rapprochent de leur milieu, à 0,8 largeur l'un de l'autre,
+sans changer d'ordre. Le plus loin de sa place part le premier ; les autres
+suivent en vague, d'autant plus tard (jusqu'à six secondes) qu'ils sont
+loin de lui ; chacun marche, ou trotte s'il est loin, puis s'arrête. En
+chemin, il n'imite personne ; il peut s'arrêter un peu avant sa place pour
+renifler un voisin.
+
 ## 6. Dormir
 
 - Le mouton dort couché sur le sternum, les pattes repliées ; la tête en
@@ -235,8 +265,10 @@ et ce qu'il imite ne se propage pas plus loin : pas de va-et-vient sans fin.
 - Il respire 16 à 34 fois par minute au repos (20 à 30 le plus souvent),
   plus lentement en dormant.
 
-**Dans Mouflon** : 20 respirations par minute éveillé, 14 endormi ; endormi,
-une oreille tressaille toutes les 5 à 14 s.
+**Dans Mouflon** : 20 respirations par minute éveillé, 14 endormi ; un
+animal dessiné s'endort une fois sur deux la tête posée au sol, le cou
+tendu (elle descend lentement, en quelques secondes) ; toutes les 5 à 14 s,
+une oreille tressaille, ou, une fois sur trois, une patte.
 
 ## 7. Les yeux
 
@@ -283,24 +315,25 @@ l'écran restent fluides).
 | Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | pas encore (nos queues sont d'une pièce) |
 | Bruit de Perlin au repos (Improv) | de petits mouvements qui ne se répètent pas | en partie : regards, oreilles, queue et clignements tirés au hasard, respiration |
 | Clignements et regard (Eyes Alive) | clignements asymétriques, liés aux tours de tête | oui (voir plus haut) |
-| Principes de Disney (Lasseter) | écrasement à volume constant, anticipation, le timing fait le poids, les parties lâches traînent | écrasement à l'atterrissage, secousse qui file de la tête à la queue, oreilles et queue en retard sur le corps ; gratter le sol avant de charger |
+| Principes de Disney (Lasseter) | écrasement à volume constant, anticipation, le timing fait le poids, les parties lâches traînent | écrasement à l'atterrissage, il se ramasse avant de sauter, secousse qui file de la tête à la queue, oreilles et queue en retard sur le corps ; gratter le sol et reculer avant de charger |
 | MANN, DeepPhase, Peng 2020 | réseaux de neurones qui mêlent les allures, phases par membre, imitation d'animaux filmés | l'idée retenue : mêler les allures en continu, sans machine à états ; les réseaux, trop lourds ici |
 | RDR2 (chevaux), Ubisoft IK Rig, Rain World | vitesses min/idéale/max par allure, mouvements en longueurs de patte, créatures en points + images | nos allures sont rapportées à la longueur des pattes ; nos dessins sont posés sur des signaux |
 
 ## 10. Ce qui reste à faire
 
-- Les **regroupements** : de temps en temps, un mouton du bord rejoint le
-  centre en courant, et tout le troupeau suit en vague.
-- Les **jeux d'agneaux** : sauts avec torsion du corps (« gambol »), petit
-  tour sur place (« pivot »), courses à plusieurs, coups de front après un
-  recul ; plus le soir.
-- Le **bélier qui recule avant de charger** (ou se cabre).
-- Le sommeil : la tête posée sur le flanc, le cou relâché, les pattes qui
-  tressaillent.
-- Une queue en chaîne de Verlet ; l'anticipation (s'écraser un instant
-  avant un saut).
+Fait depuis (essai 18) : les regroupements, les jeux d'agneaux (sauts
+tordus, demi-tours en l'air, courses, coups de front), le bélier qui recule
+avant de charger, le sommeil la tête au sol et les pattes qui tressaillent,
+l'anticipation avant un saut. Reste :
+
+- Le bélier qui se cabre avant de charger (le mouflon canadien).
+- Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
+  la tête au sol, ce que font nos moutons).
+- Une queue en chaîne de Verlet.
 - Les pupilles du mouton, horizontales, qui restent à l'horizontale quand
   la tête descend brouter.
+- Un agneau qui invite au jeu (reculer, baisser la tête, fixer l'autre)
+  plutôt que d'attendre de croiser quelqu'un.
 
 ## Sources
 

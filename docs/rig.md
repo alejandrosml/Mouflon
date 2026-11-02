@@ -3,8 +3,10 @@
 Un personnage Mouflon est un **dessin SVG découpé en calques nommés**. Le
 moteur anime ces calques lui-même : marche au pas (un pied après l'autre, les
 sabots posés sans glisser), trot par paires diagonales et galop transverse,
-couché (l'avant se plie d'abord, il se relève par l'arrière), sommeil,
-broutage la tête au sol, rumination, sauts les pattes repliées ou raides,
+couché (l'avant se plie d'abord, il se relève par l'arrière), sommeil (la
+tête posée au sol, une patte qui tressaille), broutage la tête au sol,
+rumination, sauts les pattes repliées, raides ou en ruant (il se ramasse
+avant de bondir),
 atterrissage, regard, respiration, clignements, oreilles qui frémissent et
 queue qui bat de temps en temps, et une dizaine de gestes (s'ébrouer,
 s'étirer, se gratter, bâiller, bêler, taper du pied…). Tu dessines une seule

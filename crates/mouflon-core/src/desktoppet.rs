@@ -614,6 +614,8 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
             walk_off_edges: true,
             chew: false,
             tilt: 0.0,
+            twist: false,
+            spin: false,
             contagious: 0.0,
             clip: Some(SpriteClip {
                 frames: a.frames.clone(),

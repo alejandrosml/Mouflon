@@ -137,6 +137,16 @@ les études et ce que font les jeux) :
   part, l'alerte, le bâillement), sans va-et-vient. Mille animaux en tas :
   toujours 1,4 ms par pas.
 
+Depuis l'essai 18 : **les regroupements** (`Flock::regroup`, toutes les
+cinq à douze minutes ; chacun reçoit une place et un délai, `Pet::goal`) ;
+**les jeux d'agneaux** (sauts tordus `twist`, demi-tours en l'air `spin`,
+courses, coups de front : `back`, puis `charge` avec son propre `on_meet`,
+et le choc qui tasse les deux) ; **le recul avant la charge** (`Motion::Back`) ;
+**l'anticipation** (un animal dessiné se ramasse 0,12 s avant de sauter) ;
+**le sommeil la tête au sol** et les pattes qui tressaillent (signaux
+`sleep_low`, `twitch`, `twist` de `PoseSignals`). Rien de plus cher : mille
+animaux en tas, 1,38 ms par pas.
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
 plus d'animaux, et la soucoupe qu'on peut percuter.

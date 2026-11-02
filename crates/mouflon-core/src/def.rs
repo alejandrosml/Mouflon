@@ -480,6 +480,11 @@ pub enum Motion {
     },
     /// Un geste sur place, que le moteur anime de lui-même (voir [`Gesture`]).
     Gesture(Gesture),
+    /// Recule, sans se retourner (le bélier qui prend son élan avant de
+    /// charger) ; il s'arrête au bord plutôt que de tomber à reculons.
+    Back {
+        speed: f32,
+    },
 }
 
 /// Un geste sur place, animé par le moteur pour les animaux dessinés en
@@ -591,7 +596,10 @@ impl Motion {
     #[must_use]
     pub fn speed(&self) -> Option<f32> {
         match *self {
-            Self::Walk { speed } | Self::Run { speed } | Self::Charge { speed } => Some(speed),
+            Self::Walk { speed }
+            | Self::Run { speed }
+            | Self::Charge { speed }
+            | Self::Back { speed } => Some(speed),
             _ => None,
         }
     }
@@ -603,7 +611,7 @@ impl Motion {
             Self::Graze => Pose::Graze,
             Self::Walk { .. } => Pose::Walk,
             Self::Run { .. } | Self::Charge { .. } => Pose::Run,
-            Self::Gesture(_) => Pose::Stand,
+            Self::Gesture(_) | Self::Back { .. } => Pose::Stand,
             Self::Sit => Pose::Sit,
             Self::Sleep => Pose::Sleep,
             Self::Jump { .. } | Self::Pronk { .. } | Self::Fall => Pose::Air,
@@ -821,6 +829,11 @@ pub struct Behavior {
     /// comportement, en plus de ce que lui donne son élan : un animal en
     /// images qui fonce tête la première.
     pub tilt: f32,
+    /// En sautant, le corps se tord et les pattes de derrière ruent : le
+    /// saut d'un agneau qui joue (avec [`Motion::Pronk`] ou [`Motion::Jump`]).
+    pub twist: bool,
+    /// Il se retourne en l'air : le petit saut d'un agneau qui pivote.
+    pub spin: bool,
     /// Contagieux (0–1) : la chance qu'un voisin de la même famille l'imite,
     /// un peu plus tard (un mouton qui part entraîne les autres, un
     /// bâillement en appelle d'autres). Le voisin doit avoir un comportement
@@ -1148,7 +1161,10 @@ impl PetDef {
         }
         for b in &mut def.behaviors {
             match &mut b.motion {
-                Motion::Walk { speed } | Motion::Run { speed } | Motion::Charge { speed } => {
+                Motion::Walk { speed }
+                | Motion::Run { speed }
+                | Motion::Charge { speed }
+                | Motion::Back { speed } => {
                     *speed *= k;
                 }
                 Motion::Jump { vx, vy } | Motion::Pronk { vx, vy } => {

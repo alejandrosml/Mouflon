@@ -308,6 +308,8 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
             sleeping: b.sleep,
             chew: b.chew,
             tilt: b.tilt.unwrap_or(0.0),
+            twist: b.twist,
+            spin: b.spin,
             contagious: b.contagious.unwrap_or(0.0).clamp(0.0, 1.0),
         });
     }
@@ -1101,6 +1103,12 @@ struct BehaviorToml {
     tilt: Option<f32>,
     /// Chance qu'un voisin de la même famille l'imite (0–1).
     contagious: Option<f32>,
+    /// Saut tordu (le corps se tord, les pattes ruent).
+    #[serde(default)]
+    twist: bool,
+    /// Il se retourne en l'air.
+    #[serde(default)]
+    spin: bool,
     /// Bande jouée (par défaut, celle qui porte le nom du comportement).
     strip: Option<String>,
     /// Images jouées : numéros dans la bande (ou dans la planche unique).
@@ -1293,6 +1301,9 @@ impl BehaviorToml {
             "charge" => Motion::Charge {
                 speed: need_speed(175.0),
             },
+            "back" => Motion::Back {
+                speed: need_speed(28.0),
+            },
             "fall" => Motion::Fall,
             "land" => Motion::Land,
             "held" => Motion::Held,
@@ -1301,8 +1312,9 @@ impl BehaviorToml {
                 None => {
                     return Err(format_error(format!(
                         "comportement « {} » : mouvement inconnu « {other} » (stand, walk, \
-                         run, charge, turn, sit, sleep, look, graze, jump, pronk, fall, land, \
-                         held, shake, stretch, paw, stamp, sniff, daze, brace, yawn, bleat)",
+                         run, charge, back, turn, sit, sleep, look, graze, jump, pronk, fall, \
+                         land, held, shake, stretch, scratch, paw, stamp, sniff, daze, brace, \
+                         yawn, bleat)",
                         self.name
                     )));
                 }

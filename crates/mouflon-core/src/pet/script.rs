@@ -222,6 +222,9 @@ impl Pet {
                 }
             }
         }
+        if matches!(self.support, Support::Ground { .. }) {
+            self.reach_goal();
+        }
     }
 
     /// Son animation le fait quitter le sol (il grimpe, saute, descend du

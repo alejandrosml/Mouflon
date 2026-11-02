@@ -46,8 +46,14 @@ poke = [
     { to = "stamp", weight = 3, when = "rowdy" },
 ]
 window_side = "turn"
-# Deux moutons qui se croisent se reniflent le museau.
-meet = [{ to = "sniff", weight = 4 }, { to = "look", weight = 1 }, { to = "bleat", weight = 1 }]
+# Deux moutons qui se croisent se reniflent le museau ; deux actifs jouent
+# parfois à se cogner le front (voir `play_back`).
+meet = [
+    { to = "sniff", weight = 4 },
+    { to = "look", weight = 1 },
+    { to = "bleat", weight = 1 },
+    { to = "play_back", weight = 4, when = "lively" },
+]
 together = "pronk"     # tous ensemble : des sauts d'agneau
 leave = "hop"
 # Le pointeur file tout près : il lève la tête, tape du pied, ou détale.
@@ -82,9 +88,14 @@ next = [
     { to = "bleat", weight = 1 },
     { to = "look", weight = 4, when = "cursor_near:220" },
     # Selon son tempérament : un énervé gratte le sol avant de foncer, un
-    # actif saute comme un agneau, un calme se couche pour ruminer.
+    # actif joue comme un agneau (sauts raides ou tordus, demi-tours en
+    # l'air, courses), un calme se couche pour ruminer.
     { to = "paw", weight = 4, when = "rowdy" },
-    { to = "pronk", weight = 3, when = "lively" },
+    { to = "pronk", weight = 2, when = "lively" },
+    { to = "gambol", weight = 2, when = "lively" },
+    { to = "pivot", weight = 1, when = "lively" },
+    { to = "race", weight = 1, when = "lively" },
+    { to = "race", weight = 2, when = ["lively", "evening"] },   # les agneaux courent surtout le soir
     { to = "trot", weight = 2, when = "lively" },
     { to = "ruminate", weight = 3, when = "calm" },
     { to = "yawn", weight = 1, when = "calm" },
@@ -191,6 +202,8 @@ next = [
     { to = "sleep", weight = 8, when = "away" },
 ]
 
+# Il dort, couché ; une fois sur deux, la tête posée au sol, le cou tendu.
+# De temps en temps, une oreille ou une patte tressaille.
 [[behavior]]
 name = "sleep"
 motion = "sleep"
@@ -216,6 +229,82 @@ name = "pronk"
 motion = "pronk"
 duration = "forever"
 contagious = 0.3
+
+# --- Les jeux d'agneaux, surtout chez les actifs (voir
+# docs/animation-animale.md) : il se ramasse, puis bondit.
+
+# Saut tordu : en l'air, le corps se tord, la tête part de l'autre côté, les
+# pattes de derrière ruent (`twist`). Il en enchaîne souvent plusieurs.
+[[behavior]]
+name = "gambol"
+motion = "pronk"
+twist = true
+jump = [40.0, 380.0]
+duration = "forever"
+contagious = 0.3
+on_land = [
+    { to = "land", weight = 3 },
+    { to = "gambol", weight = 2 },
+    { to = "pivot", weight = 1 },
+    { to = "race", weight = 1 },
+]
+
+# Un petit bond sur place, en se retournant en l'air (`spin`).
+[[behavior]]
+name = "pivot"
+motion = "pronk"
+spin = true
+jump = [0.0, 300.0]
+duration = "forever"
+on_land = [{ to = "land", weight = 2 }, { to = "gambol", weight = 1 }, { to = "race", weight = 1 }]
+
+# La course des agneaux : ils filent en bande jusqu'au bout, font demi-tour
+# et reviennent.
+[[behavior]]
+name = "race"
+motion = "run"
+speed = 140.0
+duration = [1.2, 2.2]
+contagious = 0.5
+on_edge = "race_turn"
+on_wall = "race_turn"
+next = [{ to = "race_turn", weight = 3 }, { to = "gambol", weight = 1 }, { to = "stand", weight = 1 }]
+
+[[behavior]]
+name = "race_turn"
+motion = "turn"
+duration = 0.35
+next = [{ to = "race", weight = 2 }, { to = "stand", weight = 1 }]
+
+# Coups de front : deux agneaux qui se croisent reculent ensemble (une durée
+# fixe, pour repartir en même temps), s'élancent et se cognent le front ;
+# l'élan prévoit la rencontre (`on_meet`), le choc les tasse tous les deux.
+[[behavior]]
+name = "play_back"
+motion = "back"
+speed = 26.0
+duration = 1.1
+next = "play_lunge"
+
+[[behavior]]
+name = "play_lunge"
+motion = "charge"
+speed = 110.0
+duration = 0.8
+on_meet = "play_butt"
+next = [{ to = "stand", weight = 2 }, { to = "gambol", weight = 1 }]
+
+[[behavior]]
+name = "play_butt"
+motion = "stand"
+duration = [0.4, 0.7]
+sound = { name = "pose", chance = 0.7 }
+next = [
+    { to = "shake", weight = 2 },
+    { to = "gambol", weight = 2 },
+    { to = "pivot", weight = 1 },
+    { to = "stand", weight = 1 },
+]
 
 [[behavior]]
 name = "fall"
@@ -314,12 +403,22 @@ next = [
     { to = "paw", weight = 2, when = "rowdy" },
 ]
 
-# Gratte le sol d'un sabot de devant, tête basse : il va charger.
+# Gratte le sol d'un sabot de devant, tête basse : il va charger. Le plus
+# souvent, il recule d'abord de quelques pas pour prendre son élan.
 [[behavior]]
 name = "paw"
 motion = "paw"
 duration = [1.1, 2.2]
-next = [{ to = "charge", weight = 3 }, { to = "stand", weight = 1 }]
+next = [{ to = "back_up", weight = 6 }, { to = "charge", weight = 1 }, { to = "stand", weight = 1 }]
+
+# Recule sans se retourner, tête basse (`back` : il s'arrête au bord plutôt
+# que d'en tomber à reculons).
+[[behavior]]
+name = "back_up"
+motion = "back"
+speed = 34.0
+duration = [1.0, 1.6]
+next = "charge"
 
 # Fonce, tête basse, oreilles couchées.
 [[behavior]]

@@ -586,11 +586,22 @@ def pet_size(trial):
     return 1.0
 
 
+def beat_time(frame):
+    """L'instant de la synchronisation de l'écran d'où part une image (son
+    appel moins son retard), ou son appel faute de mieux. La simulation
+    avance d'une synchronisation à l'autre : deux appels rapprochés après un
+    appel en retard montrent chacun une image entière de mouvement."""
+    values = frame["values"]
+    if frame["clock"] and "vs" in values:
+        return frame["t"] - values["vs"] / 1000
+    return frame["t"]
+
+
 def report_jumps(trial):
     jumps = []
     size = pet_size(trial)
     for a, b in zip(trial.frames, trial.frames[1:]):
-        dt = b["gap"] / 1000
+        dt = max(b["gap"] / 1000, beat_time(b) - beat_time(a))
         for pid, p in b["pets"].items():
             q = a["pets"].get(pid)
             if not q or dt <= 0 or q["behavior"] != p["behavior"] or p["support"] == "t":

@@ -9,7 +9,8 @@ use crate::def::{Behavior, Gesture, Motion, Script};
 /// L'allure d'un comportement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Energy {
-    /// Ni repos ni élan : un demi-tour, une chute, un atterrissage, tenu…
+    /// Ni repos ni élan : un demi-tour, quelques pas à reculons, une chute,
+    /// un atterrissage, tenu…
     Neutral,
     /// Debout, assis, à regarder autour de lui, à brouter.
     Rest,
@@ -65,7 +66,11 @@ impl Energy {
             | Motion::Charge { .. }
             | Motion::Jump { .. }
             | Motion::Pronk { .. } => Self::Dash,
-            Motion::Turn | Motion::Fall | Motion::Land | Motion::Held => Self::Neutral,
+            // Reculer prépare autre chose (une charge, un coup de front) :
+            // deux agneaux qui jouent reculent aussi longtemps l'un que l'autre.
+            Motion::Turn | Motion::Back { .. } | Motion::Fall | Motion::Land | Motion::Held => {
+                Self::Neutral
+            }
             Motion::Gesture(gesture) => match gesture {
                 Gesture::Shake
                 | Gesture::Stretch

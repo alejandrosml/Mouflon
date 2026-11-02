@@ -87,8 +87,17 @@ la tête au sol, une bouchée par seconde, et de temps en temps un pas vers
 l'herbe suivante), `jump` (avec `jump = [vers l'avant, vers le haut]` en pt/s),
 `fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur),
 `charge` (il fonce, tête basse, oreilles couchées ; `speed`, 175 pt/s par
-défaut) et `pronk` (saut d'agneau : droit en l'air, les quatre pattes raides ;
-`jump`, `[25, 420]` par défaut).
+défaut), `pronk` (saut d'agneau : droit en l'air, les quatre pattes raides ;
+`jump`, `[25, 420]` par défaut) et `back` (il recule sans se retourner, le
+bélier qui prend son élan avant de charger ; `speed`, 28 pt/s par défaut ; il
+s'arrête au bout d'un rebord plutôt que d'en tomber à reculons, et ne réagit
+pas au bord de l'écran).
+
+Un animal dessiné (vecteurs ou squelette) se ramasse un dixième de seconde
+avant de sauter (`jump`, `pronk`) : l'anticipation. Endormi (`sleep`), il pose
+une fois sur deux la tête au sol, le cou tendu ; une oreille ou une patte
+tressaille de temps en temps. Un animal en images a ses propres images pour
+tout cela.
 
 Gestes sur place, que le moteur anime de lui-même pour un dessin vectoriel
 ou un squelette (`duration` dit combien de temps ils durent) : `shake`
@@ -120,7 +129,25 @@ contagious = 0.25             # un voisin de la même famille l'imite une fois s
 name = "fonce"
 strip = "course"
 tilt = 0.12                   # penché en avant (radians) : un animal en images qui fonce
+
+[[behavior]]
+name = "gambol"
+motion = "pronk"
+twist = true                  # en l'air, le corps se tord et les pattes de derrière ruent
+jump = [40.0, 380.0]
+duration = "forever"
+on_land = [{ to = "land", weight = 3 }, { to = "gambol", weight = 2 }]   # il en enchaîne
+
+[[behavior]]
+name = "pivot"
+motion = "pronk"
+spin = true                   # il se retourne en l'air (un petit bond sur place)
+jump = [0.0, 300.0]
+duration = "forever"
 ```
+
+`on_land` dit ce qu'il fait en se posant (sinon : réflexe `land`, ou
+`land_hard` après une grosse chute).
 
 Un comportement contagieux (`contagious`, de 0 à 1) se propage : chaque
 voisin de la même famille (`category`), à moins de quatre largeurs et à la
@@ -220,7 +247,42 @@ dans desktopPet :
 
 Un animal en chemin prend le réflexe `meet` ; au repos (assis, endormi…),
 il ne réagit que si son comportement a un `on_meet`. Après une rencontre,
-chacun attend un peu avant la suivante.
+chacun attend un peu avant la suivante, sauf s'il entre dans un
+comportement qui a son propre `on_meet` : son auteur a prévu la rencontre.
+Un animal qui fonce (`charge`) et réagit en atteignant l'autre le cogne :
+le choc les tasse tous les deux. C'est ainsi que deux agneaux jouent à se
+cogner le front (voir `play_back`, `play_lunge` et `play_butt` dans
+`pets/mannequin/pet.toml`) :
+
+```toml
+[reflexes]
+meet = [{ to = "sniff", weight = 4 }, { to = "play_back", weight = 4, when = "lively" }]
+
+[[behavior]]
+name = "play_back"            # tous deux reculent, aussi longtemps l'un que l'autre
+motion = "back"
+duration = 1.1
+next = "play_lunge"
+
+[[behavior]]
+name = "play_lunge"           # s'élancent…
+motion = "charge"
+speed = 110.0
+duration = 0.8
+on_meet = "play_butt"         # … et se cognent
+```
+
+### Regroupements
+
+De temps en temps (toutes les cinq à douze minutes), le troupeau se
+regroupe, comme les moutons au pré : sur un même rebord ou sur le sol, au
+moins trois animaux d'une même famille, libres (debout, à brouter, à
+marcher…) et bien dispersés, se rapprochent de leur milieu en ordre serré,
+sans changer d'ordre. Le plus loin de sa place part le premier, les autres
+suivent comme une vague. Chacun y va avec son comportement `walk` ou
+`marche` (`trot` s'il est loin), puis s'arrête (le comportement au sol par
+défaut) ; en chemin, il n'imite personne. Les animaux desktopPet ne se
+regroupent pas.
 
 ## Listes de suites nommées
 
