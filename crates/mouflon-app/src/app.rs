@@ -98,6 +98,26 @@ struct FlockView {
 }
 
 impl FlockView {
+    /// Le troupeau tel que l'affichage l'a décrit après avoir traité `done`
+    /// demandes, avec les changements demandés depuis (`handed`, dont on
+    /// oublie ceux que la description montre déjà).
+    fn described(
+        generation: u64,
+        done: u64,
+        pets: Vec<PetSummary>,
+        handed: &mut Vec<(u64, Handed)>,
+    ) -> Self {
+        handed.retain(|(at, _)| *at > done);
+        let mut flock = Self {
+            generation: Some(generation),
+            pets,
+        };
+        for (_, change) in handed.iter() {
+            flock.apply(change);
+        }
+        flock
+    }
+
     fn def_of(&self, id: u32) -> Option<&Arc<PetDef>> {
         self.pets.iter().find(|p| p.id == id).map(|p| &p.def)
     }
@@ -849,15 +869,8 @@ impl App {
     /// L'affichage décrit le troupeau : ce qu'il ne savait pas encore y
     /// est ajouté, et le menu suit.
     fn flock_changed(&mut self, generation: u64, done: u64, pets: Vec<PetSummary>) {
-        self.handed.retain(|(at, _)| *at > done);
         self.unseen.retain(|(at, _)| *at > done);
-        self.flock = FlockView {
-            generation: Some(generation),
-            pets,
-        };
-        for (_, handed) in &self.handed {
-            self.flock.apply(handed);
-        }
+        self.flock = FlockView::described(generation, done, pets, &mut self.handed);
         self.sync_menu();
     }
 
@@ -1446,12 +1459,19 @@ impl App {
     /// des écrans montrent la scène en calques (et que le fil peut être
     /// lancé), ici sinon.
     fn start_display(&mut self, stats: Option<FrameStats>, watcher: &Arc<Watcher>) {
-        let init = |stats| Init {
-            live: self.live,
-            dark: self.dark,
-            watcher: Arc::clone(watcher),
-            stats,
-            proxy: Arc::clone(&self.proxy),
+        let init = |stats| {
+            let proxy = Arc::clone(&self.proxy);
+            Init {
+                live: self.live,
+                dark: self.dark,
+                watcher: Some(Arc::clone(watcher)),
+                stats,
+                reports: Box::new(move |report| {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(UserEvent::Display(report));
+                    }
+                }),
+            }
         };
         // `MOUFLON_AFFICHAGE=principal` : l'affichage reste ici (pour comparer).
         let here = std::env::var("MOUFLON_AFFICHAGE").is_ok_and(|v| v == "principal");
@@ -2053,5 +2073,51 @@ fn window_event_kind(event: &WindowEvent) -> &'static str {
         WindowEvent::Focused(_) => "focus",
         WindowEvent::Occluded(_) => "occultée",
         _ => "autre événement de fenêtre",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn defs() -> (Arc<PetDef>, Arc<PetDef>) {
+        let def = Arc::new(crate::library::builtin_mannequin().expect("mannequin"));
+        let big = Arc::new(def.scaled(2.0));
+        (def, big)
+    }
+
+    fn pets(def: &Arc<PetDef>, ids: &[u32]) -> Vec<PetSummary> {
+        ids.iter()
+            .map(|&id| PetSummary {
+                id,
+                def: Arc::clone(def),
+                extra: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_description_made_before_a_request_keeps_what_was_asked() {
+        let (def, big) = defs();
+        // La cinquième demande : n° 2 prend une autre taille.
+        let mut handed = vec![(5, Handed::Pet(2, Arc::clone(&big)))];
+        // Décrit après quatre demandes : elle n'y est pas encore.
+        let flock = FlockView::described(1, 4, pets(&def, &[1, 2]), &mut handed);
+        assert!(Arc::ptr_eq(flock.def_of(2).expect("n° 2"), &big));
+        assert!(Arc::ptr_eq(flock.def_of(1).expect("n° 1"), &def));
+        assert_eq!(handed.len(), 1);
+        // Décrit après la cinquième : la description fait foi.
+        let flock = FlockView::described(2, 5, pets(&def, &[1, 2]), &mut handed);
+        assert!(Arc::ptr_eq(flock.def_of(2).expect("n° 2"), &def));
+        assert!(handed.is_empty());
+    }
+
+    #[test]
+    fn a_new_size_for_everyone_shows_before_the_display_tells() {
+        let (def, big) = defs();
+        let mut handed = vec![(3, Handed::Defs(vec![(Arc::clone(&def), Arc::clone(&big))]))];
+        let flock = FlockView::described(1, 2, pets(&def, &[1, 2, 3]), &mut handed);
+        assert!(flock.pets.iter().all(|p| Arc::ptr_eq(&p.def, &big)));
+        assert!(flock.def_of(4).is_none());
     }
 }

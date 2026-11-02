@@ -16,8 +16,8 @@
 //! par la boucle de winit : c'est le même code, avec une autre horloge.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -28,9 +28,7 @@ use mouflon_core::{
 };
 use mouflon_platform as platform;
 use mouflon_render::{PetArt, Style};
-use winit::event_loop::EventLoopProxy;
 
-use crate::app::UserEvent;
 use crate::scene::{Overlay, Scene};
 use crate::stats::FrameStats;
 use crate::watch::{Snapshot, Watcher};
@@ -266,13 +264,17 @@ struct Pointer {
     cursor: Option<Vec2>,
 }
 
+/// Où va ce que dit l'affichage (vers la boucle du fil principal).
+pub type Reports = Box<dyn Fn(Report) + Send>;
+
 /// Ce qu'il faut à l'affichage pour commencer.
 pub struct Init {
     pub live: Live,
     pub dark: bool,
-    pub watcher: Arc<Watcher>,
+    /// Le relevé des fenêtres (aucun : pas d'autres fenêtres, essais du code).
+    pub watcher: Option<Arc<Watcher>>,
     pub stats: Option<FrameStats>,
-    pub proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
+    pub reports: Reports,
 }
 
 /// L'affichage : tout ce qui fait une image.
@@ -295,11 +297,14 @@ pub struct Display<C: Clock> {
     live: Live,
     style: Style,
     pointer: Pointer,
+    /// La position du curseur demandée au système (sinon, celle des
+    /// événements seulement : essais du code).
+    system_cursor: bool,
     /// Surprises à venir : quand, et laquelle si elle est imposée ; sinon
     /// tirée au sort.
     surprises: Vec<(Instant, Option<Surprise>)>,
     seed: u64,
-    watcher: Arc<Watcher>,
+    watcher: Option<Arc<Watcher>>,
     /// Dernier relevé des fenêtres des autres apps, tel quel.
     os_windows: Vec<platform::OsWindow>,
     /// Dernier cadre du Dock relevé (« Marcher sous le Dock »).
@@ -353,7 +358,7 @@ pub struct Display<C: Clock> {
     trial_end: Option<Instant>,
     snapshots: Option<(std::path::PathBuf, Vec<Instant>)>,
     sounds_window: (Instant, u32),
-    proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
+    reports: Reports,
     quit: bool,
 }
 
@@ -401,6 +406,7 @@ impl<C: Clock> Display<C> {
             live: init.live,
             style: Style { dark: init.dark },
             pointer: Pointer::default(),
+            system_cursor: true,
             surprises: Vec::new(),
             seed,
             watcher: init.watcher,
@@ -437,7 +443,7 @@ impl<C: Clock> Display<C> {
             trial_end: None,
             snapshots: None,
             sounds_window: (now, 0),
-            proxy: init.proxy,
+            reports: init.reports,
             quit: false,
         };
         display.schedule_surprise(now);
@@ -467,9 +473,7 @@ impl<C: Clock> Display<C> {
     }
 
     fn report(&self, report: Report) {
-        if let Ok(proxy) = self.proxy.lock() {
-            let _ = proxy.send_event(UserEvent::Display(report));
-        }
+        (self.reports)(report);
     }
 
     fn note(&self, what: impl std::fmt::Display) {
@@ -845,7 +849,9 @@ impl<C: Clock> Display<C> {
     }
 
     fn cursor(&self) -> Option<Vec2> {
-        platform::cursor_position()
+        self.system_cursor
+            .then(platform::cursor_position)
+            .flatten()
             .map(|(x, y)| Vec2::new(x as f32, y as f32))
             .or(self.pointer.cursor)
     }
@@ -956,13 +962,15 @@ impl<C: Clock> Display<C> {
 
     /// Applique ce que le relevé a vu depuis la dernière image.
     fn apply_watch(&mut self, now: Instant) {
-        if let Some(snapshot) = self.watcher.take() {
+        let Some(watcher) = self.watcher.clone() else {
+            return;
+        };
+        if let Some(snapshot) = watcher.take() {
             self.apply_snapshot(snapshot, now);
         }
         // Une fenêtre qui porte un animal bouge, ou on tient un animal : on
         // relève plus souvent pour qu'il suive en douceur.
-        self.watcher
-            .set_fast(now < self.fast_poll_until || self.pointer.dragging.is_some());
+        watcher.set_fast(now < self.fast_poll_until || self.pointer.dragging.is_some());
     }
 
     fn apply_snapshot(&mut self, snapshot: Snapshot, now: Instant) {
@@ -1903,7 +1911,232 @@ fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::moving_rate;
+    use std::sync::mpsc::Receiver;
+
+    use super::*;
+    use crate::scene::{ScreenInfo, Surface};
+
+    /// Une horloge qui ne bat jamais : les images viennent de la minuterie.
+    struct Silent;
+
+    impl Clock for Silent {
+        fn max_fps(&self) -> f32 {
+            60.0
+        }
+        fn is_running(&self) -> bool {
+            false
+        }
+        fn frame_duration(&self) -> f64 {
+            1.0 / 60.0
+        }
+        fn set_running(&self, _running: bool) {}
+        fn set_rate(&self, _fps: f32) {}
+    }
+
+    fn display() -> (Display<Silent>, Receiver<Report>) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut display = Display::new(Init {
+            live: Live {
+                paused: false,
+                sounds: false,
+                collisions: false,
+                realistic: true,
+                surprises: false,
+                frontmost_only: false,
+                walk_under_dock: false,
+            },
+            dark: false,
+            watcher: None,
+            stats: None,
+            reports: Box::new(move |report| {
+                let _ = sender.send(report);
+            }),
+        });
+        // Le curseur des essais, pas celui de la machine qui les fait.
+        display.system_cursor = false;
+        (display, receiver)
+    }
+
+    /// Un écran de 1200 × 800 points, et sa fenêtre (clé 7).
+    fn screens() -> Command {
+        let frame = Rect::new(0.0, 0.0, 1200.0, 800.0);
+        Command::Screens {
+            screens: vec![Screen {
+                frame,
+                usable: Rect::new(0.0, 25.0, 1200.0, 750.0),
+                scale: 1.0,
+            }],
+            overlays: vec![Overlay {
+                info: ScreenInfo {
+                    key: 7,
+                    rect: frame,
+                    scale: 1.0,
+                    hz: 60.0,
+                },
+                surface: Surface::Layers(platform::SceneLayer::new()),
+            }],
+        }
+    }
+
+    fn mannequin() -> (Arc<PetDef>, Arc<PetArt>) {
+        let def = Arc::new(crate::library::builtin_mannequin().expect("mannequin"));
+        let art = Arc::new(PetArt::load(&def).expect("dessin"));
+        (def, art)
+    }
+
+    /// Les nouvelles de l'affichage depuis la dernière fois.
+    fn reports(receiver: &Receiver<Report>) -> Vec<Report> {
+        receiver.try_iter().collect()
+    }
+
+    fn last_flock(reports: &[Report]) -> Option<(u64, Vec<PetSummary>)> {
+        reports.iter().rev().find_map(|r| match r {
+            Report::Flock { done, pets, .. } => Some((*done, pets.clone())),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn nothing_moves_before_the_start() {
+        let (mut display, receiver) = display();
+        let (def, art) = mannequin();
+        display.command(screens());
+        display.command(Command::Spawn { def, art });
+        // Pas d'image avant `Start` : les animaux attendent leurs premières images.
+        assert!(!display.timer_due(Instant::now()));
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        assert!(display.timer_due(Instant::now()));
+        display.frame(None, 0);
+        let (done, pets) = last_flock(&reports(&receiver)).expect("le troupeau décrit");
+        assert_eq!(done, 3);
+        assert_eq!(pets.len(), 1);
+    }
+
+    #[test]
+    fn the_flock_is_described_with_the_requests_already_done() {
+        let (mut display, receiver) = display();
+        let (def, art) = mannequin();
+        display.command(screens());
+        for _ in 0..3 {
+            display.command(Command::Spawn {
+                def: Arc::clone(&def),
+                art: Arc::clone(&art),
+            });
+        }
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        display.frame(None, 0);
+        let (done, pets) = last_flock(&reports(&receiver)).expect("le troupeau décrit");
+        assert_eq!((done, pets.len()), (5, 3));
+        assert!(pets.iter().all(|p| Arc::ptr_eq(&p.def, &def) && !p.extra));
+
+        // Une autre taille pour l'un d'eux : la description suit, avec la
+        // demande comptée.
+        let big = Arc::new(def.scaled(2.0));
+        let id = pets[1].id;
+        display.command(Command::RedrawPet {
+            id,
+            def: Arc::clone(&big),
+            art: Arc::clone(&art),
+            factor: 2.0,
+        });
+        display.frame(None, 0);
+        let (done, pets) = last_flock(&reports(&receiver)).expect("décrit de nouveau");
+        assert_eq!(done, 6);
+        let pet = pets.iter().find(|p| p.id == id).expect("toujours là");
+        assert!(Arc::ptr_eq(&pet.def, &big));
+
+        // Toute l'espèce change de dessin ; une définition partie s'en va.
+        display.command(Command::Redraw {
+            changes: vec![Redraw {
+                from: Arc::clone(&def),
+                to: Arc::clone(&big),
+                art: Arc::clone(&art),
+                factor: 2.0,
+            }],
+            gone: vec![Arc::clone(&big)],
+        });
+        display.frame(None, 0);
+        let (_, pets) = last_flock(&reports(&receiver)).expect("décrit encore");
+        // Celui qui était déjà grand s'en va ; les deux autres grandissent.
+        assert_eq!(pets.len(), 2);
+        assert!(pets.iter().all(|p| p.id != id && Arc::ptr_eq(&p.def, &big)));
+    }
+
+    #[test]
+    fn the_window_takes_the_mouse_over_a_pet_only() {
+        let (mut display, receiver) = display();
+        let (def, art) = mannequin();
+        display.command(screens());
+        display.command(Command::Spawn { def, art });
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        // Il tombe et se pose.
+        for _ in 0..240 {
+            display.next_frame = None;
+            display.frame(None, 0);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let pet = display.flock.pets()[0].position();
+        let hits = |receiver: &Receiver<Report>| {
+            reports(receiver).into_iter().rev().find_map(|r| match r {
+                Report::Hittest(hits) => Some(hits),
+                _ => None,
+            })
+        };
+        let _ = hits(&receiver);
+        // Sur lui (au milieu de son corps), la fenêtre prend la souris…
+        display.command(Command::Cursor(Vec2::new(pet.x, pet.y - 10.0)));
+        display.frame(None, 0);
+        assert_eq!(hits(&receiver), Some(vec![(7, true)]));
+        // … et la laisse passer ailleurs.
+        display.command(Command::Cursor(Vec2::new(pet.x + 400.0, 100.0)));
+        display.frame(None, 0);
+        assert_eq!(hits(&receiver), Some(vec![(7, false)]));
+        // Rien de neuf : rien n'est redit.
+        display.frame(None, 0);
+        assert_eq!(hits(&receiver), None);
+    }
+
+    #[test]
+    fn a_right_click_on_a_pet_asks_for_its_menu_and_holds_it_still() {
+        let (mut display, receiver) = display();
+        let (def, art) = mannequin();
+        display.command(screens());
+        display.command(Command::Spawn { def, art });
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        for _ in 0..240 {
+            display.next_frame = None;
+            display.frame(None, 0);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let pet = display.flock.pets()[0].position();
+        let id = display.flock.pets()[0].id();
+        let _ = reports(&receiver);
+        display.command(Command::Cursor(Vec2::new(pet.x, pet.y - 10.0)));
+        display.command(Command::Menu);
+        let asked = reports(&receiver)
+            .into_iter()
+            .any(|r| matches!(r, Report::PetMenu { id: asked, .. } if asked == id));
+        assert!(asked, "le menu de l'animal sous le curseur");
+        assert_eq!(display.menu_pet, Some(id));
+        display.command(Command::MenuClosed);
+        assert_eq!(display.menu_pet, None);
+        // Ailleurs, pas de menu.
+        display.command(Command::Cursor(Vec2::new(pet.x + 400.0, 100.0)));
+        display.command(Command::Menu);
+        assert!(
+            !reports(&receiver)
+                .iter()
+                .any(|r| matches!(r, Report::PetMenu { .. }))
+        );
+    }
 
     #[test]
     fn slow_pets_halve_a_promotion_screen_but_never_drop_below_their_need() {

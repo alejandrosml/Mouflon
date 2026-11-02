@@ -304,7 +304,7 @@ pub fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn builtin_mannequin() -> Result<PetDef, LoadError> {
+pub(crate) fn builtin_mannequin() -> Result<PetDef, LoadError> {
     const TOML: &str = include_str!("../../../pets/mannequin/pet.toml");
     const SVG: &[u8] = include_bytes!("../../../pets/mannequin/mannequin.svg");
     parse_pet_toml(TOML, |name: &str| {
