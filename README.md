@@ -99,8 +99,8 @@ state (a change made in one is seen at once in the others):
 
 Mouflon's own windows (settings, gallery, About) come in front of the pets
 while you use them, even when hundreds of big pets cover the screen: a click
-there always reaches the window, never a pet. Back in another app, they go
-behind its windows again, like any other window.
+there always reaches the window, never a pet. When you switch to another app,
+they go back behind the other apps' windows.
 
 The first launch picks the size from the main screen: large on a sharp, roomy
 screen (Retina, at least 1,600 points wide), normal elsewhere, where
@@ -467,9 +467,9 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
 
 Les fenêtres de Mouflon (réglages, galerie, « À propos ») passent devant les
 animaux tant qu'on s'en sert, même quand des centaines de grands animaux
-couvrent l'écran : un clic y va toujours à la fenêtre, jamais à un animal. De
-retour dans une autre app, elles repassent derrière ses fenêtres, comme toute
-fenêtre.
+couvrent l'écran : un clic y va toujours à la fenêtre, jamais à un animal.
+Quand on passe à une autre app, elles repassent derrière les fenêtres des
+autres apps.
 
 Au premier lancement, la taille dépend de l'écran principal : grande sur un
 écran fin et vaste (Retina, au moins 1 600 points de large), normale ailleurs,

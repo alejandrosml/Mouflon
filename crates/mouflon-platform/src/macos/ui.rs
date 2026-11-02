@@ -112,5 +112,5 @@ pub fn show_about(about: &About<'_>) {
     // SAFETY: les clés sont celles que la méthode connaît, avec des valeurs
     // du type attendu (NSString, et NSAttributedString pour les crédits).
     unsafe { app.orderFrontStandardAboutPanelWithOptions(&options) };
-    super::front::bring_forward(mtm);
+    super::front::bring_forward(mtm, None);
 }

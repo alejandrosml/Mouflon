@@ -740,7 +740,7 @@ pub fn show_form(form: &Form, values: &[FormValue]) -> bool {
         // premier plan (l'activation est une demande, depuis macOS 14).
         built.window.orderFrontRegardless();
         // Devant les animaux, même s'ils couvrent tout l'écran.
-        super::front::bring_forward(mtm);
+        super::front::bring_forward(mtm, Some(&built.window));
         true
     })
 }

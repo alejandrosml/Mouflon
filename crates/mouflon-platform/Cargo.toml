@@ -21,7 +21,7 @@ objc2.workspace = true
 block2.workspace = true
 # Le menu de l'icône de la barre des menus (fait par l'app avec muda).
 muda.workspace = true
-objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError", "NSProcessInfo", "NSDistributedNotificationCenter", "NSDate", "NSTimer", "NSValue"] }
+objc2-foundation = { workspace = true, features = ["NSString", "NSGeometry", "NSArray", "NSThread", "NSURL", "NSLocale", "NSAttributedString", "NSDictionary", "NSObject", "NSData", "NSRunLoop", "NSKeyValueObserving", "NSNotification", "NSBundle", "NSError", "NSProcessInfo", "NSDistributedNotificationCenter", "NSDate", "NSTimer"] }
 objc2-app-kit = { workspace = true, features = [
     "libc",
     # Écoute de la touche Échap (blocs d'Objective-C).

@@ -6,17 +6,21 @@
 //! et prendrait tous les clics : on ne pourrait plus toucher aux réglages.
 //! Tant que Mouflon est au premier plan, elles passent donc juste devant les
 //! animaux ; quand on passe à une autre app, elles reprennent leur niveau
-//! ordinaire, juste derrière la fenêtre de devant de cette app (comme toute
-//! fenêtre d'une app qu'on quitte).
+//! ordinaire, derrière les fenêtres des autres apps.
+//!
+//! Rien n'y demande la liste des fenêtres du système : ce relevé arrête
+//! toutes les transactions Core Animation du processus le temps de se faire
+//! (voir `docs/architecture.md`), et les animaux s'arrêteraient avec elles.
 
 use std::cell::Cell;
 
+use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
     NSApplicationDidResignActiveNotification, NSFloatingWindowLevel, NSNormalWindowLevel, NSWindow,
-    NSWindowLevel, NSWindowNumberListOptions, NSWindowOrderingMode,
+    NSWindowLevel,
 };
 use objc2_foundation::NSNotificationCenter;
 
@@ -31,66 +35,57 @@ thread_local! {
     static FOLLOWING: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Une fenêtre de Mouflon vient d'être montrée : ses fenêtres passent
-/// devant les animaux, et y resteront tant qu'il est au premier plan.
-pub(super) fn bring_forward(mtm: MainThreadMarker) {
+/// La fenêtre `shown` de Mouflon vient d'être montrée : ses fenêtres
+/// passent devant les animaux (elle devant les autres), et y resteront tant
+/// qu'il est au premier plan. Sans fenêtre donnée, celle qui a le clavier
+/// passe devant.
+pub(super) fn bring_forward(mtm: MainThreadMarker, shown: Option<&NSWindow>) {
     follow_activation(mtm);
-    set_front(mtm, true);
+    raise(mtm, shown);
 }
 
-/// Mouflon passe au premier plan (`true`) : ses fenêtres ordinaires passent
-/// devant les animaux. Il le quitte (`false`) : elles reprennent leur
-/// niveau, derrière la fenêtre de devant des autres apps.
-pub(super) fn set_front(mtm: MainThreadMarker, front: bool) {
-    let (from, to) = if front {
-        (NSNormalWindowLevel, FRONT)
-    } else {
-        (FRONT, NSNormalWindowLevel)
-    };
+/// Mouflon passe au premier plan : ses fenêtres ordinaires passent devant
+/// les animaux.
+pub(super) fn app_became_active(mtm: MainThreadMarker) {
+    raise(mtm, None);
+}
+
+/// Mouflon quitte le premier plan : ses fenêtres reprennent leur niveau,
+/// derrière celles des autres apps. Changer de niveau les mettrait devant
+/// les fenêtres ordinaires, la fenêtre qu'on vient de choisir comprise ;
+/// les envoyer derrière ne demande à savoir où sont les autres.
+pub(super) fn app_resigned_active(mtm: MainThreadMarker) {
     let windows = NSApplication::sharedApplication(mtm).windows();
-    let mut moved: Vec<_> = windows.iter().filter(|w| w.level() == from).collect();
-    if moved.is_empty() {
-        return;
-    }
-    // De la plus en arrière à la plus en avant : chacune passe devant les
-    // précédentes, et elles gardent leur ordre entre elles.
-    let order = z_order(mtm);
-    moved.sort_by_key(|w| {
-        let number = w.windowNumber();
-        std::cmp::Reverse(
-            order
-                .iter()
-                .position(|&n| n == number)
-                .unwrap_or(usize::MAX),
-        )
-    });
-    for window in &moved {
-        window.setLevel(to);
-    }
-    if front {
-        return;
-    }
-    // Changer de niveau a pu les poser devant la fenêtre qu'on vient de
-    // choisir dans l'autre app : elles repassent juste derrière elle.
-    let Some(top) = super::windows().into_iter().find(|w| w.layer == 0) else {
-        return;
-    };
-    let Ok(top) = isize::try_from(top.id) else {
-        return;
-    };
-    let mut above = top;
-    for window in moved.iter().rev().filter(|w| w.isVisible()) {
-        window.orderWindow_relativeTo(NSWindowOrderingMode::Below, above);
-        above = window.windowNumber();
+    for window in windows.iter().filter(|w| w.level() == FRONT) {
+        window.setLevel(NSNormalWindowLevel);
+        if window.isVisible() {
+            window.orderBack(None);
+        }
     }
 }
 
-/// Les numéros des fenêtres visibles de Mouflon, de la plus en avant à la
-/// plus en arrière.
-fn z_order(mtm: MainThreadMarker) -> Vec<isize> {
-    NSWindow::windowNumbersWithOptions(NSWindowNumberListOptions(0), mtm)
-        .map(|numbers| numbers.iter().map(|n| n.integerValue()).collect())
-        .unwrap_or_default()
+/// Les fenêtres ordinaires de Mouflon passent devant les animaux ; `top`
+/// (ou celle qui a le clavier) en dernier, pour être devant les autres.
+fn raise(mtm: MainThreadMarker, top: Option<&NSWindow>) {
+    let app = NSApplication::sharedApplication(mtm);
+    let key: Option<Retained<NSWindow>> = app.keyWindow();
+    let top: Option<&NSWindow> = top.or(key.as_deref());
+    let is_top = |w: &NSWindow| top.is_some_and(|t| std::ptr::eq(t, w));
+    let windows = app.windows();
+    let mut last = None;
+    for window in windows.iter() {
+        if window.level() != NSNormalWindowLevel {
+            continue;
+        }
+        if is_top(&window) {
+            last = Some(window);
+        } else {
+            window.setLevel(FRONT);
+        }
+    }
+    if let Some(window) = last {
+        window.setLevel(FRONT);
+    }
 }
 
 /// Suit, une fois pour toutes, le passage de Mouflon au premier plan et son

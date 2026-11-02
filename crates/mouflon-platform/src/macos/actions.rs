@@ -148,13 +148,13 @@ define_class!(
         // NSNotification : Mouflon passe au premier plan.
         #[unsafe(method(appDidBecomeActive:))]
         fn app_did_become_active(&self, _notification: &NSNotification) {
-            super::front::set_front(self.mtm(), true);
+            super::front::app_became_active(self.mtm());
         }
 
         // SAFETY: comme ci-dessus : Mouflon quitte le premier plan.
         #[unsafe(method(appDidResignActive:))]
         fn app_did_resign_active(&self, _notification: &NSNotification) {
-            super::front::set_front(self.mtm(), false);
+            super::front::app_resigned_active(self.mtm());
         }
 
         // SAFETY: comme ci-dessus (centre distribué) : la disposition du

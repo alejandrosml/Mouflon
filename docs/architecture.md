@@ -99,8 +99,9 @@ aucune par la faute de Mouflon) :
 - **les fenêtres de Mouflon devant ses animaux** (`front.rs`) : tant que
   Mouflon est au premier plan, réglages, galerie et « À propos » passent un
   niveau au-dessus des fenêtres flottantes des animaux, qui ne prennent plus
-  leurs clics ; à son départ, elles reprennent leur niveau, juste derrière la
-  fenêtre de devant de l'autre app ;
+  leurs clics ; à son départ, elles reprennent leur niveau, derrière les
+  fenêtres des autres apps (sans demander la liste des fenêtres du système,
+  qui arrêterait les transactions Core Animation du processus) ;
 - **les raccourcis clavier** (`keys.rs` des deux côtés) : ⌃⌥⌘ et une lettre,
   réservés à Mouflon par les « hot keys » de Carbon (sans autorisation), la
   touche cherchée d'après sa lettre sur la disposition du clavier ; Échap deux

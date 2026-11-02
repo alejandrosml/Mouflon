@@ -309,7 +309,7 @@ pub fn show_gallery(title: &str, cards: &[GalleryCard]) -> bool {
         activate(&NSApplication::sharedApplication(mtm));
         gallery.window.makeKeyAndOrderFront(None);
         gallery.window.orderFrontRegardless();
-        super::front::bring_forward(mtm);
+        super::front::bring_forward(mtm, Some(&gallery.window));
         true
     })
 }
