@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(dead_code))]
 
 mod app;
+mod display;
 mod gpu;
 mod helper;
 mod i18n;
@@ -14,6 +15,7 @@ mod library;
 mod menu;
 mod quick;
 mod scene;
+mod screens;
 mod settings;
 mod settings_window;
 mod stats;

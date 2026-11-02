@@ -1,4 +1,10 @@
-//! Boucle de l'application : simulation, scène (une fenêtre par écran), entrées et menu.
+//! L'app, sur le fil principal : les menus, les réglages, la bibliothèque des
+//! animaux, les fenêtres des écrans et les événements du système.
+//!
+//! Ce qui fait les images — le troupeau, le monde, la scène et leur rythme —
+//! est à l'affichage (voir [`crate::display`]) : sur son propre fil quand la
+//! scène passe par des calques Core Animation, ici sinon. Le fil principal
+//! lui envoie des demandes et reçoit ce qu'il doit savoir pour les menus.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -6,57 +12,40 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chrono::Timelike;
-use mouflon_core::{
-    Activity, Flock, Input, LedgeOptions, Pet, PetEvent, PetView, Rect, Screen, Support, Vec2,
-    WindowRect, World, exact_dock,
-};
+use mouflon_core::{PetDef, Rect, Screen, Vec2};
 use mouflon_platform as platform;
-use mouflon_render::{PetArt, Style};
+use mouflon_render::PetArt;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::monitor::MonitorHandle;
-use winit::window::{Theme, Window, WindowId};
+use winit::window::{Theme, WindowId};
 
+use crate::display::{
+    Command, Display, DisplayThread, Init, Live, PetSummary, Redraw, Report, SETTLE, Surprise,
+};
 use crate::library::{Entry, Library};
 use crate::menu::{Action, PetChoice, PetMenuState};
-use crate::scene::Scene;
+use crate::screens::ScreenWindows;
 use crate::settings::{Paths, Settings};
 use crate::settings_window::Shown;
-use crate::watch::{Snapshot, Watcher};
+use crate::stats::{Counters, FrameStats, Notes};
+use crate::watch::Watcher;
 
-/// Relevé des écrans (le reste se relève sur un fil à part).
+/// Relevé des écrans et du dossier des animaux (le reste se relève à côté).
 const SCREEN_POLL: Duration = Duration::from_secs(2);
-/// Au lancement, les fenêtres des écrans restent vides un court instant :
-/// le temps que macOS les affiche et que tout soit en route avant que le
-/// premier animal ne tombe.
-const SETTLE: Duration = Duration::from_millis(300);
-/// Sans battement de l'horloge de l'écran depuis ce délai (écran en veille,
-/// débranché…), la minuterie prend le relais ; au-delà du second, l'écran
-/// dort sans doute : on ralentit, et l'horloge est recréée de temps en temps.
-const CLOCK_SILENT: Duration = Duration::from_millis(150);
-const CLOCK_ASLEEP: Duration = Duration::from_secs(1);
-/// Cadences quand les animaux se reposent ou dorment (images par seconde).
-const IDLE_FPS: f64 = 30.0;
-const ASLEEP_FPS: f64 = 20.0;
-/// Après un mouvement vif, la cadence reste pleine ce temps-là avant de
-/// ralentir : elle ne change pas d'allure à chaque rebond qui se calme.
-const FULL_RATE_HOLD: Duration = Duration::from_millis(300);
-/// Le curseur passe sur un animal : la cadence est pleine ce temps-là, au
-/// cas où on l'attraperait.
-const HOVER_FULL_RATE: Duration = Duration::from_secs(1);
 /// La compression des images d'une espèce attend ce temps après son
 /// arrivée : les premières chutes passent avant.
 const COMPRESS_DELAY: Duration = Duration::from_secs(3);
 /// Images gardées sur le disque qui n'ont pas servi depuis ce temps : effacées.
 const IMAGES_KEPT: Duration = Duration::from_secs(90 * 24 * 3600);
+/// Mention de copyright de la fenêtre « À propos ».
+const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
 
 #[derive(Debug)]
 pub enum UserEvent {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     Menu(crate::menu::MenuEvent),
-    /// Battement de l'horloge de l'écran (voir `App::beat`).
+    /// Battement de l'horloge de l'écran, quand l'affichage est sur ce fil.
     Frame,
     /// Le dessin de cet animal (identifiant) est prêt.
     ArtReady(String),
@@ -72,10 +61,12 @@ pub enum UserEvent {
     /// Ce que le système dit de l'ouverture à l'ouverture de session (voir
     /// `App::ask_login_item`).
     LoginItem(platform::LoginItem),
+    /// Ce que dit l'affichage.
+    Display(Report),
 }
 
 /// Ce qu'un essai fait de lui-même à mi-parcours, pour passer aussi par un
-/// départ et une arrivée (une fenêtre fermée, une autre ouverte).
+/// départ et une arrivée.
 #[derive(Clone, Copy, Debug)]
 enum TrialStep {
     /// Le dernier arrivé de cette espèce dit au revoir.
@@ -85,143 +76,6 @@ enum TrialStep {
     /// Essai de charge : des animaux arrivent jusqu'à en avoir tant (des
     /// espèces du lancement, à tour de rôle).
     Crowd(usize),
-}
-
-/// Une surprise (voir `mouflon_core::surprise`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Surprise {
-    Wind,
-    Saucer,
-}
-
-/// Délai entre deux surprises tirées au hasard (minutes).
-const SURPRISE_EVERY: (f32, f32) = (15.0, 40.0);
-
-#[derive(Debug, Default)]
-struct Pointer {
-    window: Option<WindowId>,
-    pressed: Option<Vec2>,
-    dragging: Option<u32>,
-    /// Dernière position connue par les événements (si le système ne fournit pas la position globale).
-    cursor: Option<Vec2>,
-}
-
-#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-pub struct App {
-    settings: Settings,
-    paths: Option<Paths>,
-    library: Library,
-    world: World,
-    flock: Flock,
-    /// Une fenêtre transparente par écran, où se posent tous les animaux.
-    scene: Scene,
-    /// Le dessin de chaque animal à l'écran (son numéro → son dessin).
-    arts: HashMap<u32, Arc<PetArt>>,
-    /// Surprises à venir : quand, et laquelle si elle est imposée (un essai,
-    /// `MOUFLON_SURPRISE`) ; sinon tirée au sort.
-    surprises: Vec<(Instant, Option<Surprise>)>,
-    style: Style,
-    pointer: Pointer,
-    paused: bool,
-    started: bool,
-    last_tick: Instant,
-    next_screen_poll: Instant,
-    fast_poll_until: Instant,
-    /// Relevé des fenêtres, du Dock et du dossier des animaux (fil à part).
-    watcher: Option<Watcher>,
-    /// Dernier relevé des fenêtres des autres apps, tel quel (refiltré quand
-    /// un réglage change).
-    os_windows: Vec<platform::OsWindow>,
-    /// Dernier cadre du Dock relevé (« Marcher sous le Dock »).
-    dock_frame: Option<platform::OsRect>,
-    /// Horloge de l'écran (macOS 14 et plus) ; sinon, une minuterie.
-    clock: Option<platform::FrameClock>,
-    /// Dernier battement de l'horloge pas encore traité (dont l'heure, en
-    /// secondes, à laquelle l'image préparée maintenant sera affichée). Les
-    /// battements se remplacent : si l'app a pris du retard (une fenêtre
-    /// modale…), une seule image rattrape le tout.
-    beat: Rc<Cell<Option<platform::Beat>>>,
-    /// Battements remplacés avant d'être traités, depuis la dernière image.
-    coalesced: Rc<Cell<u32>>,
-    /// Synchronisation verticale du battement précédent (secondes).
-    last_vsync: Option<f64>,
-    /// Événements des fenêtres reçus depuis la dernière image (essais).
-    window_events: u32,
-    /// Temps passé à préparer des images pendant le gestionnaire en cours :
-    /// le reste du gestionnaire est noté s'il est long (essais).
-    frame_time: Duration,
-    /// Dernier battement reçu de l'horloge.
-    clock_beat: Option<Instant>,
-    /// Heure d'affichage (horloge de l'écran) de l'image précédente.
-    shown_at: Option<f64>,
-    /// Fin de la mise en route du lancement.
-    settle_until: Option<Instant>,
-    /// Prochaine image prévue par la minuterie (`None` : tout de suite). Les
-    /// autres événements (souris, fenêtres déplacées…) ne la font pas venir
-    /// plus tôt, sauf ceux qui changent quelque chose à l'écran.
-    next_frame: Option<Instant>,
-    /// Animaux demandés dont le dessin se prépare encore (identifiant → nombre).
-    pending: HashMap<String, usize>,
-    /// Dessins en préparation sur un fil à part (identifiants).
-    decoding: HashSet<String>,
-    /// Animaux qui attendent leur dessin à une autre taille, et cette entrée.
-    resizing: Vec<(u32, Entry)>,
-    /// Essai (`MOUFLON_ESSAI`) : fin prévue, étapes à venir et mesures de fluidité.
-    trial_end: Option<Instant>,
-    /// Ce que fait l'utilisateur, au dernier relevé, et quand ce relevé est
-    /// arrivé (voir `App::user_activity`).
-    activity: Option<(Instant, platform::UserActivity)>,
-    /// Personne devant la machine (essai de la CI) : on ne regarde pas ce
-    /// que fait l'utilisateur.
-    no_user: bool,
-    /// Apps dont les fenêtres qui bougent sont signalées par l'Accessibilité
-    /// (au dernier relevé), et l'autorisation d'Accessibilité.
-    followed: Option<u32>,
-    trusted: bool,
-    /// Dernière note au journal d'une fenêtre qui bouge (essais), par fenêtre.
-    window_notes: HashMap<u64, Instant>,
-    trial_steps: Vec<(Instant, TrialStep)>,
-    stats: Option<crate::stats::FrameStats>,
-    frontmost: Option<i32>,
-    /// Le Dock traité comme une fenêtre posée devant les autres (« Marcher sous le Dock »).
-    dock: Option<WindowRect>,
-    /// Le Dock a déjà été signalé au journal.
-    dock_logged: bool,
-    /// Panneaux flottants déjà signalés au journal (propriétaire, niveau).
-    floating_seen: std::collections::HashSet<(String, i32)>,
-    seed: u64,
-    refresh_hz: f64,
-    /// Images par seconde voulues par le dernier `schedule` (0 : horloge
-    /// arrêtée) : notées au journal d'un essai.
-    cadence: f64,
-    /// Jusqu'à quand la cadence reste pleine après un mouvement vif.
-    full_rate_until: Option<Instant>,
-    /// Pour réveiller la boucle depuis l'horloge, le menu ou un autre fil.
-    proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    menu: Option<crate::menu::TrayMenu>,
-    /// Ce que le menu montre du troupeau (le préféré, le nombre d'animaux de
-    /// chaque espèce) : il n'est mis à jour que quand cela change, ce que dit
-    /// la génération du troupeau.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    menu_flock: Option<(usize, Vec<usize>)>,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    menu_generation: Option<u64>,
-    /// Génération du troupeau pour laquelle les dessins sont à jour.
-    pets_generation: Option<u64>,
-    /// Ouverture à l'ouverture de session, telle que le système l'a dite à
-    /// la dernière ouverture des réglages (c'est lui qui la garde).
-    login: platform::LoginItem,
-    /// L'animal dont le menu (clic droit) a été ouvert en dernier, et le
-    /// rang de son espèce dans la bibliothèque.
-    menu_pet: Option<(u32, Option<usize>)>,
-    /// Vitrine de la CI (`MOUFLON_VITRINE`) : images de la fenêtre des réglages.
-    showcase: Option<Showcase>,
-    /// Instantanés de la scène (`MOUFLON_INSTANTANES`) : le dossier, et
-    /// quand les prendre.
-    snapshots: Option<(std::path::PathBuf, Vec<Instant>)>,
-    /// Sons lancés depuis le début de la fenêtre de temps en cours.
-    sounds_window: (Instant, u32),
 }
 
 /// La vitrine de la CI : à l'heure dite, la fenêtre des réglages s'ouvre,
@@ -234,8 +88,168 @@ struct Showcase {
     opened: bool,
 }
 
-fn to_rect(r: platform::OsRect) -> Rect {
-    Rect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32)
+/// Le troupeau, tel que l'affichage l'a décrit en dernier (et ce que le fil
+/// principal lui a demandé depuis).
+#[derive(Debug, Default)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+struct FlockView {
+    generation: Option<u64>,
+    pets: Vec<PetSummary>,
+}
+
+impl FlockView {
+    fn def_of(&self, id: u32) -> Option<&Arc<PetDef>> {
+        self.pets.iter().find(|p| p.id == id).map(|p| &p.def)
+    }
+
+    fn apply(&mut self, handed: &Handed) {
+        match handed {
+            Handed::Pet(id, def) => {
+                if let Some(pet) = self.pets.iter_mut().find(|p| p.id == *id) {
+                    pet.def = Arc::clone(def);
+                }
+            }
+            Handed::Defs(map) => {
+                for pet in &mut self.pets {
+                    if let Some((_, to)) = map.iter().find(|(from, _)| Arc::ptr_eq(from, &pet.def))
+                    {
+                        pet.def = Arc::clone(to);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Un changement de définition demandé à l'affichage, qu'une description du
+/// troupeau faite avant de le recevoir ne montre pas encore.
+#[derive(Debug)]
+enum Handed {
+    /// Cet animal a pris cette définition (une autre taille).
+    Pet(u32, Arc<PetDef>),
+    /// Les animaux de chaque première définition ont pris la seconde.
+    Defs(Vec<(Arc<PetDef>, Arc<PetDef>)>),
+}
+
+/// L'affichage sur le fil principal, rythmé par la boucle de winit.
+struct Here {
+    display: Display<platform::FrameClock>,
+    /// Dernier battement de l'horloge pas encore traité (les battements se
+    /// remplacent : si le fil a pris du retard, une seule image rattrape le
+    /// tout), et battements remplacés depuis la dernière image.
+    beat: Rc<Cell<Option<platform::Beat>>>,
+    coalesced: Rc<Cell<u32>>,
+}
+
+/// Où tourne l'affichage.
+enum Displayer {
+    /// Pas encore en route (ou arrêté).
+    Off,
+    /// Sur son propre fil (calques Core Animation).
+    Thread(DisplayThread),
+    /// Ici (GPU).
+    Here(Box<Here>),
+}
+
+impl Displayer {
+    fn send(&mut self, command: Command) {
+        match self {
+            Self::Off => {}
+            Self::Thread(thread) => thread.send(command),
+            Self::Here(here) => here.display.command(command),
+        }
+    }
+
+    /// Une demande qui peut attendre la prochaine image.
+    fn send_quiet(&mut self, command: Command) {
+        match self {
+            Self::Off => {}
+            Self::Thread(thread) => thread.send_quiet(command),
+            Self::Here(here) => here.display.command(command),
+        }
+    }
+
+    /// Demandes envoyées jusqu'ici (voir [`crate::display`]).
+    fn sent(&self) -> u64 {
+        match self {
+            Self::Off => 0,
+            Self::Thread(thread) => thread.sent(),
+            Self::Here(here) => here.display.done(),
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            Self::Off => {}
+            Self::Thread(thread) => thread.stop(),
+            Self::Here(here) => here.display.shutdown(),
+        }
+        *self = Self::Off;
+    }
+}
+
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+pub struct App {
+    settings: Settings,
+    paths: Option<Paths>,
+    library: Library,
+    started: bool,
+    display: Displayer,
+    /// Une fenêtre transparente par écran, où la scène se pose.
+    windows: ScreenWindows,
+    /// Les écrans tels que le système les donne, au dernier relevé.
+    screens: Vec<Screen>,
+    next_screen_poll: Instant,
+    /// Relevé des fenêtres, du Dock et du dossier des animaux (à côté).
+    watcher: Option<Arc<Watcher>>,
+    flock: FlockView,
+    /// Changements de définition pas encore vus par une description du
+    /// troupeau : le rang de leur demande, et le changement.
+    handed: Vec<(u64, Handed)>,
+    /// Animaux demandés pas encore vus par une description du troupeau :
+    /// le rang de leur demande, et leur définition.
+    unseen: Vec<(u64, Arc<PetDef>)>,
+    /// Les réglages qui changent ce que fait l'affichage (un essai peut en
+    /// imposer), et ce qu'il en sait.
+    live: Live,
+    live_sent: Option<Live>,
+    dark: bool,
+    /// L'autorisation d'Accessibilité, telle que le relevé la voit.
+    trusted: bool,
+    /// Dernière position du curseur vue par les événements des fenêtres.
+    cursor: Option<Vec2>,
+    /// Animaux demandés dont le dessin se prépare encore (identifiant → nombre).
+    pending: HashMap<String, usize>,
+    /// Dessins en préparation sur un fil à part (identifiants).
+    decoding: HashSet<String>,
+    /// Animaux qui attendent leur dessin à une autre taille, et cette entrée.
+    resizing: Vec<(u32, Entry)>,
+    /// Essai (`MOUFLON_ESSAI`) : étapes à venir.
+    trial_steps: Vec<(Instant, TrialStep)>,
+    /// Le journal d'un essai, vu d'ici (les images y sont notées par
+    /// l'affichage).
+    notes: Option<Notes>,
+    /// Temps passé à faire des images pendant le gestionnaire en cours
+    /// (affichage sur ce fil) : le reste est noté s'il est long (essais).
+    frame_time: Duration,
+    /// Pour réveiller la boucle depuis l'horloge, le menu ou un autre fil.
+    proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    menu: Option<crate::menu::TrayMenu>,
+    /// Ce que le menu montre du troupeau (le préféré, le nombre d'animaux de
+    /// chaque espèce) : mis à jour seulement quand cela change.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    menu_flock: Option<(usize, Vec<usize>)>,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    menu_generation: Option<u64>,
+    /// Ouverture à l'ouverture de session, telle que le système l'a dite à
+    /// la dernière ouverture des réglages (c'est lui qui la garde).
+    login: platform::LoginItem,
+    /// L'animal dont le menu (clic droit) a été ouvert en dernier, le rang
+    /// de son espèce dans la bibliothèque, et sa définition.
+    menu_pet: Option<(u32, Option<usize>, Arc<PetDef>)>,
+    /// Vitrine de la CI (`MOUFLON_VITRINE`) : images de la fenêtre des réglages.
+    showcase: Option<Showcase>,
 }
 
 /// Ouvre la fenêtre « À propos » : version, description, page du projet (et
@@ -264,30 +278,39 @@ fn show_about() {
     });
 }
 
-/// Volume de l'ensemble des sons des animaux (de 0 à 1) : discret, c'est un
-/// compagnon de bureau.
-const VOLUME: f32 = 0.55;
-/// Sons lancés au plus par fenêtre de temps (les suivants se taisent).
-const SOUNDS_PER_WINDOW: u32 = 4;
-const SOUND_WINDOW: Duration = Duration::from_millis(500);
-
-/// Mention de copyright de la fenêtre « À propos ».
-const COPYRIGHT: &str = "© 2026 Alejandro San Martin Lamas";
-
-fn local_hour() -> f32 {
-    let now = chrono::Local::now();
-    now.hour() as f32 + now.minute() as f32 / 60.0
+fn to_rect(r: platform::OsRect) -> Rect {
+    Rect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32)
 }
 
-/// Le curseur est-il sur le corps de l'animal ? Hors du corps, la fenêtre
-/// de l'écran laisse passer les clics vers les applications en dessous.
-fn hit_test(cursor: Vec2, view: &PetView<'_>, art: &PetArt) -> bool {
-    let g = view.ground;
-    let (half, height) = art.body;
-    cursor.x >= g.x - half
-        && cursor.x <= g.x + half
-        && cursor.y >= g.y - height
-        && cursor.y <= g.y + 3.0
+/// Les écrans, tels que le système les donne ; sur les systèmes sans couche
+/// dédiée, ceux de winit.
+fn system_screens(event_loop: &ActiveEventLoop) -> Vec<Screen> {
+    let screens: Vec<Screen> = platform::screens()
+        .into_iter()
+        .map(|s| Screen {
+            frame: to_rect(s.frame),
+            usable: to_rect(s.visible),
+            scale: s.scale as f32,
+        })
+        .collect();
+    if !screens.is_empty() {
+        return screens;
+    }
+    event_loop
+        .available_monitors()
+        .map(|m| {
+            let scale = m.scale_factor();
+            let p = m.position().to_logical::<f64>(scale);
+            let s = m.size().to_logical::<f64>(scale);
+            let frame = Rect::new(p.x as f32, p.y as f32, s.width as f32, s.height as f32);
+            let usable = Rect::new(frame.x, frame.y, frame.w, (frame.h - 48.0).max(100.0));
+            Screen {
+                frame,
+                usable,
+                scale: scale as f32,
+            }
+        })
+        .collect()
 }
 
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -300,61 +323,39 @@ impl App {
         proxy: EventLoopProxy<UserEvent>,
     ) -> Self {
         let now = Instant::now();
-        let mut flock = Flock::new();
-        flock.set_collisions(settings.collisions);
-        flock.set_realistic(settings.realistic_physics);
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x5EED);
+        let live = Live {
+            paused: false,
+            sounds: settings.sounds,
+            collisions: settings.collisions,
+            realistic: settings.realistic_physics,
+            surprises: settings.surprises,
+            frontmost_only: settings.frontmost_only,
+            walk_under_dock: settings.walk_under_dock,
+        };
         Self {
             settings,
             paths,
             library,
-            world: World::default(),
-            flock,
-            scene: Scene::new(),
-            arts: HashMap::new(),
-            surprises: Vec::new(),
-            style: Style::default(),
-            pointer: Pointer::default(),
-            paused: false,
             started: false,
-            last_tick: now,
+            display: Displayer::Off,
+            windows: ScreenWindows::new(),
+            screens: Vec::new(),
             next_screen_poll: now,
-            fast_poll_until: now,
             watcher: None,
-            os_windows: Vec::new(),
-            dock_frame: None,
-            clock: None,
-            beat: Rc::new(Cell::new(None)),
-            coalesced: Rc::new(Cell::new(0)),
-            last_vsync: None,
-            window_events: 0,
-            frame_time: Duration::ZERO,
-            clock_beat: None,
-            shown_at: None,
-            settle_until: None,
-            next_frame: None,
+            flock: FlockView::default(),
+            handed: Vec::new(),
+            unseen: Vec::new(),
+            live,
+            live_sent: None,
+            dark: false,
+            trusted: false,
+            cursor: None,
             pending: HashMap::new(),
             decoding: HashSet::new(),
             resizing: Vec::new(),
-            trial_end: None,
-            activity: None,
-            no_user: std::env::var_os("MOUFLON_ESSAI_CI").is_some(),
-            followed: None,
-            trusted: false,
-            window_notes: HashMap::new(),
             trial_steps: Vec::new(),
-            stats: None,
-            frontmost: None,
-            dock: None,
-            dock_logged: false,
-            floating_seen: std::collections::HashSet::new(),
-            seed,
-            refresh_hz: 60.0,
-            cadence: 0.0,
-            full_rate_until: None,
+            notes: None,
+            frame_time: Duration::ZERO,
             proxy: Arc::new(Mutex::new(proxy)),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu: None,
@@ -362,339 +363,103 @@ impl App {
             menu_flock: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             menu_generation: None,
-            pets_generation: None,
             login: platform::LoginItem::Unavailable,
             menu_pet: None,
             showcase: None,
-            snapshots: None,
-            sounds_window: (now, 0),
         }
     }
 
-    fn cursor(&self) -> Option<Vec2> {
-        platform::cursor_position()
-            .map(|(x, y)| Vec2::new(x as f32, y as f32))
-            .or(self.pointer.cursor)
+    fn send(&mut self, command: Command) {
+        self.display.send(command);
     }
 
-    fn input(&self) -> Input {
-        let activity = self.user_activity();
-        Input {
-            cursor: self.cursor(),
-            local_hour: local_hour(),
-            since_key: activity.map(|a| a.since_key as f32),
-            idle: activity.map(|a| a.idle as f32),
+    /// Note au journal d'un essai (s'il y en a un).
+    fn note(&self, what: impl std::fmt::Display) {
+        if let Some(notes) = &self.notes {
+            notes.note(what);
         }
     }
 
-    /// Ce que fait l'utilisateur (voir `platform::user_activity`), tel que
-    /// le dit le dernier relevé (quatre par seconde au moins), vieilli du
-    /// temps passé depuis. Pas dans la CI : personne n'y touche à la
-    /// machine, les animaux y dormiraient tout l'essai.
-    fn user_activity(&self) -> Option<platform::UserActivity> {
-        if self.no_user {
-            return None;
-        }
-        let (at, known) = self.activity?;
-        let age = at.elapsed().as_secs_f64();
-        Some(platform::UserActivity {
-            since_key: known.since_key + age,
-            idle: known.idle + age,
-        })
+    /// Un changement de définition vient d'être demandé : la description
+    /// du troupeau le montre dès maintenant.
+    fn hand(&mut self, handed: Handed) {
+        self.flock.apply(&handed);
+        self.handed.push((self.display.sent(), handed));
     }
 
+    // ——— Les écrans ———
+
+    /// Relit les écrans : leurs fenêtres sont refaites s'ils ont changé, et
+    /// l'affichage l'apprend.
     fn refresh_screens(&mut self, event_loop: &ActiveEventLoop) {
-        let mut screens: Vec<Screen> = platform::screens()
-            .into_iter()
-            .map(|s| Screen {
-                frame: to_rect(s.frame),
-                usable: to_rect(s.visible),
-                scale: s.scale as f32,
-            })
-            .collect();
-        if screens.is_empty() {
-            // Systèmes sans couche dédiée : on se contente des écrans de winit.
-            screens = event_loop
-                .available_monitors()
-                .map(|m| {
-                    let scale = m.scale_factor();
-                    let p = m.position().to_logical::<f64>(scale);
-                    let s = m.size().to_logical::<f64>(scale);
-                    let frame = Rect::new(p.x as f32, p.y as f32, s.width as f32, s.height as f32);
-                    let usable = Rect::new(frame.x, frame.y, frame.w, (frame.h - 48.0).max(100.0));
-                    Screen {
-                        frame,
-                        usable,
-                        scale: scale as f32,
-                    }
-                })
-                .collect();
+        let screens = system_screens(event_loop);
+        let windows = self.windows.sync(event_loop, &screens);
+        let hz = self.windows.refresh_hz();
+        if windows || hz || screens != self.screens {
+            self.screens = screens;
+            self.send_screens();
         }
-        // Le Dock tel que le fil de relevé l'a lu (s'il en a le droit).
-        self.dock = None;
-        if self.settings.walk_under_dock
-            && let Some(frame) = self.dock_frame
+        if windows
+            && let Some(dark) = self.windows.dark()
+            && dark != self.dark
         {
-            self.dock = exact_dock(&mut screens, to_rect(frame));
-            if !self.dock_logged {
-                self.dock_logged = true;
-                log::info!(
-                    "Dock : {:.0} × {:.0} en {:.0}, {:.0}{}",
-                    frame.w,
-                    frame.h,
-                    frame.x,
-                    frame.y,
-                    if self.dock.is_some() {
-                        ""
-                    } else {
-                        " (sur le côté, masqué ou sur toute la largeur : ignoré)"
-                    }
-                );
-            }
-        }
-        if screens != self.world.screens() {
-            let first = self.world.screens().is_empty();
-            self.world.set_screens(screens);
-            // Une fenêtre transparente par écran.
-            self.sync_overlays(event_loop);
-            // Écran branché, débranché ou réglé autrement : l'horloge se cale
-            // de nouveau sur le plus rapide.
-            if !first && self.clock.is_some() {
-                self.start_clock();
-            }
+            self.dark = dark;
+            self.send(Command::Dark(dark));
         }
     }
 
-    /// (Re)crée l'horloge de l'écran, sur l'écran le plus rapide. Elle
-    /// démarre à la prochaine image.
-    fn start_clock(&mut self) {
-        // L'ancienne d'abord : elle cesse de battre.
-        self.clock = None;
-        self.shown_at = None;
-        // Le silence se compte depuis le dernier battement entendu ; une
-        // horloge toute neuve ne mène les images qu'une fois qu'elle bat.
-        if self.clock_beat.is_none() {
-            let now = Instant::now();
-            self.clock_beat = Some(now.checked_sub(CLOCK_SILENT).unwrap_or(now));
-        }
-        self.beat.set(None);
-        self.last_vsync = None;
-        let beat = Rc::clone(&self.beat);
-        let coalesced = Rc::clone(&self.coalesced);
-        let proxy = Arc::clone(&self.proxy);
-        self.clock = platform::FrameClock::new(move |tick| {
-            // Un seul battement en attente à la fois.
-            if beat.replace(Some(tick)).is_some() {
-                coalesced.set(coalesced.get() + 1);
-            } else if let Ok(proxy) = proxy.lock() {
-                let _ = proxy.send_event(UserEvent::Frame);
-            }
-        });
-        if let Some(clock) = &self.clock {
-            log::info!(
-                "horloge de l'écran : jusqu'à {:.0} images par seconde",
-                clock.max_fps()
-            );
-            if let Some(stats) = &self.stats {
-                stats.note(format_args!(
-                    "horloge de l'écran, {:.0} i/s au plus",
-                    clock.max_fps()
-                ));
-            }
-        }
-    }
-
-    /// L'horloge de l'écran mène-t-elle les images en ce moment ?
-    fn clocked(&self, now: Instant) -> bool {
-        self.clock
-            .as_ref()
-            .is_some_and(platform::FrameClock::is_running)
-            && self
-                .clock_beat
-                .is_some_and(|beat| now.duration_since(beat) < CLOCK_SILENT)
-    }
-
-    /// Applique ce que le fil de relevé a vu depuis la dernière image.
-    fn apply_watch(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
-        let Some(watcher) = &self.watcher else {
-            return;
+    fn send_screens(&mut self) {
+        let command = Command::Screens {
+            screens: self.screens.clone(),
+            overlays: self.windows.overlays(),
         };
-        let snapshot = watcher.take();
-        let pets = watcher.take_pets();
-        if let Some(snapshot) = snapshot {
-            self.apply_snapshot(event_loop, snapshot, now);
+        self.send(command);
+    }
+
+    /// (Re)crée l'horloge de l'écran, sur l'écran le plus rapide (seul le
+    /// fil principal peut le demander), et la donne à l'affichage.
+    fn start_clock(&mut self) {
+        let proxy = Arc::clone(&self.proxy);
+        match &mut self.display {
+            Displayer::Off => {}
+            Displayer::Thread(thread) => {
+                let clock = thread.new_clock();
+                thread.set_clock(clock);
+            }
+            Displayer::Here(here) => {
+                // L'ancienne d'abord : elle cesse de battre.
+                here.display.set_clock(None);
+                here.beat.set(None);
+                let beat = Rc::clone(&here.beat);
+                let coalesced = Rc::clone(&here.coalesced);
+                let clock = platform::FrameClock::new(move |tick| {
+                    // Un seul battement en attente à la fois.
+                    if beat.replace(Some(tick)).is_some() {
+                        coalesced.set(coalesced.get() + 1);
+                    } else if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(UserEvent::Frame);
+                    }
+                });
+                here.display.set_clock(clock);
+            }
         }
+    }
+
+    /// Relève les écrans et le dossier des animaux.
+    fn poll(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        self.next_screen_poll = now + SCREEN_POLL;
+        self.refresh_screens(event_loop);
         // Un animal ajouté au dossier apparaît dans le menu sans relancer l'app.
-        if let Some(stamp) = pets
+        if let Some(stamp) = self.watcher.as_ref().and_then(|w| w.take_pets())
             && self.library.changed_since(&stamp)
         {
             log::info!("dossier des animaux modifié : rechargement");
             self.library.reload();
             self.rebuild_menu();
         }
-        // Une fenêtre qui porte un animal bouge, ou on tient un animal : on
-        // relève plus souvent pour qu'il suive en douceur.
-        if let Some(watcher) = &self.watcher {
-            watcher.set_fast(now < self.fast_poll_until || self.pointer.dragging.is_some());
-        }
     }
 
-    fn apply_snapshot(&mut self, event_loop: &ActiveEventLoop, snapshot: Snapshot, now: Instant) {
-        // Ce que fait l'utilisateur, l'app au premier plan (sauf Mouflon
-        // lui-même, avec ses réglages) et l'autorisation d'Accessibilité :
-        // tout vient du relevé, aucune question au système ici.
-        self.activity = snapshot.activity.map(|activity| (now, activity));
-        if let Some(pid) = snapshot.frontmost
-            && pid != platform::current_pid()
-        {
-            self.frontmost = Some(pid);
-        }
-        let trust_changed = snapshot.trusted != self.trusted;
-        self.trusted = snapshot.trusted;
-        if let Some(stats) = &self.stats
-            && (self.followed != Some(snapshot.followed) || trust_changed)
-        {
-            stats.note(format_args!(
-                "fenêtres suivies par l'Accessibilité : {} app(s){}",
-                snapshot.followed,
-                if snapshot.trusted {
-                    ""
-                } else {
-                    " (pas d'autorisation)"
-                }
-            ));
-        }
-        self.followed = Some(snapshot.followed);
-        let dock = snapshot.dock.filter(|_| self.settings.walk_under_dock);
-        if dock != self.dock_frame {
-            self.dock_frame = dock;
-            self.refresh_screens(event_loop);
-        }
-        if trust_changed {
-            // La fenêtre des réglages montre ce qui manque (ou plus).
-            platform::update_form(&crate::settings_window::values(&self.shown()));
-        }
-        if self.stats.is_some() {
-            self.note_window_changes(&snapshot.windows, now);
-        }
-        self.os_windows = snapshot.windows;
-        self.refresh_windows(now);
-    }
-
-    /// Au journal d'un essai : les fenêtres des autres apps qui arrivent,
-    /// partent, bougent (au plus deux fois par seconde chacune) ou changent
-    /// de niveau.
-    fn note_window_changes(&mut self, windows: &[platform::OsWindow], now: Instant) {
-        let Some(stats) = &self.stats else {
-            return;
-        };
-        let describe = |w: &platform::OsWindow| {
-            format!(
-                "n° {} de {} (pid {}, niveau {}, {:.0}×{:.0} en {:.0},{:.0})",
-                w.id, w.owner, w.pid, w.layer, w.frame.w, w.frame.h, w.frame.x, w.frame.y
-            )
-        };
-        for w in windows {
-            match self.os_windows.iter().find(|old| old.id == w.id) {
-                None => stats.note(format_args!("fenêtre + {}", describe(w))),
-                Some(old) if old.layer != w.layer => {
-                    stats.note(format_args!(
-                        "fenêtre niveau {} → {}",
-                        old.layer,
-                        describe(w)
-                    ));
-                }
-                Some(old) if old.frame != w.frame => {
-                    let recent = self
-                        .window_notes
-                        .get(&w.id)
-                        .is_some_and(|at| now.duration_since(*at) < Duration::from_millis(500));
-                    if !recent {
-                        self.window_notes.insert(w.id, now);
-                        stats.note(format_args!("fenêtre ~ {}", describe(w)));
-                    }
-                }
-                Some(_) => {}
-            }
-        }
-        for old in &self.os_windows {
-            if !windows.iter().any(|w| w.id == old.id) {
-                stats.note(format_args!("fenêtre − {}", describe(old)));
-                self.window_notes.remove(&old.id);
-            }
-        }
-    }
-
-    /// Applique le dernier relevé des fenêtres (sans rien redemander au système).
-    fn refresh_windows(&mut self, now: Instant) {
-        let mut windows = Vec::new();
-        let me = platform::current_pid();
-        for w in &self.os_windows {
-            // Les fenêtres de Mouflon ne sont jamais des rebords (le relevé
-            // les écarte déjà).
-            if w.pid == me {
-                continue;
-            }
-            // Calque transparent posé sur tout un écran (le clavier d'accessibilité
-            // en a deux) : ni sol, ni obstacle.
-            let overlay = w.is_floating()
-                && self.world.screens().iter().any(|s| {
-                    f64::from(s.frame.w) * f64::from(s.frame.h) * 0.9 <= w.frame.w * w.frame.h
-                });
-            let walkable = w.is_walkable() && !overlay;
-            // Panneaux flottants (visualiseur de clavier…) : notés une fois au journal.
-            if w.is_floating() && self.floating_seen.insert((w.owner.clone(), w.layer)) {
-                log::info!(
-                    "fenêtre flottante : {} (niveau {}, {:.0} × {:.0} en {:.0}, {:.0}){}",
-                    w.owner,
-                    w.layer,
-                    w.frame.w,
-                    w.frame.h,
-                    w.frame.x,
-                    w.frame.y,
-                    if walkable { "" } else { ", ignorée" }
-                );
-            }
-            if !walkable {
-                continue;
-            }
-            // Un panneau flottant reste visible quelle que soit l'app au premier plan.
-            if self.settings.frontmost_only && !w.is_floating() && Some(w.pid) != self.frontmost {
-                continue;
-            }
-            windows.push(WindowRect {
-                id: w.id,
-                frame: to_rect(w.frame),
-            });
-        }
-
-        // Le Dock passe devant toutes les fenêtres.
-        if let Some(dock) = self.dock {
-            windows.insert(0, dock);
-        }
-
-        // Une fenêtre qui porte un animal bouge : on relève plus souvent pour qu'il suive en douceur.
-        let supports: Vec<(u64, f32, f32)> = self
-            .flock
-            .pets()
-            .iter()
-            .filter_map(|p| match p.support() {
-                Support::Ground { surface } => {
-                    self.world.surface(surface).map(|s| (surface, s.x0, s.y))
-                }
-                _ => None,
-            })
-            .collect();
-        self.world.set_windows(&windows, LedgeOptions::default());
-        let moved = supports.iter().any(|&(id, x0, y)| {
-            self.world
-                .surface(id)
-                .is_some_and(|s| (s.x0 - x0).abs() > 0.5 || (s.y - y).abs() > 0.5)
-        });
-        if moved {
-            self.fast_poll_until = now + Duration::from_millis(1500);
-        }
-    }
+    // ——— Les animaux et leurs dessins ———
 
     fn spawn(&mut self, index: usize) {
         let Some(entry) = self.library.pets.get(index).cloned() else {
@@ -708,17 +473,16 @@ impl App {
             return;
         }
         // Illisible : rien à montrer (l'erreur est au journal).
-        if entry.art().is_none() {
+        let Some(art) = entry.art() else {
             return;
-        }
+        };
         self.compress_later(&entry);
-        self.seed = self
-            .seed
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1);
-        self.flock
-            .spawn(Arc::clone(&entry.def), self.seed, &self.world, None);
-        self.sync_pets();
+        self.send(Command::Spawn {
+            def: Arc::clone(&entry.def),
+            art,
+        });
+        self.unseen
+            .push((self.display.sent(), Arc::clone(&entry.def)));
     }
 
     /// Lance le décodage des dessins de ces animaux, une espèce par fil, sans
@@ -814,10 +578,9 @@ impl App {
     /// Les images d'une espèce sont compressées : ses animaux prennent le
     /// dessin compressé ; les images d'avant s'oublient.
     fn art_compressed(&mut self, id: &str) {
-        // Toutes les tailles de l'espèce dont le dessin est prêt (la
-        // bibliothèque a pu être rechargée entre-temps : jamais de décodage
-        // ici, sur le fil de l'affichage).
-        let ready: Vec<(Arc<mouflon_core::PetDef>, Arc<PetArt>)> = self
+        // Toutes les tailles de l'espèce dont le dessin est prêt (jamais de
+        // décodage ici).
+        let ready: Vec<(Arc<PetDef>, Arc<PetArt>)> = self
             .library
             .sizes_of(id)
             .filter(|entry| entry.art_ready())
@@ -826,28 +589,30 @@ impl App {
         if ready.is_empty() {
             return;
         }
-        let mut swapped = 0;
-        for pet in self.flock.pets() {
-            let Some((_, art)) = ready.iter().find(|(def, _)| Arc::ptr_eq(pet.def(), def)) else {
-                continue;
-            };
-            if self
-                .arts
-                .get(&pet.id())
-                .is_some_and(|old| !Arc::ptr_eq(old, art))
-            {
-                self.arts.insert(pet.id(), Arc::clone(art));
-                swapped += 1;
-            }
-        }
-        self.scene.forget_images();
-        if let Some(stats) = &self.stats {
-            let bytes: usize = ready.iter().map(|(_, art)| art.image_bytes()).sum();
-            stats.note(format_args!(
-                "images de {id} compressées ({:.1} Mo, {swapped} animal(aux))",
-                bytes as f64 / 1e6
-            ));
-        }
+        let pets = self
+            .flock
+            .pets
+            .iter()
+            .filter(|p| ready.iter().any(|(def, _)| Arc::ptr_eq(def, &p.def)))
+            .count();
+        let bytes: usize = ready.iter().map(|(_, art)| art.image_bytes()).sum();
+        let changes = ready
+            .into_iter()
+            .map(|(def, art)| Redraw {
+                from: Arc::clone(&def),
+                to: def,
+                art,
+                factor: 1.0,
+            })
+            .collect();
+        self.send(Command::Redraw {
+            changes,
+            gone: Vec::new(),
+        });
+        self.note(format_args!(
+            "images de {id} compressées ({:.1} Mo, {pets} animal(aux))",
+            bytes as f64 / 1e6
+        ));
         // Les images d'origine sont libérées : leurs pages retournent au
         // système tout de suite, plutôt que dans quelques minutes.
         let _ = std::thread::Builder::new()
@@ -866,7 +631,6 @@ impl App {
 
     /// Les dessins d'un animal sont prêts : ceux qui l'attendaient arrivent.
     fn art_ready(&mut self, id: &str) {
-        self.next_frame = None;
         self.decoding.remove(id);
         let count = self.pending.remove(id).unwrap_or(0);
         if count == 0 {
@@ -879,196 +643,18 @@ impl App {
         }
     }
 
-    /// Le dessin de chaque animal : pour les nouveaux venus (dont les
-    /// personnages secondaires des scènes desktopPet), on le cherche et on
-    /// règle ce qui en dépend ; ceux des partis s'oublient.
-    fn sync_pets(&mut self) {
-        // Rien n'a changé dans le troupeau : les dessins sont à jour.
-        let generation = self.flock.generation();
-        if self.pets_generation == Some(generation) {
-            return;
-        }
-        self.pets_generation = Some(generation);
-        let flock = &self.flock;
-        self.arts
-            .retain(|id, _| flock.pets().iter().any(|p| p.id() == *id));
-        let missing: Vec<(u32, Arc<PetArt>)> = self
-            .flock
-            .pets()
-            .iter()
-            .filter(|p| !self.arts.contains_key(&p.id()))
-            .filter_map(|p| {
-                // Dessin de la bibliothèque ; après un rechargement, celui d'un
-                // animal déjà montré de la même espèce (personnages secondaires).
-                let art = self.art_of(p).or_else(|| {
-                    self.flock
-                        .pets()
-                        .iter()
-                        .find(|q| Arc::ptr_eq(q.def(), p.def()))
-                        .and_then(|q| self.arts.get(&q.id()))
-                        .cloned()
-                })?;
-                Some((p.id(), art))
-            })
-            .collect();
-        for (id, art) in missing {
-            if let Some(stats) = &self.stats
-                && let Some(pet) = self.flock.get_mut(id)
-            {
-                stats.note(format_args!("arrivée de {} (n° {id})", pet.def().meta.name));
-            }
-            self.fit_pet(id, art);
-        }
-    }
-
-    /// Un animal prend son dessin (à son arrivée, ou à une autre taille) :
-    /// ce qui en dépend pour la simulation suit.
-    fn fit_pet(&mut self, id: u32, art: Arc<PetArt>) {
-        if let Some(pet) = self.flock.get_mut(id) {
-            // Les collisions partent quand les dessins se touchent.
-            if let Some((front, back)) = art.reach() {
-                pet.set_reach(front, back);
-            }
-            // Un autre se pose sur ce qu'on voit de lui, même couché.
-            if let Some(tops) = art.tops() {
-                pet.set_tops(tops);
-            }
-        }
-        self.arts.insert(id, art);
-    }
-
-    /// Reconstruit le menu après un changement de la bibliothèque.
-    fn rebuild_menu(&mut self) {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        {
-            self.menu = None;
-            match crate::menu::TrayMenu::new(&self.library, self.settings.sounds) {
-                Ok(menu) => {
-                    menu.set_paused(self.paused);
-                    self.menu = Some(menu);
-                }
-                Err(e) => log::error!("impossible de recréer le menu : {e}"),
-            }
-            self.menu_flock = None;
-            self.menu_generation = None;
-            self.sync_menu();
-        }
-    }
-
-    /// Le menu suit le troupeau : « Ajouter Lainou » nomme l'animal préféré,
-    /// et chaque espèce dit combien des siens sont à l'écran (ceux qui
-    /// partent déjà et les personnages secondaires ne comptent pas).
-    fn sync_menu(&mut self) {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        {
-            let Some(menu) = &self.menu else {
-                return;
-            };
-            // Le préféré ne change qu'avec un animal ajouté : la génération
-            // du troupeau suffit à savoir s'il y a du nouveau.
-            let generation = self.flock.generation();
-            if self.menu_generation == Some(generation) {
-                return;
-            }
-            self.menu_generation = Some(generation);
-            let favorite = self
-                .library
-                .default_index(self.settings.default_pet.as_deref());
-            let mut counts = vec![0; self.library.pets.len()];
-            for pet in self.flock.pets() {
-                if pet.is_child() || pet.is_leaving() {
-                    continue;
-                }
-                let id = pet.def().meta.id.as_str();
-                if let Some(i) = self.library.pets.iter().position(|e| e.def.meta.id == id) {
-                    counts[i] += 1;
-                }
-            }
-            if self
-                .menu_flock
-                .as_ref()
-                .is_some_and(|(f, c)| *f == favorite && *c == counts)
-            {
-                return;
-            }
-            menu.set_flock(favorite, &counts);
-            self.menu_flock = Some((favorite, counts));
-        }
-    }
-
-    /// Met la sortie audio en route avant le premier son, avec un son de
-    /// l'animal du lancement (joué sans volume) : son décodeur se charge aussi.
-    fn warm_up_sounds(&self) {
-        let index = self
-            .library
-            .default_index(self.settings.default_pet.as_deref());
-        let sample = self
-            .library
-            .pets
-            .get(index)
-            .and_then(|entry| entry.def.sounds.first())
-            .and_then(|sound| sound.clips.first());
-        platform::warm_up_sounds(sample);
-    }
-
-    /// Joue les sons que les animaux viennent de faire (s'ils ont la parole),
-    /// et vide la liste de leurs événements (notés au journal d'un essai).
-    fn play_sounds(&mut self) {
-        let audible = self.settings.sounds && !self.paused;
-        let now = Instant::now();
-        if now.duration_since(self.sounds_window.0) >= SOUND_WINDOW {
-            self.sounds_window = (now, 0);
-        }
-        for (rank, pet) in self.flock.pets_mut().iter_mut().enumerate() {
-            for event in pet.take_events() {
-                // Au journal : les événements des premiers arrivés seulement
-                // (une foule en ferait des milliers par seconde).
-                if let Some(stats) = &self.stats
-                    && rank < crate::stats::DETAILED_PETS
-                {
-                    let mut what = describe(&event, pet);
-                    if let PetEvent::Landed { .. } = event
-                        && let Support::Ground { surface } = pet.support()
-                    {
-                        what.push_str(" sur ");
-                        what.push_str(&surface_name(&self.world, &self.os_windows, surface));
-                    }
-                    stats.note(format_args!("n° {} {what}", pet.id()));
-                }
-                // Pas plus de quelques sons à la fois : une foule ne fait
-                // qu'un brouhaha (et chaque son coûte).
-                if let PetEvent::Sound { sound, clip } = event
-                    && audible
-                    && self.sounds_window.1 < SOUNDS_PER_WINDOW
-                    && let Some(sound) = pet.def().sounds.get(sound)
-                    && let Some(data) = sound.clips.get(clip)
-                {
-                    self.sounds_window.1 += 1;
-                    platform::play_sound(data, sound.volume * VOLUME);
-                }
-            }
-        }
-    }
-
     /// Un fichier ou un dossier d'animal déposé sur un animal : on l'installe,
     /// et l'animal visé laisse sa place au nouveau venu (comme dans desktopPet).
-    fn install_pet(&mut self, path: &std::path::Path, target: Option<u32>) {
+    fn install_pet(&mut self, path: &std::path::Path) {
         match self.library.install(path) {
             Ok(id) => {
                 log::info!("animal installé : {id} ({})", path.display());
                 self.rebuild_menu();
-                if let Some(old) = target {
-                    self.flock.remove(old);
-                    if self.pointer.dragging == Some(old) {
-                        self.pointer.dragging = None;
-                    }
-                }
+                self.send(Command::RemoveUnderCursor);
                 let index = self.library.index_of(&id);
                 if self.settings.default_pet.as_deref() != Some(id.as_str()) {
                     self.settings.default_pet = Some(id);
-                    if let Some(paths) = &self.paths {
-                        self.settings.save(&paths.settings);
-                    }
+                    self.save_settings();
                 }
                 self.spawn(index);
             }
@@ -1077,96 +663,19 @@ impl App {
     }
 
     /// Le dernier arrivé de cette espèce (rang dans la bibliothèque) dit au
-    /// revoir ; sa fenêtre se ferme quand il est parti.
+    /// revoir.
     fn goodbye_one(&mut self, index: usize) {
         if let Some(entry) = self.library.pets.get(index) {
-            let input = self.input();
             let species = entry.def.meta.id.clone();
-            if let Some(id) = self.flock.leave_one(&species, &self.world, &input)
-                && self.pointer.dragging == Some(id)
-            {
-                self.pointer = Pointer::default();
-            }
+            self.send(Command::GoodbyeSpecies(species));
         }
     }
 
-    /// Avant de quitter : le journal d'un essai interrompu (Quitter pendant
-    /// l'essai) reçoit son bilan et part sur le disque, et les fenêtres des
-    /// écrans ne seront jamais libérées (voir `keep_pet_window`).
-    pub fn shutdown(&mut self) {
-        if let Some(stats) = &mut self.stats {
-            stats.finish();
-        }
-        self.scene.shutdown();
-    }
-
-    /// Une étape de l'essai, notée au journal.
-    fn trial_step(&mut self, step: TrialStep) {
-        if let Some(stats) = &self.stats {
-            let name = |index: usize| {
-                self.library
-                    .pets
-                    .get(index)
-                    .map_or("?", |entry| entry.def.meta.name.as_str())
-            };
-            match step {
-                TrialStep::Goodbye(index) => {
-                    stats.note(format_args!("essai : au revoir à un(e) {}", name(index)));
-                }
-                TrialStep::Add(index) => {
-                    stats.note(format_args!("essai : un(e) {} de plus", name(index)));
-                }
-                TrialStep::Crowd(count) => {
-                    stats.note(format_args!("essai de charge : {count} animaux"));
-                }
-            }
-        }
-        match step {
-            TrialStep::Goodbye(index) => self.goodbye_one(index),
-            TrialStep::Add(index) => self.spawn(index),
-            TrialStep::Crowd(count) => self.crowd(count),
-        }
-    }
-
-    /// Essai de charge : des animaux arrivent jusqu'à en avoir `count`, des
-    /// espèces du lancement à tour de rôle (dessins déjà prêts).
-    fn crowd(&mut self, count: usize) {
-        let mut kinds: Vec<usize> = Vec::new();
-        for pet in self.flock.pets() {
-            if let Some(i) = self
-                .library
-                .pets
-                .iter()
-                .position(|e| Arc::ptr_eq(&e.def, pet.def()))
-                && !kinds.contains(&i)
-            {
-                kinds.push(i);
-            }
-        }
-        if kinds.is_empty() {
-            kinds.push(
-                self.library
-                    .default_index(self.settings.default_pet.as_deref()),
-            );
-        }
-        let have = self.flock.pets().len();
-        for k in have..count {
-            self.spawn(kinds[k % kinds.len()]);
-        }
-    }
-
-    /// Tous les animaux disent au revoir : chacun joue son animation d'adieu
-    /// et s'efface ; leurs fenêtres se ferment quand ils sont partis.
-    fn remove_all(&mut self) {
-        let input = self.input();
-        self.flock.leave_all(&self.world, &input);
-        self.pointer = Pointer::default();
-    }
-
-    /// Taille d'un animal : la sienne s'il en a une à lui, celle de tous sinon.
-    fn size_of(&self, pet: &Pet) -> f32 {
+    /// Taille d'un animal d'après sa définition : la sienne s'il en a une à
+    /// lui, celle de tous sinon.
+    fn size_of(&self, def: &Arc<PetDef>) -> f32 {
         self.library
-            .entry_of(pet.def())
+            .entry_of(def)
             .map_or(self.library.size(), |entry| entry.size)
     }
 
@@ -1174,31 +683,41 @@ impl App {
     /// compris), sans les interrompre.
     fn set_size(&mut self, index: usize) {
         let size = crate::settings::SIZES[index.min(crate::settings::SIZES.len() - 1)];
-        let before: HashMap<u32, f32> = self
-            .flock
-            .pets()
-            .iter()
-            .map(|pet| (pet.id(), self.size_of(pet)))
+        // Chaque définition à l'écran (celles des animaux qui viennent
+        // d'être demandés comprises), et sa taille.
+        let mut defs: Vec<Arc<PetDef>> = Vec::new();
+        let unseen = self.unseen.iter().map(|(_, def)| def);
+        for def in self.flock.pets.iter().map(|p| &p.def).chain(unseen) {
+            if !defs.iter().any(|d| Arc::ptr_eq(d, def)) {
+                defs.push(Arc::clone(def));
+            }
+        }
+        let before: Vec<(Arc<PetDef>, f32)> = defs
+            .into_iter()
+            .map(|def| {
+                let size = self.size_of(&def);
+                (def, size)
+            })
             .collect();
         let unchanged = (size - self.settings.size_factor()).abs() < f32::EPSILON
-            && before.values().all(|s| (s - size).abs() < 1e-3);
+            && self
+                .flock
+                .pets
+                .iter()
+                .all(|p| (self.size_of(&p.def) - size).abs() < 1e-3);
         if unchanged {
             return;
         }
         self.resizing.clear();
         self.settings.size = size;
-        if let Some(paths) = &self.paths {
-            self.settings.save(&paths.settings);
-        }
+        self.save_settings();
         self.library.set_size(size);
         // Les dessins de chaque espèce à l'écran, à la nouvelle taille,
-        // préparés en parallèle.
+        // préparés en parallèle (l'affichage, lui, continue).
         let mut species = HashSet::new();
-        let needed: Vec<Entry> = self
-            .flock
-            .pets()
+        let needed: Vec<Entry> = before
             .iter()
-            .filter_map(|pet| self.library.current(pet.def()))
+            .filter_map(|(def, _)| self.library.current(def))
             .filter(|entry| species.insert(entry.def.meta.id.clone()))
             .cloned()
             .collect();
@@ -1207,41 +726,33 @@ impl App {
                 scope.spawn(move || entry.art());
             }
         });
+        let mut changes = Vec::new();
         let mut gone = Vec::new();
-        for pet in self.flock.pets_mut() {
-            let old = before.get(&pet.id()).copied().unwrap_or(size);
-            let resized = self
+        for (def, old) in before {
+            let found = self
                 .library
-                .current(pet.def())
-                .is_some_and(|entry| pet.rescale(Arc::clone(&entry.def), size / old));
-            if !resized {
+                .current(&def)
+                .and_then(|entry| Some((Arc::clone(&entry.def), entry.art()?)));
+            match found {
+                Some((to, art)) => changes.push(Redraw {
+                    from: def,
+                    to,
+                    art,
+                    factor: size / old,
+                }),
                 // Plus dans la bibliothèque : on n'a plus de quoi le dessiner.
-                gone.push(pet.id());
+                None => gone.push(def),
             }
         }
-        for id in gone {
-            self.flock.remove(id);
-        }
-        // Chacun prend tout de suite son dessin à la nouvelle taille.
-        let refits: Vec<(u32, Arc<PetArt>)> = self
-            .flock
-            .pets()
+        let map = changes
             .iter()
-            .filter_map(|pet| {
-                let art = self
-                    .library
-                    .entry_of(pet.def())
-                    .and_then(crate::library::Entry::art)?;
-                Some((pet.id(), art))
-            })
+            .map(|c| (Arc::clone(&c.from), Arc::clone(&c.to)))
             .collect();
-        for (pet, art) in refits {
-            self.fit_pet(pet, art);
-        }
-        self.scene.forget_images();
+        self.send(Command::Redraw { changes, gone });
+        self.hand(Handed::Defs(map));
         log::info!(
             "taille des animaux : × {size} ({} à l'écran)",
-            self.flock.pets().len()
+            self.flock.pets.len()
         );
     }
 
@@ -1252,13 +763,13 @@ impl App {
     fn set_pet_size(&mut self, id: u32, index: usize) {
         let index = index.min(crate::settings::SIZES.len() - 1);
         let size = crate::settings::SIZES[index];
-        let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
+        let Some(def) = self.flock.def_of(id).cloned() else {
             return;
         };
-        if (self.size_of(pet) - size).abs() < 1e-3 {
+        if (self.size_of(&def) - size).abs() < 1e-3 {
             return;
         }
-        let species = pet.def().meta.id.clone();
+        let species = def.meta.id.clone();
         let Some(entry) = self
             .library
             .pets
@@ -1309,45 +820,147 @@ impl App {
         let Some(art) = entry.art() else {
             return;
         };
-        let Some(old) = self
-            .flock
-            .pets()
-            .iter()
-            .find(|p| p.id() == id)
-            .map(|pet| self.size_of(pet))
-        else {
+        let Some(def) = self.flock.def_of(id).cloned() else {
             return;
         };
-        let rescaled = self
-            .flock
-            .get_mut(id)
-            .is_some_and(|pet| pet.rescale(Arc::clone(&entry.def), entry.size / old));
-        if !rescaled {
-            return;
-        }
-        self.fit_pet(id, art);
+        let old = self.size_of(&def);
+        self.send(Command::RedrawPet {
+            id,
+            def: Arc::clone(&entry.def),
+            art,
+            factor: entry.size / old,
+        });
+        self.hand(Handed::Pet(id, Arc::clone(&entry.def)));
         self.compress_later(entry);
         // Les tailles dont plus personne ne se sert sont oubliées, et leurs
         // images avec.
-        let used: Vec<Arc<mouflon_core::PetDef>> = self
+        let used: Vec<Arc<PetDef>> = self
             .flock
-            .pets()
+            .pets
             .iter()
-            .map(|p| Arc::clone(p.def()))
+            .map(|p| Arc::clone(&p.def))
             .chain(self.resizing.iter().map(|(_, e)| Arc::clone(&e.def)))
             .collect();
         self.library
             .forget_unused_sizes(|def| used.iter().any(|u| Arc::ptr_eq(u, def)));
-        self.scene.forget_images();
         log::info!("n° {id} : taille × {}", entry.size);
     }
 
-    fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
-        if let Some(stats) = &self.stats {
-            stats.note(format_args!("menu {action:?}"));
+    /// L'affichage décrit le troupeau : ce qu'il ne savait pas encore y
+    /// est ajouté, et le menu suit.
+    fn flock_changed(&mut self, generation: u64, done: u64, pets: Vec<PetSummary>) {
+        self.handed.retain(|(at, _)| *at > done);
+        self.unseen.retain(|(at, _)| *at > done);
+        self.flock = FlockView {
+            generation: Some(generation),
+            pets,
+        };
+        for (_, handed) in &self.handed {
+            self.flock.apply(handed);
         }
-        // Ce que l'on vient de choisir se voit tout de suite.
-        self.next_frame = None;
+        self.sync_menu();
+    }
+
+    // ——— Les menus ———
+
+    /// Reconstruit le menu après un changement de la bibliothèque.
+    fn rebuild_menu(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            self.menu = None;
+            match crate::menu::TrayMenu::new(&self.library, self.settings.sounds) {
+                Ok(menu) => {
+                    menu.set_paused(self.live.paused);
+                    self.menu = Some(menu);
+                }
+                Err(e) => log::error!("impossible de recréer le menu : {e}"),
+            }
+            self.menu_flock = None;
+            self.menu_generation = None;
+            self.sync_menu();
+        }
+    }
+
+    /// Le menu suit le troupeau : « Ajouter Lainou » nomme l'animal préféré,
+    /// et chaque espèce dit combien des siens sont à l'écran (ceux qui
+    /// partent déjà et les personnages secondaires ne comptent pas).
+    fn sync_menu(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let Some(menu) = &self.menu else {
+                return;
+            };
+            // Le préféré ne change qu'avec un animal ajouté : la génération
+            // du troupeau suffit à savoir s'il y a du nouveau.
+            if self.menu_generation.is_some() && self.menu_generation == self.flock.generation {
+                return;
+            }
+            self.menu_generation = self.flock.generation;
+            let favorite = self
+                .library
+                .default_index(self.settings.default_pet.as_deref());
+            let mut counts = vec![0; self.library.pets.len()];
+            for pet in self.flock.pets.iter().filter(|p| !p.extra) {
+                let id = pet.def.meta.id.as_str();
+                if let Some(i) = self.library.pets.iter().position(|e| e.def.meta.id == id) {
+                    counts[i] += 1;
+                }
+            }
+            if self
+                .menu_flock
+                .as_ref()
+                .is_some_and(|(f, c)| *f == favorite && *c == counts)
+            {
+                return;
+            }
+            menu.set_flock(favorite, &counts);
+            self.menu_flock = Some((favorite, counts));
+        }
+    }
+
+    /// Le menu d'un animal, au clic droit (ou Contrôle-clic) sur lui :
+    /// l'affichage a trouvé l'animal sous le curseur, qui attend sous le menu.
+    fn open_pet_menu(&mut self, id: u32, def: Arc<PetDef>) {
+        let species = self
+            .library
+            .pets
+            .iter()
+            .position(|e| e.def.meta.id == def.meta.id);
+        let state = PetMenuState {
+            paused: self.live.paused,
+            sounds: self.settings.sounds,
+            size: crate::settings::size_index_of(self.size_of(&def)),
+        };
+        let items = crate::menu::pet_menu(&def.meta.name, state, crate::i18n::texts());
+        self.menu_pet = Some((id, species, def));
+        // Le menu s'ouvre au prochain tour de la boucle (voir
+        // `platform::pop_up_menu`).
+        platform::pop_up_menu(&items);
+    }
+
+    /// Ce que fait l'article choisi dans le menu d'un animal.
+    fn pet_menu_action(&self, id: u32) -> Option<Action> {
+        let (pet, species, _) = self.menu_pet.as_ref()?;
+        PetChoice::from_id(id)?.action(*pet, *species)
+    }
+
+    /// Met la sortie audio en route avant le premier son, avec un son de
+    /// l'animal du lancement (joué sans volume) : son décodeur se charge aussi.
+    fn warm_up_sounds(&self) {
+        let index = self
+            .library
+            .default_index(self.settings.default_pet.as_deref());
+        let sample = self
+            .library
+            .pets
+            .get(index)
+            .and_then(|entry| entry.def.sounds.first())
+            .and_then(|sound| sound.clips.first());
+        platform::warm_up_sounds(sample);
+    }
+
+    fn handle_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
+        self.note(format_args!("menu {action:?}"));
         match action {
             Action::AddDefault => {
                 let index = self
@@ -1360,25 +973,18 @@ impl App {
                 self.make_favorite(index);
             }
             Action::RemoveOne(index) => self.goodbye_one(index),
-            Action::RemoveAll => self.remove_all(),
-            Action::Goodbye(id) => self.goodbye_pet(id),
-            Action::Together => {
-                let input = self.input();
-                let count = self.flock.together(&self.world, &input);
-                log::info!("tous ensemble : {count} animal(aux)");
-            }
-            Action::SetPaused(paused) => self.set_paused(paused),
+            Action::RemoveAll => self.send(Command::GoodbyeAll),
+            Action::Goodbye(id) => self.send(Command::Goodbye(id)),
+            Action::Together => self.send(Command::Together),
+            Action::SetPaused(paused) => self.live.paused = paused,
             Action::SetSounds(on) => self.set_sounds(on),
-            Action::SetSize(index) => {
-                self.set_size(index);
-                self.sync_pets();
-            }
+            Action::SetSize(index) => self.set_size(index),
             Action::SetPetSize(pet, index) => self.set_pet_size(pet, index),
             Action::SetCollisions(on) => self.set_collisions(on),
             Action::SetRealisticPhysics(on) => self.set_realistic_physics(on),
             Action::SetSurprises(on) => self.set_surprises(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
-            Action::SetWalkUnderDock(on) => self.set_walk_under_dock(event_loop, on),
+            Action::SetWalkUnderDock(on) => self.set_walk_under_dock(on),
             Action::SetOpenAtLogin(on) => {
                 // La case reste comme on l'a cochée en attendant la réponse.
                 self.login = if on {
@@ -1414,19 +1020,20 @@ impl App {
             Action::About => show_about(),
             Action::Quit => event_loop.exit(),
         }
-        // La barre des menus et la fenêtre des réglages montrent l'état
-        // qui en résulte, d'où que vienne le changement.
+        // La barre des menus, la fenêtre des réglages et l'affichage
+        // suivent l'état qui en résulte, d'où que vienne le changement.
         self.publish();
     }
 
     /// Montre l'état de l'app partout où il se voit : la barre des menus
-    /// (pause, sons, animaux à l'écran) et la fenêtre des réglages. Le menu
-    /// d'un animal, lui, est refait à chaque clic droit.
+    /// (pause, sons, animaux à l'écran), la fenêtre des réglages, et
+    /// l'affichage pour ce qui le concerne. Le menu d'un animal, lui, est
+    /// refait à chaque clic droit.
     fn publish(&mut self) {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             if let Some(menu) = &self.menu {
-                menu.set_paused(self.paused);
+                menu.set_paused(self.live.paused);
                 menu.set_sounds(self.settings.sounds);
             }
             // Le préféré a pu changer sans qu'un animal arrive encore.
@@ -1434,6 +1041,10 @@ impl App {
         }
         self.sync_menu();
         platform::update_form(&crate::settings_window::values(&self.shown()));
+        if self.live_sent != Some(self.live) {
+            self.live_sent = Some(self.live);
+            self.send(Command::Live(self.live));
+        }
     }
 
     /// Ce que la fenêtre des réglages montre de l'état de l'app et du système.
@@ -1442,9 +1053,9 @@ impl App {
             size: self.settings.size_index(),
             sounds: self.settings.sounds,
             surprises: self.settings.surprises,
-            // Celles du troupeau : un essai peut les imposer.
-            collisions: self.flock.collisions(),
-            realistic_physics: self.flock.realistic(),
+            // Celles de l'affichage : un essai peut les imposer.
+            collisions: self.live.collisions,
+            realistic_physics: self.live.realistic,
             frontmost_only: self.settings.frontmost_only,
             walk_under_dock: self.settings.walk_under_dock,
             trusted: self.trusted,
@@ -1494,22 +1105,12 @@ impl App {
         }
     }
 
-    fn set_paused(&mut self, paused: bool) {
-        if self.paused == paused {
-            return;
-        }
-        self.paused = paused;
-        // Au réveil, les animaux repartent d'où ils étaient, sans rattraper
-        // le temps de la pause.
-        self.last_tick = Instant::now();
-        self.shown_at = None;
-    }
-
     fn set_sounds(&mut self, on: bool) {
         if self.settings.sounds == on {
             return;
         }
         self.settings.sounds = on;
+        self.live.sounds = on;
         self.save_settings();
         if on {
             self.warm_up_sounds();
@@ -1521,156 +1122,25 @@ impl App {
             return;
         }
         self.settings.surprises = on;
+        self.live.surprises = on;
         self.save_settings();
-        // Celles qui n'étaient pas imposées partent ou reviennent.
-        self.surprises.retain(|(_, kind)| kind.is_some());
-        if on {
-            self.schedule_surprise(Instant::now());
-        }
-    }
-
-    /// La prochaine surprise tirée au sort, dans un quart d'heure à
-    /// quarante minutes.
-    fn schedule_surprise(&mut self, now: Instant) {
-        if !self.settings.surprises || self.surprises.iter().any(|(_, k)| k.is_none()) {
-            return;
-        }
-        let minutes = SURPRISE_EVERY.0 + (SURPRISE_EVERY.1 - SURPRISE_EVERY.0) * self.random_unit();
-        self.surprises
-            .push((now + Duration::from_secs_f32(minutes * 60.0), None));
-        self.surprises.sort_by_key(|(at, _)| *at);
-    }
-
-    /// Un nombre au hasard dans [0, 1) (même suite que les graines des
-    /// animaux).
-    fn random_unit(&mut self) -> f32 {
-        self.seed = self
-            .seed
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1);
-        (self.seed >> 40) as f32 / (1u64 << 24) as f32
-    }
-
-    /// Une surprise à son heure : un coup de vent, ou une soucoupe (si un
-    /// animal est là pour elle). Pas devant personne : elle attend son retour.
-    fn surprise(&mut self, now: Instant, input: &Input) {
-        let Some((next, &(at, imposed))) = self
-            .surprises
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, (at, _))| *at)
-        else {
-            return;
-        };
-        if now < at {
-            return;
-        }
-        self.surprises.remove(next);
-        if imposed.is_none() && (input.away() || self.flock.pets().is_empty()) {
-            // Personne pour la voir : un peu plus tard.
-            self.surprises.push((now + Duration::from_secs(60), None));
-            self.surprises.sort_by_key(|(at, _)| *at);
-            return;
-        }
-        let kind = imposed.unwrap_or(if self.random_unit() < 0.55 {
-            Surprise::Wind
-        } else {
-            Surprise::Saucer
-        });
-        let saucer = match kind {
-            Surprise::Saucer => {
-                let seed = (self.random_unit() * 1e6) as u64;
-                self.flock.invite_saucer(&self.world, seed)
-            }
-            Surprise::Wind => None,
-        };
-        let what = if saucer.is_some() {
-            "une soucoupe volante".to_owned()
-        } else {
-            // Pas d'animal pour la soucoupe : un coup de vent à la place.
-            let dir = if self.random_unit() < 0.5 { -1.0 } else { 1.0 };
-            let seconds = 6.0 + 3.0 * self.random_unit();
-            self.flock.blow(dir, seconds);
-            format!(
-                "un coup de vent vers la {} ({seconds:.1} s)",
-                if dir > 0.0 { "droite" } else { "gauche" }
-            )
-        };
-        log::info!("surprise : {what}");
-        if let Some(stats) = &self.stats {
-            stats.note(format_args!("surprise : {what}"));
-        }
-        if imposed.is_none() {
-            self.schedule_surprise(now);
-        }
-    }
-
-    /// Une fenêtre transparente par écran (voir [`Scene`]) : refaites quand
-    /// les écrans changent.
-    fn sync_overlays(&mut self, event_loop: &ActiveEventLoop) {
-        let screens = self.world.screens().to_vec();
-        for note in self.scene.sync_screens(event_loop, &screens) {
-            log::info!("{note}");
-            if let Some(stats) = &self.stats {
-                stats.note(&note);
-            }
-        }
-        self.refresh_monitors();
-    }
-
-    /// Le dessin d'un animal, s'il est prêt (jamais de décodage ici).
-    fn art_of(&self, pet: &Pet) -> Option<Arc<PetArt>> {
-        self.library
-            .entry_of(pet.def())
-            .filter(|entry| entry.art_ready())
-            .and_then(crate::library::Entry::art)
-    }
-
-    /// L'animal sous le curseur (le plus en avant).
-    fn pet_under_cursor(&self) -> Option<u32> {
-        self.pet_at(self.cursor()?, 1.0)
-    }
-
-    /// L'animal au point `p` (le plus en avant), à l'instant `alpha` entre
-    /// deux pas. Les personnages secondaires laissent passer les clics.
-    fn pet_at(&self, p: Vec2, alpha: f32) -> Option<u32> {
-        self.flock
-            .pets()
-            .iter()
-            .rev()
-            .filter(|pet| !pet.is_child())
-            .find(|pet| {
-                self.arts.get(&pet.id()).is_some_and(|art| {
-                    // D'abord sa place au dernier pas, avec de la marge : la
-                    // vue entre deux pas n'est calculée que pour ceux qui sont
-                    // tout près (une foule en compte des centaines).
-                    let (half, height) = art.body;
-                    let at = pet.position();
-                    let margin = 64.0;
-                    (p.x - at.x).abs() <= half + margin
-                        && p.y >= at.y - height - margin
-                        && p.y <= at.y + margin
-                        && hit_test(p, &pet.view(alpha), art)
-                })
-            })
-            .map(Pet::id)
     }
 
     fn set_realistic_physics(&mut self, on: bool) {
-        if self.settings.realistic_physics == on && self.flock.realistic() == on {
+        if self.settings.realistic_physics == on && self.live.realistic == on {
             return;
         }
         self.settings.realistic_physics = on;
-        self.flock.set_realistic(on);
+        self.live.realistic = on;
         self.save_settings();
     }
 
     fn set_collisions(&mut self, on: bool) {
-        if self.settings.collisions == on && self.flock.collisions() == on {
+        if self.settings.collisions == on && self.live.collisions == on {
             return;
         }
         self.settings.collisions = on;
-        self.flock.set_collisions(on);
+        self.live.collisions = on;
         self.save_settings();
     }
 
@@ -1679,38 +1149,25 @@ impl App {
             return;
         }
         self.settings.frontmost_only = on;
+        self.live.frontmost_only = on;
         self.save_settings();
-        self.refresh_windows(Instant::now());
     }
 
-    fn set_walk_under_dock(&mut self, event_loop: &ActiveEventLoop, on: bool) {
+    fn set_walk_under_dock(&mut self, on: bool) {
         if self.settings.walk_under_dock == on {
             return;
         }
         self.settings.walk_under_dock = on;
+        self.live.walk_under_dock = on;
         self.save_settings();
         // Lire le Dock demande l'autorisation d'Accessibilité : macOS
         // propose de l'accorder si Mouflon ne l'a pas encore.
         if on && !platform::request_accessibility() {
             log::info!("Marcher sous le Dock : en attente de l'autorisation d'Accessibilité");
         }
-        self.dock_logged = false;
-        // Le fil de relevé lit le Dock tout de suite (ou cesse de le lire).
+        // Le relevé lit le Dock tout de suite (ou cesse de le lire).
         if let Some(watcher) = &self.watcher {
             watcher.set_dock(on);
-        }
-        if !on {
-            self.dock_frame = None;
-        }
-        self.refresh_screens(event_loop);
-        self.refresh_windows(Instant::now());
-    }
-
-    /// Cet animal-là dit au revoir (le menu de son clic droit).
-    fn goodbye_pet(&mut self, id: u32) {
-        let input = self.input();
-        if self.flock.leave(id, &self.world, &input) && self.pointer.dragging == Some(id) {
-            self.pointer = Pointer::default();
         }
     }
 
@@ -1806,53 +1263,6 @@ impl App {
         }
     }
 
-    /// Le menu d'un animal, au clic droit (ou Contrôle-clic) sur lui.
-    fn open_pet_menu(&mut self, window: WindowId) {
-        if self.pointer.dragging.is_some() {
-            return;
-        }
-        let Some(id) = self.pet_of(window) else {
-            return;
-        };
-        let Some(pet) = self.flock.pets().iter().find(|p| p.id() == id) else {
-            return;
-        };
-        // Les personnages secondaires et ceux qui partent n'en ont pas.
-        if pet.is_child() || pet.is_leaving() {
-            return;
-        }
-        let name = pet.def().meta.name.clone();
-        let species = self
-            .library
-            .pets
-            .iter()
-            .position(|e| e.def.meta.id == pet.def().meta.id);
-        let state = PetMenuState {
-            paused: self.paused,
-            sounds: self.settings.sounds,
-            size: crate::settings::size_index_of(self.size_of(pet)),
-        };
-        let items = crate::menu::pet_menu(&name, state, crate::i18n::texts());
-        self.menu_pet = Some((id, species));
-        // Le clic n'est pas un « coucou », ni le début d'un glisser.
-        self.pointer.pressed = None;
-        self.pointer.window = None;
-        if let Some(stats) = &self.stats {
-            stats.note(format_args!("menu de n° {id}"));
-        }
-        // Cet animal attend qu'on ait choisi, sous le menu ; les autres
-        // continuent (le menu s'ouvre au prochain tour de la boucle, voir
-        // `platform::pop_up_menu`).
-        self.flock.hold_still(Some(id));
-        platform::pop_up_menu(&items);
-    }
-
-    /// Ce que fait l'article choisi dans le menu d'un animal.
-    fn pet_menu_action(&self, id: u32) -> Option<Action> {
-        let (pet, species) = self.menu_pet?;
-        PetChoice::from_id(id)?.action(pet, species)
-    }
-
     /// La vitrine de la CI, à son heure (voir [`Showcase`]).
     fn showcase(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
         let Some(showcase) = self.showcase.as_mut() else {
@@ -1909,490 +1319,223 @@ impl App {
         event_loop.exit();
     }
 
-    /// L'animal visé par un événement de la fenêtre `window` : celui sous
-    /// le curseur, si c'est la fenêtre d'un écran.
-    fn pet_of(&self, window: WindowId) -> Option<u32> {
-        self.scene.overlay(window)?;
-        self.pet_under_cursor()
-    }
+    // ——— Les essais ———
 
-    /// La fréquence du plus rapide des écrans.
-    fn refresh_monitors(&mut self) {
-        let fastest = self
-            .scene
-            .overlays()
-            .iter()
-            .map(|overlay| window_hz(&overlay.window, overlay.window.current_monitor().as_ref()))
-            .fold(0.0, f64::max);
-        if fastest > 0.0 {
-            self.refresh_hz = fastest;
+    /// Une étape de l'essai, notée au journal.
+    fn trial_step(&mut self, step: TrialStep) {
+        let name = |index: usize| {
+            self.library
+                .pets
+                .get(index)
+                .map_or("?", |entry| entry.def.meta.name.as_str())
+        };
+        match step {
+            TrialStep::Goodbye(index) => {
+                self.note(format_args!("essai : au revoir à un(e) {}", name(index)));
+            }
+            TrialStep::Add(index) => {
+                self.note(format_args!("essai : un(e) {} de plus", name(index)));
+            }
+            TrialStep::Crowd(count) => {
+                self.note(format_args!("essai de charge : {count} animaux"));
+            }
+        }
+        match step {
+            TrialStep::Goodbye(index) => self.goodbye_one(index),
+            TrialStep::Add(index) => self.spawn(index),
+            TrialStep::Crowd(count) => self.crowd(count),
         }
     }
 
-    /// Une image : simulation, position des fenêtres, rendu, prochain réveil.
-    /// `tick` : le battement de l'horloge de l'écran qui l'a réveillée (avec
-    /// l'heure d'affichage de l'image), s'il y en a un.
-    fn frame(&mut self, event_loop: &ActiveEventLoop, tick: Option<platform::Beat>) {
-        let now = Instant::now();
-        self.frame_body(event_loop, tick, now);
-        self.frame_time += now.elapsed();
+    /// Essai de charge : des animaux arrivent jusqu'à en avoir `count`, des
+    /// espèces du lancement à tour de rôle (dessins déjà prêts).
+    fn crowd(&mut self, count: usize) {
+        let mut kinds: Vec<usize> = Vec::new();
+        for pet in &self.flock.pets {
+            if let Some(i) = self
+                .library
+                .pets
+                .iter()
+                .position(|e| Arc::ptr_eq(&e.def, &pet.def))
+                && !kinds.contains(&i)
+            {
+                kinds.push(i);
+            }
+        }
+        if kinds.is_empty() {
+            kinds.push(
+                self.library
+                    .default_index(self.settings.default_pet.as_deref()),
+            );
+        }
+        let have = self.flock.pets.len();
+        for k in have..count {
+            self.spawn(kinds[k % kinds.len()]);
+        }
     }
 
-    fn frame_body(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        tick: Option<platform::Beat>,
-        now: Instant,
-    ) {
-        let shown_at = tick.map(|t| t.target);
-        let cadence = self.cadence;
-        // Pour le journal d'un essai : ce que dit l'horloge, le retard de la
-        // minuterie, les allocations de l'image.
-        let diagnosing = self.stats.is_some();
-        let mut beat_timing = None;
-        let mut timer_late = None;
-        let allocs_before = diagnosing.then(platform::alloc_counts);
-        if diagnosing {
-            platform::diag::frame_started();
-            match tick {
-                Some(t) => {
-                    let interval = (t.target - t.vsync).max(1e-4);
-                    let missed = self.last_vsync.map_or(0, |last| {
-                        (((t.vsync - last) / interval).round() as i64 - 1).max(0) as u32
-                    });
-                    beat_timing = Some(crate::stats::BeatTiming {
-                        latency: ((t.called - t.vsync) * 1000.0) as f32,
-                        queue: ((platform::diag::media_time() - t.called) * 1000.0) as f32,
-                        missed,
-                        coalesced: self.coalesced.replace(0),
-                    });
+    /// Le journal d'un essai : ce qu'il faut savoir avant la première image,
+    /// et les diagnostics. Renvoie de quoi mesurer les images.
+    fn open_journal(&mut self, begun: Instant, duration: Duration) -> FrameStats {
+        let stats = FrameStats::new(begun).with_journal();
+        stats.raw(format!(
+            "ESSAI Mouflon {} ({} s)",
+            env!("CARGO_PKG_VERSION"),
+            duration.as_secs_f32()
+        ));
+        stats.raw(format!(
+            "VERSION {} commit {} {}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("GITHUB_SHA").map_or("local", |sha| &sha[..sha.len().min(12)]),
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+        ));
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        stats.raw(format!(
+            "DEBUT {:.3} {}",
+            wall.as_secs_f64(),
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f %z")
+        ));
+        for line in platform::diag::system_info() {
+            stats.raw(line);
+        }
+        stats.raw(format!(
+            "REGLAGES taille {} sons {} collisions {} physique_realiste {} premier_plan {} dock {} surprises {} scene {} animaux {:?}",
+            self.settings.size_factor(),
+            self.settings.sounds,
+            self.live.collisions,
+            self.live.realistic,
+            self.settings.frontmost_only,
+            self.settings.walk_under_dock,
+            self.settings.surprises,
+            if std::env::var("MOUFLON_GPU").is_ok_and(|v| !v.is_empty() && v != "0") {
+                "gpu"
+            } else {
+                "calques"
+            },
+            crate::stats::trial_pets(),
+        ));
+        // Diagnostics : pile du fil des images quand une image tarde,
+        // ressources du processus, de ses fils et du système, allocations,
+        // notifications du système (voir `platform::diag`).
+        platform::set_alloc_counting(true);
+        platform::diag::register_main_thread();
+        if let Some(sender) = stats.sender() {
+            crate::stats::install_panic_hook(sender.clone(), begun);
+            let to_journal = sender.clone();
+            platform::diag::start(
+                begun,
+                Box::new(move |line| {
+                    let _ = to_journal.send(line);
+                }),
+            );
+            platform::diag::observe_system(move |line| {
+                let _ = sender.send(line);
+            });
+        }
+        self.notes = Some(stats.notes());
+        stats
+    }
+
+    /// L'affichage, en route : sur son propre fil si toutes les fenêtres
+    /// des écrans montrent la scène en calques (et que le fil peut être
+    /// lancé), ici sinon.
+    fn start_display(&mut self, stats: Option<FrameStats>, watcher: &Arc<Watcher>) {
+        let init = |stats| Init {
+            live: self.live,
+            dark: self.dark,
+            watcher: Arc::clone(watcher),
+            stats,
+            proxy: Arc::clone(&self.proxy),
+        };
+        // `MOUFLON_AFFICHAGE=principal` : l'affichage reste ici (pour comparer).
+        let here = std::env::var("MOUFLON_AFFICHAGE").is_ok_and(|v| v == "principal");
+        if cfg!(target_os = "macos") && self.windows.all_layers() && !here {
+            match DisplayThread::spawn(init(stats)) {
+                Some(thread) => {
+                    // Un écran branché plus tard sans calques resterait vide
+                    // plutôt que de faire venir le GPU sur ce fil.
+                    self.windows.set_layers_only(true);
+                    self.display = Displayer::Thread(thread);
+                    log::info!("affichage : calques Core Animation, sur son propre fil");
+                    if let Some(notes) = &self.notes {
+                        notes.raw("SCENE calques Core Animation, une fenêtre par écran, fil de l'affichage");
+                    }
+                    return;
                 }
                 None => {
-                    timer_late = self.next_frame.map(|planned| {
-                        now.saturating_duration_since(planned).as_secs_f32() * 1000.0
-                    });
+                    // Le journal des images est perdu avec le fil : on le dit.
+                    self.note(
+                        "fil de l'affichage impossible : images sur le fil principal, sans mesures",
+                    );
+                    self.display = Displayer::Here(Box::new(Here {
+                        display: Display::new(init(None)),
+                        beat: Rc::new(Cell::new(None)),
+                        coalesced: Rc::new(Cell::new(0)),
+                    }));
+                    return;
                 }
             }
         }
-        if let Some(t) = tick {
-            self.last_vsync = Some(t.vsync);
-        }
-        // Calé sur l'écran, on avance exactement du temps qui sépare deux
-        // images affichées : les petits retards du fil principal ne font plus
-        // varier la vitesse des animaux d'une image à l'autre.
-        let elapsed = match (shown_at, self.shown_at) {
-            (Some(at), Some(before)) if at > before => (at - before) as f32,
-            _ => now.duration_since(self.last_tick).as_secs_f32(),
-        };
-        self.shown_at = shown_at;
-        self.last_tick = now;
-        let mut phases = crate::stats::Phases::default();
-
-        if now >= self.next_screen_poll {
-            self.refresh_screens(event_loop);
-            self.refresh_monitors();
-            // Une horloge qui tourne mais ne bat plus (écran changé, réveil…) :
-            // on en refait une.
-            if self
-                .clock
-                .as_ref()
-                .is_some_and(platform::FrameClock::is_running)
-                && self
-                    .clock_beat
-                    .is_some_and(|beat| now.duration_since(beat) > SCREEN_POLL)
-            {
-                self.start_clock();
-            }
-            self.next_screen_poll = now + SCREEN_POLL;
-        }
-        self.apply_watch(event_loop, now);
-        let mut mark = Instant::now();
-        phases.watch = mark - now;
-
-        // Mise en route du lancement : les fenêtres sont ouvertes mais vides,
-        // les animaux attendent.
-        let settling = self.settle_until.is_some_and(|until| now < until);
-        if !settling && self.settle_until.take().is_some() {
-            log::info!("mise en route terminée : les animaux arrivent");
-            if let Some(stats) = &self.stats {
-                stats.note("mise en route terminée");
-            }
-        }
-
-        // Un essai fait partir un animal à mi-parcours, puis en fait venir un.
-        while !settling && self.trial_steps.first().is_some_and(|(at, _)| now >= *at) {
-            let (_, step) = self.trial_steps.remove(0);
-            self.trial_step(step);
-        }
-
-        let input = self.input();
-        let cursor = input.cursor;
-        if !settling && !self.paused {
-            self.surprise(now, &input);
-        }
-
-        // Glisser : on n'attrape l'animal qu'après un petit déplacement,
-        // un simple clic reste un « coucou ». Il est pris là où l'on a cliqué,
-        // et ce point reste sous le curseur.
-        if !settling
-            && let (Some(start), Some(c), None) =
-                (self.pointer.pressed, cursor, self.pointer.dragging)
-            && (c - start).length() > 3.0
-            && let Some(id) = self.pointer.window.and_then(|w| self.pet_of(w))
-            && let Some(pet) = self.flock.get_mut(id)
-        {
-            pet.grab(start, &self.world);
-            self.pointer.dragging = Some(id);
-            if let Some(stats) = &self.stats {
-                stats.note(format_args!(
-                    "n° {id} attrapé en {:.0},{:.0}",
-                    start.x, start.y
-                ));
-            }
-        }
-        if let (Some(id), Some(c)) = (self.pointer.dragging, cursor)
-            && let Some(pet) = self.flock.get_mut(id)
-        {
-            pet.drag_to(c);
-        }
-
-        let alpha = if self.paused || settling {
-            1.0
-        } else {
-            self.flock.advance(elapsed, &self.world, &input)
-        };
-        phases.sim = lap(&mut mark);
-        if !settling {
-            self.play_sounds();
-        }
-        phases.sounds = lap(&mut mark);
-        self.sync_pets();
-        self.sync_menu();
-        phases.windows = lap(&mut mark);
-
-        // La scène : chaque soucoupe, puis chaque animal, à sa place ; une
-        // seule transaction pour tout ce qui change (voir `Scene`).
-        self.scene.begin();
-        if !settling {
-            for saucer in self.flock.saucers() {
-                self.scene
-                    .show_saucer(saucer.id(), &saucer.view(), &self.style);
-            }
-            for pet in self.flock.pets() {
-                if let Some(art) = self.arts.get(&pet.id()) {
-                    self.scene
-                        .show_pet(pet.id(), art, &pet.view(alpha), &self.style);
-                }
-            }
-        }
-        let timings = self.scene.finish();
-        phases.paint += timings.paint + timings.decode;
-        phases.moves += timings.layers;
-        phases.worst_move = phases.worst_move.max(timings.layers);
-        phases.present += timings.commit;
-        phases.renders += timings.repainted;
-        if let Some(gpu) = self.scene.gpu_mut() {
-            let gpu_timings = gpu.take_timings();
-            phases.acquire = gpu_timings.acquire;
-            phases.worst_acquire = gpu_timings.worst_acquire;
-            phases.misses = gpu_timings.misses;
-        }
-
-        // Chaque fenêtre d'écran prend la souris au-dessus d'un animal (ou
-        // pendant qu'on en tient un), et la laisse passer ailleurs.
-        let mark = Instant::now();
-        let hits: Vec<bool> = self
-            .scene
-            .overlays()
-            .iter()
-            .map(|overlay| {
-                self.pointer.dragging.is_some()
-                    || cursor.is_some_and(|c| {
-                        overlay.rect.contains(c) && self.pet_at(c, alpha).is_some()
-                    })
-            })
-            .collect();
-        for (index, hit) in hits.into_iter().enumerate() {
-            // Le curseur arrive sur un animal : on va peut-être l'attraper.
-            if self.scene.set_hittest(index, hit) && hit && self.pointer.dragging.is_none() {
-                self.full_rate_until = Some(now + HOVER_FULL_RATE);
-            }
-        }
-        phases.hittest += mark.elapsed();
-        if !settling {
-            self.take_snapshots(now);
-        }
-
-        self.schedule(event_loop, now, settling);
-        if !settling {
-            self.showcase(event_loop, now);
-        }
-
-        let textures = self.scene.image_usage();
-        let (decoded, evicted) = self.scene.take_image_counts();
-        if let Some(stats) = &mut self.stats {
-            stats.set_textures(textures);
-            if decoded + evicted > 0 {
-                stats.counters.images_decoded += decoded;
-                stats.counters.images_evicted += evicted;
-            }
-            // Une fois par dessin (les animaux d'une espèce le partagent).
-            let mut arts: Vec<&Arc<PetArt>> = Vec::new();
-            for art in self.arts.values() {
-                if !arts.iter().any(|a| Arc::ptr_eq(a, art)) {
-                    arts.push(art);
-                }
-            }
-            stats.set_images(arts.iter().map(|a| a.image_bytes()).sum());
-            let pets = self
-                .flock
-                .pets()
-                .iter()
-                .take(crate::stats::DETAILED_PETS)
-                .map(|p| {
-                    let view = p.view(alpha);
-                    crate::stats::PetLine {
-                        id: p.id(),
-                        name: p.def().meta.name.as_str(),
-                        behavior: p.behavior_name(),
-                        frame: view.sprite_frame,
-                        x: view.ground.x,
-                        y: view.ground.y,
-                        vx: p.velocity().x,
-                        vy: p.velocity().y,
-                        support: match p.support() {
-                            mouflon_core::Support::Ground { .. } => 's',
-                            mouflon_core::Support::Air => 'a',
-                            mouflon_core::Support::Held => 't',
-                        },
-                        roll: view.pose.roll,
-                    }
-                });
-            // Durée d'une image de l'écran : ProMotion la change selon ce qui bouge.
-            let refresh = self
-                .clock
-                .as_ref()
-                .map_or(0.0, |clock| clock.frame_duration() * 1000.0);
-            let allocs = allocs_before.map_or((0, 0), |before| {
-                let after = platform::alloc_counts();
-                (
-                    after.main_allocs.saturating_sub(before.main_allocs),
-                    after.main_bytes.saturating_sub(before.main_bytes),
-                )
-            });
-            let record = crate::stats::FrameRecord {
-                started: now,
-                beat: beat_timing,
-                timer_late,
-                cadence,
-                refresh,
-                phases,
-                allocs,
-                events: std::mem::take(&mut self.window_events),
-            };
-            stats.record(&record, pets);
-            if self.trial_end.is_some_and(|end| now >= end) {
-                log::info!("essai terminé : {}", stats.finish());
-                event_loop.exit();
-            }
-        }
-    }
-
-    /// Les instantanés de la scène prévus (voir `snapshots`), à leur heure.
-    fn take_snapshots(&mut self, now: Instant) {
-        let Some((dir, times)) = &mut self.snapshots else {
-            return;
-        };
-        let Some(&at) = times.first() else {
-            return;
-        };
-        if now < at {
-            return;
-        }
-        times.remove(0);
-        let started = self
-            .stats
-            .as_ref()
-            .map_or(now, crate::stats::FrameStats::begun);
-        let name = format!(
-            "instantane-{:05.1}s",
-            now.duration_since(started).as_secs_f32()
-        );
-        let written = self.scene.snapshot(dir, &name, 1.0);
-        let took = now.elapsed();
+        self.display = Displayer::Here(Box::new(Here {
+            display: Display::new(init(stats)),
+            beat: Rc::new(Cell::new(None)),
+            coalesced: Rc::new(Cell::new(0)),
+        }));
         log::info!(
-            "instantané de la scène : {} image(s) en {} ms",
-            written.len(),
-            took.as_millis()
+            "affichage : {}, sur le fil principal",
+            if self.windows.all_layers() {
+                "calques Core Animation"
+            } else {
+                "GPU"
+            }
         );
-        if let Some(stats) = &self.stats {
-            stats.note(format_args!(
-                "instantané de la scène ({name}, {} image(s), {:.1} ms)",
-                written.len(),
-                took.as_secs_f32() * 1000.0
-            ));
+        if let Some(notes) = &self.notes {
+            notes.raw(if self.windows.all_layers() {
+                "SCENE calques Core Animation, une fenêtre par écran, fil principal"
+            } else {
+                "SCENE GPU, une fenêtre par écran, fil principal"
+            });
         }
     }
 
-    /// Prochain réveil : au battement de l'horloge de l'écran, à la cadence
-    /// voulue, ou par la minuterie quand l'horloge manque ou se tait.
-    fn schedule(&mut self, event_loop: &ActiveEventLoop, now: Instant, settling: bool) {
-        let moving = self.clock.as_ref().map_or(self.refresh_hz, |clock| {
-            self.refresh_hz.max(f64::from(clock.max_fps()))
-        });
-        // Le curseur sur un animal, ou le bouton appuyé : on va sans doute
-        // l'attraper. L'écran passe à pleine cadence d'avance (ProMotion met
-        // quelques images à monter de 60 à 120 Hz).
-        let anticipating =
-            self.pointer.pressed.is_some() || self.full_rate_until.is_some_and(|until| now < until);
-        let fps = if self.paused {
-            None
-        } else if settling || self.pointer.dragging.is_some() || anticipating {
-            Some(moving)
-        } else {
-            match self.flock.activity() {
-                Some(Activity::Moving) => {
-                    // Toute la cadence de l'écran pour un mouvement vif ; la
-                    // moitié (ProMotion) quand tous vont leur petit train.
-                    let needed = self.flock.smooth_rate();
-                    if f64::from(needed) >= moving {
-                        let hold = now + FULL_RATE_HOLD;
-                        self.full_rate_until =
-                            Some(self.full_rate_until.map_or(hold, |until| until.max(hold)));
-                    }
-                    if self.full_rate_until.is_some_and(|until| now < until) {
-                        Some(moving)
-                    } else {
-                        Some(moving_rate(needed, moving))
-                    }
-                }
-                Some(Activity::Idle) => Some(IDLE_FPS),
-                Some(Activity::Asleep) => Some(ASLEEP_FPS),
-                None => None,
-            }
-        };
-        self.cadence = fps.unwrap_or(0.0);
-        let Some(fps) = fps else {
-            // Rien ne bouge : l'horloge s'arrête, on passe de temps en temps.
-            if let Some(clock) = &self.clock {
-                clock.set_running(false);
-            }
-            self.shown_at = None;
-            let wake = Duration::from_millis(if self.paused { 250 } else { 500 });
-            self.next_frame = Some(now + wake);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
-            if self.stats.is_some() {
-                platform::diag::expect_frame(wake);
-            }
-            return;
-        };
-        let interval = Duration::from_secs_f64(1.0 / fps);
-        let wake = match &self.clock {
-            Some(clock) => {
-                clock.set_rate(fps as f32);
-                clock.set_running(true);
-                match self.clock_beat.map(|beat| now.duration_since(beat)) {
-                    // Tant que l'horloge bat, c'est elle qui réveille.
-                    Some(silent) if silent < CLOCK_SILENT => CLOCK_SILENT,
-                    // Muette depuis longtemps : l'écran dort, rien ne se voit.
-                    Some(silent) if silent > CLOCK_ASLEEP => Duration::from_millis(100),
-                    _ => interval,
+    /// Avant de quitter : l'affichage s'arrête (le journal d'un essai
+    /// interrompu reçoit son bilan et part sur le disque), et les fenêtres
+    /// des écrans ne seront jamais libérées (voir `keep_pet_window`).
+    pub fn shutdown(&mut self) {
+        self.display.stop();
+        self.windows.shutdown();
+    }
+
+    // ——— Ce que dit l'affichage ———
+
+    fn on_report(&mut self, event_loop: &ActiveEventLoop, report: Report) {
+        match report {
+            Report::Flock {
+                generation,
+                done,
+                pets,
+            } => self.flock_changed(generation, done, pets),
+            Report::Hittest(hits) => {
+                for (key, on) in hits {
+                    self.windows.set_hittest(key, on);
                 }
             }
-            None => interval,
-        };
-        self.next_frame = Some(now + wake);
-        event_loop.set_control_flow(ControlFlow::WaitUntil(now + wake));
-        if self.stats.is_some() {
-            // L'horloge qui bat amène l'image suivante dans un intervalle ;
-            // sinon, c'est la minuterie.
-            let clocked = self.clock.is_some() && wake == CLOCK_SILENT;
-            platform::diag::expect_frame(if clocked { interval } else { wake });
+            Report::PetMenu { id, def } => self.open_pet_menu(id, def),
+            Report::Trusted(trusted) => {
+                self.trusted = trusted;
+                // La fenêtre des réglages montre ce qui manque (ou plus).
+                platform::update_form(&crate::settings_window::values(&self.shown()));
+            }
+            Report::NeedClock => self.start_clock(),
+            Report::TrialOver => event_loop.exit(),
         }
     }
-}
-
-/// Cadence pour des animaux qui bougent : la plus lente qui divise celle de
-/// l'écran (`full`) sans descendre sous celle qu'il leur faut (`needed`,
-/// voir `Pet::smooth_rate`). Un diviseur : l'écran montre chaque image le
-/// même nombre de fois, et le mouvement reste régulier.
-fn moving_rate(needed: f32, full: f64) -> f64 {
-    let needed = f64::from(needed);
-    if !needed.is_finite() || needed >= full {
-        return full;
-    }
-    let divisor = (full / needed.max(1.0)).floor().max(1.0);
-    full / divisor
-}
-
-/// Ce sur quoi se tient une surface, pour le journal d'un essai.
-fn surface_name(
-    world: &World,
-    windows: &[platform::OsWindow],
-    surface: mouflon_core::world::SurfaceId,
-) -> String {
-    if world
-        .surface(surface)
-        .is_some_and(|s| s.kind == mouflon_core::SurfaceKind::Floor)
-    {
-        return "le sol de l'écran".to_owned();
-    }
-    if let Some(pet) = mouflon_core::physics::surface_pet(surface) {
-        return format!("le dos de n° {pet}");
-    }
-    let window = surface >> 8;
-    if window == mouflon_core::DOCK_ID {
-        return "le Dock".to_owned();
-    }
-    match windows.iter().find(|w| w.id == window) {
-        Some(w) => format!(
-            "la fenêtre n° {} de {} (niveau {}, {:.0}×{:.0} en {:.0},{:.0})",
-            w.id, w.owner, w.layer, w.frame.w, w.frame.h, w.frame.x, w.frame.y
-        ),
-        None => format!("la fenêtre n° {window} (plus au relevé)"),
-    }
-}
-
-/// Un événement d'un animal, pour le journal d'un essai.
-fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
-    match event {
-        PetEvent::Landed { impact } => format!("atterrit à {impact:.0} pt/s"),
-        PetEvent::Poked => "touché du bout de la souris".to_owned(),
-        PetEvent::Thrown { speed } => format!("lancé à {speed:.0} pt/s"),
-        PetEvent::Bumped { speed } => format!("heurté, repart à {speed:.0} pt/s"),
-        PetEvent::Met { other } => format!("rencontre n° {other}"),
-        PetEvent::Startled => "sursaute (pointeur rapide)".to_owned(),
-        PetEvent::Napping => "s'endort (utilisateur parti)".to_owned(),
-        PetEvent::Woken => "se réveille (utilisateur revenu)".to_owned(),
-        PetEvent::Sound { sound, clip } => format!(
-            "son {} ({})",
-            pet.def()
-                .sounds
-                .get(*sound)
-                .map_or("?", |s| s.name.as_str()),
-            clip + 1
-        ),
-    }
-}
-
-/// Temps écoulé depuis `mark`, qui passe à maintenant.
-fn lap(mark: &mut Instant) -> Duration {
-    let now = Instant::now();
-    let lap = now - *mark;
-    *mark = now;
-    lap
-}
-
-/// Fréquence de l'écran d'une fenêtre, en images par seconde : celle que
-/// donne macOS, sinon celle de winit, sinon 60.
-fn window_hz(window: &Window, monitor: Option<&MonitorHandle>) -> f64 {
-    platform::window_max_fps(window)
-        .or_else(|| {
-            monitor
-                .and_then(MonitorHandle::refresh_rate_millihertz)
-                .map(|mhz| f64::from(mhz) / 1000.0)
-        })
-        .map_or(60.0, |hz| hz.clamp(30.0, 240.0))
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -2416,81 +1559,21 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // Essai (MOUFLON_ESSAI) : journal complet dès le début.
         let trial = crate::stats::trial();
+        let mut stats = None;
         if let Some(duration) = trial {
-            let stats = crate::stats::FrameStats::new(begun).with_journal();
-            stats.raw(format!(
-                "ESSAI Mouflon {} ({} s)",
-                env!("CARGO_PKG_VERSION"),
-                duration.as_secs_f32()
-            ));
             if crate::stats::trial_collisions() {
-                self.flock.set_collisions(true);
+                self.live.collisions = true;
             }
-            stats.raw(format!(
-                "VERSION {} commit {} {}",
-                env!("CARGO_PKG_VERSION"),
-                option_env!("GITHUB_SHA").map_or("local", |sha| &sha[..sha.len().min(12)]),
-                if cfg!(debug_assertions) {
-                    "debug"
-                } else {
-                    "release"
-                },
-            ));
-            let wall = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            stats.raw(format!(
-                "DEBUT {:.3} {}",
-                wall.as_secs_f64(),
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f %z")
-            ));
-            for line in platform::diag::system_info() {
-                stats.raw(line);
-            }
-            stats.raw(format!(
-                "REGLAGES taille {} sons {} collisions {} physique_realiste {} premier_plan {} dock {} surprises {} scene {} animaux {:?}",
-                self.settings.size_factor(),
-                self.settings.sounds,
-                self.flock.collisions(),
-                self.flock.realistic(),
-                self.settings.frontmost_only,
-                self.settings.walk_under_dock,
-                self.settings.surprises,
-                if std::env::var("MOUFLON_GPU").is_ok_and(|v| !v.is_empty() && v != "0") {
-                    "gpu"
-                } else {
-                    "calques"
-                },
-                crate::stats::trial_pets(),
-            ));
-            // Diagnostics : pile du fil principal quand une image tarde,
-            // ressources du processus, de ses fils et du système, allocations,
-            // notifications du système (voir `platform::diag`).
-            platform::set_alloc_counting(true);
-            platform::diag::register_main_thread();
-            if let Some(sender) = stats.sender() {
-                crate::stats::install_panic_hook(sender.clone(), begun);
-                let to_journal = sender.clone();
-                platform::diag::start(
-                    begun,
-                    Box::new(move |line| {
-                        let _ = to_journal.send(line);
-                    }),
-                );
-                platform::diag::observe_system(move |line| {
-                    let _ = sender.send(line);
-                });
-            }
-            self.stats = Some(stats);
+            stats = Some(self.open_journal(begun, duration));
         }
         // Le relevé des fenêtres (et du Dock) commence tout de suite, à côté.
-        let watcher = Watcher::start(
+        let watcher = Arc::new(Watcher::start(
             self.settings.walk_under_dock,
             self.library.dir().map(std::path::Path::to_path_buf),
-            self.stats
+            self.notes
                 .as_ref()
-                .and_then(|s| Some((s.sender()?, s.begun()))),
-        );
+                .and_then(|notes| Some((notes.sender()?, notes.begun()))),
+        ));
         // Ce que le système dit de l'ouverture de session, relu à côté.
         if platform::login_item_available() {
             self.login = platform::LoginItem::Off;
@@ -2514,7 +1597,7 @@ impl ApplicationHandler<UserEvent> for App {
             starters = vec![index; self.settings.start_count.clamp(1, 32) as usize];
         }
         // Leurs dessins se décodent dès maintenant, une espèce par fil, pendant
-        // que le fil principal crée le menu et met le GPU en route.
+        // que le fil principal crée le menu et met l'affichage en route.
         let species = self.decode_ahead(&starters);
 
         // Le menu d'un animal et la fenêtre des réglages : leurs événements
@@ -2551,8 +1634,8 @@ impl ApplicationHandler<UserEvent> for App {
         self.sync_menu();
 
         // Préchargement, avant la première image : dessins des animaux du
-        // lancement, GPU, sons, premier relevé des fenêtres. Rien de tout
-        // cela ne doit tomber pendant la première chute.
+        // lancement, affichage, sons, premier relevé des fenêtres. Rien de
+        // tout cela ne doit tomber pendant la première chute.
         let mut mark = Instant::now();
         let mut steps = vec![("menu", mark - begun)];
         if self.settings.sounds {
@@ -2560,27 +1643,35 @@ impl ApplicationHandler<UserEvent> for App {
         }
         steps.push(("sons", lap(&mut mark)));
         // Le premier relevé, et les écrans : une fenêtre transparente par
-        // écran (voir `Scene`).
+        // écran, où l'affichage pose la scène.
         let first = watcher.wait_first(Duration::from_millis(500));
-        self.watcher = Some(watcher);
-        self.refresh_screens(event_loop);
-        match first {
-            Some(snapshot) => self.apply_snapshot(event_loop, snapshot, Instant::now()),
-            None => self.refresh_windows(Instant::now()),
+        self.watcher = Some(Arc::clone(&watcher));
+        self.screens = system_screens(event_loop);
+        self.windows.sync(event_loop, &self.screens);
+        if let Some(dark) = self.windows.dark() {
+            self.dark = dark;
         }
-        steps.push(("relevé et scène", lap(&mut mark)));
+        self.next_screen_poll = Instant::now() + SCREEN_POLL;
+        steps.push(("relevé et fenêtres", lap(&mut mark)));
+        self.start_display(stats, &watcher);
+        self.live_sent = Some(self.live);
+        self.send_screens();
+        if let Some(snapshot) = first {
+            self.send(Command::Survey(snapshot));
+        }
+        steps.push(("affichage", lap(&mut mark)));
         // Le GPU, seulement s'il sert (sans calques Core Animation).
-        if let Some(gpu) = self.scene.gpu_mut() {
+        if let Displayer::Here(here) = &mut self.display
+            && let Some(gpu) = here.display.scene_mut().gpu_mut()
+        {
             gpu.prepare_ahead();
             if let Some(gpu) = gpu.describe() {
                 log::info!("GPU : {gpu}");
-                if let Some(stats) = &self.stats {
-                    stats.raw(format!("GPU {gpu}"));
+                if let Some(notes) = &self.notes {
+                    notes.raw(format!("GPU {gpu}"));
                 }
             }
             steps.push(("GPU", lap(&mut mark)));
-        } else if let Some(stats) = &self.stats {
-            stats.raw("SCENE calques Core Animation, une fenêtre par écran");
         }
         // Les dessins décodés à côté : on attend ceux qui ne sont pas prêts.
         for entry in &species {
@@ -2590,26 +1681,18 @@ impl ApplicationHandler<UserEvent> for App {
         for &i in &starters {
             self.spawn(i);
         }
+        // Leurs premières images se préparent, puis ils arrivent.
+        self.send(Command::Start { settle: SETTLE });
         steps.push(("animaux", lap(&mut mark)));
-        // Leurs premières images, prêtes avant qu'ils n'arrivent.
-        for pet in self.flock.pets() {
-            if let Some(art) = self.arts.get(&pet.id()) {
-                self.scene.warm_up(art, &pet.view(1.0), &self.style);
-            }
-        }
-        steps.push(("premières images", lap(&mut mark)));
         self.start_clock();
-        self.settle_until = Some(Instant::now() + SETTLE);
-        self.last_tick = Instant::now();
         // Une surprise tout de suite, pour la voir (`MOUFLON_SURPRISE=vent`
-        // ou `soucoupe`) ; sinon, la première au hasard.
+        // ou `soucoupe`).
         let soon = Instant::now() + SETTLE + Duration::from_secs(4);
         match std::env::var("MOUFLON_SURPRISE").ok().as_deref() {
-            Some("vent") => self.surprises.push((soon, Some(Surprise::Wind))),
-            Some("soucoupe") => self.surprises.push((soon, Some(Surprise::Saucer))),
+            Some("vent") => self.send(Command::Surprise(soon, Surprise::Wind)),
+            Some("soucoupe") => self.send(Command::Surprise(soon, Surprise::Saucer)),
             _ => {}
         }
-        self.schedule_surprise(Instant::now());
         let detail: Vec<String> = steps
             .iter()
             .map(|(step, time)| format!("{step} {}", time.as_millis()))
@@ -2624,7 +1707,7 @@ impl ApplicationHandler<UserEvent> for App {
         // fin ; sinon, toutes les trente secondes pendant cinq minutes.
         if let Some(dir) = std::env::var_os("MOUFLON_INSTANTANES").filter(|d| !d.is_empty()) {
             let start = Instant::now();
-            let times: Vec<Instant> = match trial {
+            let mut times: Vec<Instant> = match trial {
                 Some(d) => [
                     Duration::from_secs(4),
                     Duration::from_secs(12),
@@ -2640,18 +1723,17 @@ impl ApplicationHandler<UserEvent> for App {
                     .map(|k| start + Duration::from_secs(30 * k))
                     .collect(),
             };
-            let mut times = times;
             times.sort();
-            self.snapshots = Some((dir.into(), times));
+            self.send(Command::Snapshots(dir.into(), times));
         }
         if let Some(duration) = trial {
             log::info!("essai de {:.1} s", duration.as_secs_f32());
-            self.trial_end = Some(Instant::now() + duration);
-            // À la moitié, puis aux trois quarts, le dernier arrivé d'une
-            // espèce s'en va (sa fenêtre se ferme) et un autre arrive : de la
-            // même espèce la première fois, la seconde fois Aquarelle (des
-            // morceaux peints sur un squelette), pour passer aussi par elle.
             let start = Instant::now();
+            self.send(Command::TrialEnd(start + duration));
+            // À la moitié, puis aux trois quarts, le dernier arrivé d'une
+            // espèce s'en va et un autre arrive : de la même espèce la
+            // première fois, la seconde fois Aquarelle (des morceaux peints
+            // sur un squelette), pour passer aussi par elle.
             let mut kinds: Vec<usize> = Vec::new();
             for &i in &starters {
                 if !kinds.contains(&i) {
@@ -2688,15 +1770,17 @@ impl ApplicationHandler<UserEvent> for App {
                         .push((start + at + Duration::from_secs(5), TrialStep::Add(arrives)));
                 }
             }
+            self.trial_steps.sort_by_key(|(at, _)| *at);
             // Les surprises passent aussi : un coup de vent au premier tiers,
             // une soucoupe aux deux tiers.
-            self.surprises
-                .push((start + duration / 3, Some(Surprise::Wind)));
-            self.surprises
-                .push((start + duration * 2 / 3, Some(Surprise::Saucer)));
-            if let Some(stats) = &self.stats {
-                for (i, screen) in self.world.screens().iter().enumerate() {
-                    stats.raw(format!(
+            self.send(Command::Surprise(start + duration / 3, Surprise::Wind));
+            self.send(Command::Surprise(
+                start + duration * 2 / 3,
+                Surprise::Saucer,
+            ));
+            if let Some(notes) = &self.notes {
+                for (i, screen) in self.screens.iter().enumerate() {
+                    notes.raw(format!(
                         "ECRAN {i} {:.0}x{:.0} en {:.0},{:.0} echelle {}",
                         screen.frame.w,
                         screen.frame.h,
@@ -2705,7 +1789,7 @@ impl ApplicationHandler<UserEvent> for App {
                         screen.scale
                     ));
                 }
-                stats.raw(format!(
+                notes.raw(format!(
                     "PRECHARGEMENT {} ms ({})",
                     begun.elapsed().as_millis(),
                     detail.join(", ")
@@ -2730,13 +1814,13 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::GalleryPreview(..) => "aperçu de la galerie prêt",
             UserEvent::Ui(_) => "menu d'un animal ou réglages",
             UserEvent::LoginItem(_) => "ouverture de session relue",
+            UserEvent::Display(_) => "nouvelles de l'affichage",
         };
-        if let Some(stats) = &mut self.stats {
-            if matches!(event, UserEvent::Frame) {
-                stats.counters.beats += 1;
-            } else {
-                stats.counters.user += 1;
-            }
+        // Les battements sont comptés par l'affichage.
+        if let Some(notes) = &self.notes
+            && !matches!(event, UserEvent::Frame)
+        {
+            Counters::bump(&notes.counters.user);
         }
         match event {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -2746,15 +1830,14 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::Frame => {
-                if let Some(tick) = self.beat.take() {
-                    self.clock_beat = Some(Instant::now());
-                    if self.started
-                        && self
-                            .clock
-                            .as_ref()
-                            .is_some_and(platform::FrameClock::is_running)
-                    {
-                        self.frame(event_loop, Some(tick));
+                if let Displayer::Here(here) = &mut self.display
+                    && let Some(tick) = here.beat.take()
+                {
+                    here.display.beat_received();
+                    if here.display.started() && here.display.clock_running() {
+                        let frame = Instant::now();
+                        here.display.frame(Some(tick), here.coalesced.replace(0));
+                        self.frame_time += frame.elapsed();
                     }
                 }
             }
@@ -2772,10 +1855,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Ui(platform::UiEvent::MenuClosed) => {
                 // L'animal du menu repart d'où il était.
-                self.flock.hold_still(None);
-                if let Some(stats) = &self.stats {
-                    stats.note("menu refermé");
-                }
+                self.send(Command::MenuClosed);
             }
             UserEvent::Ui(event) => {
                 let action = match event {
@@ -2788,6 +1868,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.handle_action(event_loop, action);
                 }
             }
+            UserEvent::Display(report) => self.on_report(event_loop, report),
         }
         self.handler_done(kind, started);
     }
@@ -2800,15 +1881,14 @@ impl ApplicationHandler<UserEvent> for App {
     ) {
         let started = self.handler_start();
         let kind = window_event_kind(&event);
-        self.window_events += 1;
-        if let Some(stats) = &mut self.stats {
-            let c = &mut stats.counters;
+        if let Some(notes) = &self.notes {
+            let c = &notes.counters;
             match &event {
-                WindowEvent::CursorMoved { .. } => c.cursor_moves += 1,
-                WindowEvent::MouseInput { .. } => c.clicks += 1,
-                WindowEvent::CursorEntered { .. } => c.hovers += 1,
-                WindowEvent::RedrawRequested => c.redraws += 1,
-                _ => c.other_window += 1,
+                WindowEvent::CursorMoved { .. } => Counters::bump(&c.cursor_moves),
+                WindowEvent::MouseInput { .. } => Counters::bump(&c.clicks),
+                WindowEvent::CursorEntered { .. } => Counters::bump(&c.hovers),
+                WindowEvent::RedrawRequested => Counters::bump(&c.redraws),
+                _ => Counters::bump(&c.other_window),
             }
         }
         self.on_window_event(window_id, event);
@@ -2817,20 +1897,47 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let started = self.handler_start();
-        if let Some(stats) = &mut self.stats {
-            stats.counters.waits += 1;
+        if let Some(notes) = &self.notes {
+            Counters::bump(&notes.counters.waits);
         }
-        // L'horloge de l'écran donne le rythme ; sans elle (ou si elle se
-        // tait), on avance ici, à l'heure prévue par la minuterie.
+        if !self.started {
+            self.handler_done("avant l'attente", started);
+            return;
+        }
         let now = Instant::now();
-        if self.started
-            && !self.clocked(now)
-            && self
-                .next_frame
-                .is_none_or(|next| now + Duration::from_millis(1) >= next)
-        {
-            self.frame(event_loop, None);
+        if now >= self.next_screen_poll {
+            self.poll(event_loop, now);
         }
+        // Un essai fait partir un animal à mi-parcours, puis en fait venir un.
+        while self.trial_steps.first().is_some_and(|(at, _)| now >= *at) {
+            let (_, step) = self.trial_steps.remove(0);
+            self.trial_step(step);
+        }
+        self.showcase(event_loop, now);
+        // L'affichage sur ce fil : l'horloge de l'écran donne le rythme ;
+        // sans elle (ou si elle se tait), on avance ici, à l'heure prévue.
+        if let Displayer::Here(here) = &mut self.display
+            && here.display.timer_due(Instant::now())
+        {
+            let frame = Instant::now();
+            here.display.frame(None, 0);
+            self.frame_time += frame.elapsed();
+        }
+        // Prochain réveil : le prochain relevé, la prochaine étape de
+        // l'essai, la vitrine, la prochaine image (affichage sur ce fil).
+        let mut next = self.next_screen_poll;
+        if let Some((at, _)) = self.trial_steps.first() {
+            next = next.min(*at);
+        }
+        if let Some(showcase) = &self.showcase {
+            next = next.min(showcase.at);
+        }
+        if let Displayer::Here(here) = &self.display
+            && let Some(at) = here.display.wake_at()
+        {
+            next = next.min(at);
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
         self.handler_done("avant l'attente", started);
     }
 }
@@ -2839,36 +1946,42 @@ impl App {
     /// Début d'un gestionnaire d'événements (pour noter ceux qui sont lents).
     fn handler_start(&mut self) -> Option<Instant> {
         self.frame_time = Duration::ZERO;
-        self.stats.is_some().then(Instant::now)
+        self.notes.is_some().then(Instant::now)
     }
 
     /// Fin d'un gestionnaire : au-delà de 4 ms hors de la préparation des
     /// images (notée à part), il est noté au journal d'un essai.
     fn handler_done(&mut self, kind: &str, started: Option<Instant>) {
-        let (Some(started), Some(stats)) = (started, self.stats.as_mut()) else {
+        let (Some(started), Some(notes)) = (started, self.notes.as_ref()) else {
             return;
         };
         let other = started.elapsed().saturating_sub(self.frame_time);
         if other > Duration::from_millis(4) {
             let ms = other.as_secs_f32() * 1000.0;
-            stats.counters.slow_handlers += 1;
-            stats.counters.slowest_handler = stats.counters.slowest_handler.max(ms);
-            stats.note(format_args!("gestionnaire lent : {kind} {ms:.1} ms"));
+            Counters::bump(&notes.counters.slow_handlers);
+            notes
+                .counters
+                .slowest_handler_us
+                .fetch_max((ms * 1000.0) as u32, std::sync::atomic::Ordering::Relaxed);
+            notes.note(format_args!("gestionnaire lent : {kind} {ms:.1} ms"));
         }
     }
 
     fn on_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
+        // Seules les fenêtres des écrans parlent à l'affichage.
+        let Some(screen) = self.windows.get(window_id) else {
+            return;
+        };
+        let key = screen.info.key;
         match event {
             // Le curseur arrive sur un animal : on va peut-être l'attraper.
-            WindowEvent::CursorEntered { .. } => {
-                self.full_rate_until = Some(Instant::now() + HOVER_FULL_RATE);
-            }
+            WindowEvent::CursorEntered { .. } => self.display.send_quiet(Command::Hover),
             // Clic droit : le menu de l'animal.
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
                 ..
-            } => self.open_pet_menu(window_id),
+            } => self.send(Command::Menu),
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -2878,64 +1991,50 @@ impl App {
                 // Mac. Rien n'est appuyé ensuite : le bouton relâché (si le
                 // menu le laisse passer) n'est pas un « coucou ».
                 ElementState::Pressed if platform::control_key_down() => {
-                    self.open_pet_menu(window_id);
+                    self.send(Command::Menu);
                 }
-                ElementState::Pressed => {
-                    self.pointer.window = Some(window_id);
-                    self.pointer.pressed = self.cursor();
-                    self.next_frame = None;
-                    if let Some(stats) = &self.stats {
-                        stats.note(format_args!(
-                            "souris appuyée sur n° {:?}",
-                            self.pet_of(window_id)
-                        ));
-                    }
-                }
-                ElementState::Released => {
-                    self.next_frame = None;
-                    if let Some(stats) = &self.stats {
-                        stats.note("souris relâchée");
-                    }
-                    let input = self.input();
-                    if let Some(id) = self.pointer.dragging.take() {
-                        if let Some(pet) = self.flock.get_mut(id) {
-                            pet.release(&self.world);
-                        }
-                    } else if self.pointer.pressed.is_some()
-                        && let Some(id) = self.pet_of(window_id)
-                        && let Some(pet) = self.flock.get_mut(id)
-                    {
-                        pet.poke(&self.world, &input);
-                    }
-                    self.pointer.pressed = None;
-                    self.pointer.window = None;
-                }
+                ElementState::Pressed => self.send(Command::Press(self.cursor)),
+                ElementState::Released => self.send(Command::Release(self.cursor)),
             },
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(overlay) = self.scene.overlay(window_id) {
-                    let local = position.to_logical::<f64>(overlay.scale);
-                    self.pointer.cursor = Some(Vec2::new(
-                        overlay.rect.x + local.x as f32,
-                        overlay.rect.y + local.y as f32,
-                    ));
+                self.cursor = self.windows.to_global(window_id, position);
+                // Sur ce fil, l'affichage prend aussi la position des
+                // événements (au cas où le système ne la donnerait pas) ;
+                // sur le sien, il la demande lui-même au système.
+                if matches!(self.display, Displayer::Here(_))
+                    && let Some(cursor) = self.cursor
+                {
+                    self.display.send_quiet(Command::Cursor(cursor));
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.scene.scale_changed(window_id, scale_factor);
+                if self.windows.scale_changed(window_id, scale_factor) {
+                    self.send_screens();
+                }
             }
-            WindowEvent::Resized(size) => {
-                self.scene.resized(window_id, size.width, size.height);
-            }
-            WindowEvent::DroppedFile(path) => {
-                let target = self.pet_of(window_id);
-                self.install_pet(&path, target);
-            }
+            WindowEvent::Resized(size) => self.send(Command::Resized {
+                key,
+                width: size.width,
+                height: size.height,
+            }),
+            WindowEvent::DroppedFile(path) => self.install_pet(&path),
             // Les animaux se redessinent d'eux-mêmes (le thème fait partie
             // de ce qui les identifie).
-            WindowEvent::ThemeChanged(theme) => self.style.dark = theme == Theme::Dark,
+            WindowEvent::ThemeChanged(theme) => {
+                self.dark = theme == Theme::Dark;
+                self.send(Command::Dark(self.dark));
+            }
             _ => {}
         }
     }
+}
+
+/// Temps écoulé depuis `mark`, qui passe à maintenant.
+fn lap(mark: &mut Instant) -> Duration {
+    let now = Instant::now();
+    let lap = now - *mark;
+    *mark = now;
+    lap
 }
 
 /// Le nom d'un événement de fenêtre, pour le journal d'un essai.
@@ -2954,24 +2053,5 @@ fn window_event_kind(event: &WindowEvent) -> &'static str {
         WindowEvent::Focused(_) => "focus",
         WindowEvent::Occluded(_) => "occultée",
         _ => "autre événement de fenêtre",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::moving_rate;
-
-    #[test]
-    fn slow_pets_halve_a_promotion_screen_but_never_drop_below_their_need() {
-        // ProMotion : la moitié pour un animal au pas.
-        assert_eq!(moving_rate(60.0, 120.0), 60.0);
-        // Un écran à 60 Hz ne change pas.
-        assert_eq!(moving_rate(60.0, 60.0), 60.0);
-        // Toujours un diviseur de la cadence de l'écran, jamais sous le besoin.
-        assert_eq!(moving_rate(60.0, 144.0), 72.0);
-        assert_eq!(moving_rate(60.0, 240.0), 60.0);
-        assert_eq!(moving_rate(60.0, 90.0), 90.0);
-        // Un mouvement vif : toute la cadence.
-        assert_eq!(moving_rate(f32::INFINITY, 120.0), 120.0);
     }
 }

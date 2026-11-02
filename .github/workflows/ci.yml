@@ -96,7 +96,7 @@ jobs:
       - name: Essai de charge
         continue-on-error: true
         run: |
-          MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_INSTANTANES=1 perl -e 'alarm 420; exec @ARGV' \
+          MOUFLON_ESSAI_CI=1 perl -e 'alarm 420; exec @ARGV' \
             bash "tools/essai/Essai de charge.command" | tee essai-charge-console.log
           grep -q "essai terminé" essais/*-charge/sortie.log
 

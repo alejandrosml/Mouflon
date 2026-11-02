@@ -7,6 +7,7 @@
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
+use objc2_app_kit::NSViewLayerContentsRedrawPolicy;
 use objc2_core_foundation::{
     CFData, CFRetained, CFType, CGAffineTransform, CGPoint, CGRect, CGSize,
 };
@@ -80,6 +81,13 @@ impl SceneImage {
 pub struct SceneLayer {
     layer: Retained<CALayer>,
 }
+
+// SAFETY: Core Animation permet de changer des calques depuis n'importe
+// quel fil, un seul à la fois. Les calques de la scène sont faits sur le fil
+// principal (la racine, posée dans la fenêtre d'un écran) ou sur le fil de
+// l'affichage, et une fois donnés au fil de l'affichage, lui seul y touche,
+// dans ses propres transactions.
+unsafe impl Send for SceneLayer {}
 
 impl Default for SceneLayer {
     fn default() -> Self {
@@ -184,12 +192,17 @@ pub fn scene_transaction<R>(change: impl FnOnce() -> R) -> R {
 }
 
 /// Pose la racine des calques de la scène dans une fenêtre, sur toute sa
-/// taille, dans le repère ordinaire de Core Animation sur Mac : origine en
-/// bas à gauche, y vers le haut, en points (une image s'y affiche à
-/// l'endroit, à l'écran comme dans [`render_scene`]). Elle suit la taille
-/// de la fenêtre.
+/// taille, dans le repère de sa vue : celle de winit est retournée
+/// (`isFlipped`), et AppKit retourne son calque — origine en haut à gauche,
+/// y vers le bas, en points ; une image s'y affiche à l'endroit. Elle suit
+/// la taille de la fenêtre.
 pub fn attach_scene(window: &impl HasWindowHandle) -> Option<SceneLayer> {
     let (view, _) = super::view_and_window(window)?;
+    // La vue ne dessine jamais dans son propre calque (ceux de la scène
+    // portent tout) : pas d'image de la taille de l'écran derrière eux, et
+    // rien qu'AppKit ait à redessiner — surtout pas pendant une transaction
+    // envoyée par le fil de l'affichage.
+    view.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::Never);
     view.setWantsLayer(true);
     let host = view.layer()?;
     let root = SceneLayer::new();
@@ -203,7 +216,12 @@ pub fn attach_scene(window: &impl HasWindowHandle) -> Option<SceneLayer> {
 
 /// Dessine sur le processeur ce que montrent les calques d'une scène de
 /// `width` × `height` points, à `scale` pixels par point : de quoi vérifier
-/// ce qui est à l'écran (essais). Pixels RVBA prémultipliés.
+/// ce qui est à l'écran (essais). Pixels RVBA prémultipliés, la première
+/// ligne en haut.
+///
+/// La racine est dessinée seule, sans le calque retourné de la vue qui la
+/// porte à l'écran : le dessin est retourné de même ici, et l'image est
+/// celle de l'écran (les essais de la CI comparent les deux).
 #[must_use]
 pub fn render_scene(
     root: &SceneLayer,
@@ -235,7 +253,8 @@ pub fn render_scene(
             info,
         )
     }?;
-    CGContext::scale_ctm(Some(&context), scale, scale);
+    CGContext::translate_ctm(Some(&context), 0.0, h as f64);
+    CGContext::scale_ctm(Some(&context), scale, -scale);
     root.layer.renderInContext(&context);
     drop(context);
     for px in pixels.as_chunks_mut::<4>().0 {

@@ -19,8 +19,13 @@ qui se passait sur le Mac au moment des à-coups.
 
 import os
 import re
+import shutil
 import statistics
+import struct
+import subprocess
 import sys
+import tempfile
+import zlib
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -658,6 +663,118 @@ def report_around(trial, hitches, folder):
             print(f"  {line}")
 
 
+def read_png(path):
+    """Une image PNG 8 bits RVB ou RVBA sans entrelacement : (largeur, hauteur,
+    composantes, lignes) ; None sinon. Pour de petites images (voir `shrunk`)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos, header, chunks = 8, None, []
+    while pos + 8 <= len(data):
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            chunks.append(body)
+        elif kind == b"IEND":
+            break
+    if not header:
+        return None
+    width, height, depth, color, _, _, interlace = header
+    if depth != 8 or color not in (2, 6) or interlace:
+        return None
+    n = 3 if color == 2 else 4
+    raw, stride, rows, prev, i = zlib.decompress(b"".join(chunks)), width * n, [], bytearray(width * n), 0
+    for _ in range(height):
+        kind, line = raw[i], bytearray(raw[i + 1:i + 1 + stride])
+        i += 1 + stride
+        for x in range(stride):
+            a = line[x - n] if x >= n else 0
+            b = prev[x]
+            if kind == 1:
+                line[x] = (line[x] + a) & 255
+            elif kind == 2:
+                line[x] = (line[x] + b) & 255
+            elif kind == 3:
+                line[x] = (line[x] + ((a + b) >> 1)) & 255
+            elif kind == 4:
+                c = prev[x - n] if x >= n else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append(line)
+        prev = line
+    return width, height, n, rows
+
+
+def shrunk(path, folder):
+    """L'image réduite à 160 pixels de côté au plus (`sips`, sur Mac), lue."""
+    small = os.path.join(folder, os.path.basename(path))
+    try:
+        subprocess.run(["sips", "-Z", "160", path, "--out", small], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return read_png(small)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def ink_height(image, alpha):
+    """Hauteur moyenne (0 en haut, 1 en bas) de ce qui est dessiné, hors de la
+    barre des menus et du Dock, et part des pixels dessinés : par leur
+    opacité (`alpha`, un instantané) ou leur clarté (une capture sur fond noir)."""
+    width, height, n, rows = image
+    total = weight = 0.0
+    ink = 0
+    for y in range(int(height * 0.05), int(height * 0.88)):
+        row = rows[y]
+        for x in range(width):
+            px = row[x * n:x * n + n]
+            on = px[3] > 100 if alpha and n == 4 else max(px[:3]) > 60
+            if on:
+                ink += 1
+                weight += y / height
+                total += 1
+    return (weight / total if total else None), ink / (width * height)
+
+
+def report_orientation(folder):
+    """Les instantanés de la scène (dessinés par l'app) comparés aux captures
+    de l'écran prises juste après : les animaux doivent y être à la même
+    hauteur. Une scène montrée à l'envers les met en haut de l'écran."""
+    shots = os.path.join(folder, "instantanes")
+    if not os.path.isdir(shots) or not shutil.which("sips"):
+        return
+    captures = sorted(f for f in os.listdir(shots) if re.match(r"ecran-\d+s\.png$", f))
+    scenes = sorted(f for f in os.listdir(shots) if re.match(r"instantane-[\d.]+s-ecran0\.png$", f))
+    if not captures or not scenes:
+        return
+    section("ORIENTATION DE LA SCÈNE (instantané comparé à la capture de l'écran qui suit) :")
+    with tempfile.TemporaryDirectory() as tmp:
+        for capture in captures:
+            at = float(re.search(r"(\d+)s", capture).group(1))
+            before = [s for s in scenes if float(re.search(r"([\d.]+)s-", s).group(1)) <= at]
+            if not before:
+                continue
+            scene = before[-1]
+            a, b = shrunk(os.path.join(shots, scene), tmp), shrunk(os.path.join(shots, capture), tmp)
+            if not a or not b:
+                print(f"  {capture} : illisible")
+                continue
+            (ya, _), (yb, cover) = ink_height(a, True), ink_height(b, False)
+            if ya is None or yb is None or cover > 0.3:
+                print(f"  {capture} : rien à comparer (ou fond trop chargé)")
+                continue
+            right = abs(ya - yb) <= abs((1 - ya) - yb)
+            # Au début d'un essai de la CI, sans fenêtres, ils sont au sol.
+            high = at < 30 and yb < 0.4
+            print(f"  {scene} → {capture} : hauteur {ya:.2f} / {yb:.2f} — "
+                  + ("pareils" if right else "À L'ENVERS l'un de l'autre")
+                  + (" ; animaux en haut de l'écran, pas au sol ?" if high else ""))
+
+
 def report_load(trial, normal):
     """Essai de charge : chaque palier d'animaux (de sa note à la suivante)."""
     stages = [(t, int(m.group(1))) for t, what in trial.events
@@ -709,6 +826,7 @@ def main():
     report_events(trial)
     if folder:
         report_around(trial, hitches, folder)
+        report_orientation(folder)
     section("RÉSUMÉS (toutes les dix secondes) :")
     for t, values in trial.lines["S"]:
         print(f"  {t:8.1f} s : " + " ".join(f"{k} {v:g}" for k, v in values.items()))

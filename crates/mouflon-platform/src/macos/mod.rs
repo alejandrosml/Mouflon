@@ -14,7 +14,7 @@ mod sound;
 mod ui;
 
 pub use actions::set_ui_handler;
-pub use clock::FrameClock;
+pub use clock::{Beats, FrameClock, ThreadClock};
 pub use form::{show_form, snapshot_form, update_form};
 pub use gallery::{set_gallery_preview, show_gallery, snapshot_gallery};
 pub use login::{login_item, login_item_available, open_login_items_settings, set_login_item};
@@ -44,10 +44,10 @@ use objc2_core_foundation::{
     CGSize,
 };
 use objc2_core_graphics::{
-    CGEventSource, CGEventSourceStateID, CGEventType, CGRectMakeWithDictionaryRepresentation,
-    CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID, kCGWindowAlpha,
-    kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerName,
-    kCGWindowOwnerPID,
+    CGEvent, CGEventSource, CGEventSourceStateID, CGEventType,
+    CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
+    kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer,
+    kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
 };
 use objc2_foundation::{
     NSKeyValueObservingOptions, NSLocale, NSObject, NSObjectNSKeyValueObserverRegistration,
@@ -214,13 +214,14 @@ pub fn open_accessibility_settings() -> bool {
     .is_some_and(|url| NSWorkspace::sharedWorkspace().openURL(&url))
 }
 
-/// Position du curseur dans le repère commun.
+/// Position du curseur dans le repère commun, depuis n'importe quel fil :
+/// un événement vide de Core Graphics la porte, déjà dans ce repère (origine
+/// en haut à gauche de l'écran principal, y vers le bas).
 #[must_use]
 pub fn cursor_position() -> Option<(f64, f64)> {
-    let mtm = MainThreadMarker::new()?;
-    let primary = primary_height(mtm)?;
-    let p = NSEvent::mouseLocation();
-    Some((p.x, primary - p.y))
+    let event = CGEvent::new(None)?;
+    let p = CGEvent::location(Some(&event));
+    Some((p.x, p.y))
 }
 
 /// Depuis quand l'utilisateur n'a rien frappé au clavier, et rien fait du

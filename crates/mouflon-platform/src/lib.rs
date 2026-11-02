@@ -126,6 +126,36 @@ pub fn lower_thread_priority() {
     }
 }
 
+/// Fait passer le fil courant devant (classe « interactive ») : celui qui
+/// fait les images ne doit jamais attendre un cœur derrière du travail de fond.
+pub fn raise_thread_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: fonction de libpthread sans pointeur, qui ne change que la
+        // classe de service du fil qui l'appelle.
+        let status = unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+        };
+        if status != 0 {
+            log::debug!("classe de service du fil inchangée ({status})");
+        }
+    }
+}
+
+/// Fait `work` dans une réserve d'objets à libérer (« autorelease pool ») :
+/// sur un autre fil que le fil principal, les objets du système rendus
+/// ainsi pendant une image sont libérés à sa fin, au lieu de s'accumuler.
+pub fn with_release_pool<R>(work: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        objc2::rc::autoreleasepool(|_| work())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        work()
+    }
+}
+
 /// Une ligne des crédits de la fenêtre « À propos ».
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AboutLine<'a> {
@@ -324,14 +354,14 @@ pub struct Beat {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    FrameClock, LoopWaker, SceneImage, SceneLayer, accessibility_trusted, attach_scene,
-    control_key_down, cursor_position, dock_frame, follow_window_moves, frontmost_pid,
-    keep_pet_window, login_item, login_item_available, open_accessibility_settings, open_folder,
-    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
-    render_scene, request_accessibility, run_loop_for, scene_transaction, screens,
-    set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
-    show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
-    warm_up_sounds, window_max_fps, windows,
+    Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
+    attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
+    frontmost_pid, keep_pet_window, login_item, login_item_available, open_accessibility_settings,
+    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
+    prepare_pet_window, render_scene, request_accessibility, run_loop_for, scene_transaction,
+    screens, set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler,
+    show_about, show_form, show_gallery, snapshot_form, snapshot_gallery, update_form,
+    user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 /// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
@@ -626,6 +656,63 @@ mod fallback {
         None
     }
 
+    /// Les battements d'une horloge d'écran sur un autre fil : jamais ici
+    /// (l'affichage se rythme avec une minuterie).
+    #[derive(Debug, Default)]
+    pub struct Beats {
+        _none: (),
+    }
+
+    impl Beats {
+        pub fn take(&self) -> Option<super::Beat> {
+            None
+        }
+
+        pub fn take_coalesced(&self) -> u32 {
+            0
+        }
+    }
+
+    /// Pas d'horloge d'écran sur un autre fil ici.
+    #[derive(Debug)]
+    pub enum ThreadClock {}
+
+    impl ThreadClock {
+        pub fn new(
+            _beats: std::sync::Arc<Beats>,
+            _wake: std::sync::Arc<LoopWaker>,
+        ) -> Option<Self> {
+            None
+        }
+
+        pub fn start_here(&self) {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn max_fps(&self) -> f32 {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn is_running(&self) -> bool {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn frame_duration(&self) -> f64 {
+            match *self {}
+        }
+
+        pub fn set_running(&self, _running: bool) {
+            match *self {}
+        }
+
+        pub fn set_rate(&self, _fps: f32) {
+            match *self {}
+        }
+    }
+
     /// Pas encore de sons sur ce système.
     pub fn play_sound(_data: &std::sync::Arc<[u8]>, _volume: f32) {}
 
@@ -644,14 +731,14 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    FrameClock, LoopWaker, SceneImage, SceneLayer, accessibility_trusted, attach_scene,
-    control_key_down, cursor_position, dock_frame, follow_window_moves, frontmost_pid,
-    keep_pet_window, login_item, login_item_available, open_accessibility_settings, open_folder,
-    open_login_items_settings, play_sound, pop_up_menu, preferred_languages, prepare_pet_window,
-    render_scene, request_accessibility, run_loop_for, scene_transaction, screens,
-    set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler, show_about,
-    show_form, show_gallery, snapshot_form, snapshot_gallery, update_form, user_activity,
-    warm_up_sounds, window_max_fps, windows,
+    Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
+    attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
+    frontmost_pid, keep_pet_window, login_item, login_item_available, open_accessibility_settings,
+    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
+    prepare_pet_window, render_scene, request_accessibility, run_loop_for, scene_transaction,
+    screens, set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler,
+    show_about, show_form, show_gallery, snapshot_form, snapshot_gallery, update_form,
+    user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

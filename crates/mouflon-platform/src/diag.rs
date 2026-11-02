@@ -107,6 +107,13 @@ pub fn register_main_thread() {
     imp::register_main_thread();
 }
 
+/// Le fil qui fait les images (le fil de l'affichage) : c'est sa pile que
+/// l'on relève quand une image tarde. À appeler depuis ce fil.
+pub fn register_frame_thread() {
+    epoch();
+    imp::register_frame_thread();
+}
+
 /// Lance le fil des diagnostics. `begun` : début de l'essai.
 pub fn start(begun: Instant, sink: Sink) -> bool {
     epoch();
@@ -761,6 +768,7 @@ mod imp {
     use super::{LoopState, LoopTotals, ProcStats, SystemStats, ThreadStat};
 
     pub fn register_main_thread() {}
+    pub fn register_frame_thread() {}
     pub fn raise_thread_priority() {}
 
     pub fn sample_main(_buffer: &mut [usize]) -> usize {

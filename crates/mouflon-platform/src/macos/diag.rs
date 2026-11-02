@@ -110,6 +110,24 @@ pub fn register_main_thread() {
     install_observers(mtm);
 }
 
+/// Le fil dont on relève la pile quand une image tarde : celui qui les fait
+/// (le fil de l'affichage), à la place du fil principal.
+pub fn register_frame_thread() {
+    // SAFETY: ces fonctions de libpthread ne font que lire ce qu'elles
+    // savent du fil courant ; le port Mach rendu n'a pas à être libéré.
+    let (port, top, size) = unsafe {
+        let me = libc::pthread_self();
+        (
+            libc::pthread_mach_thread_np(me),
+            libc::pthread_get_stackaddr_np(me) as usize,
+            libc::pthread_get_stacksize_np(me),
+        )
+    };
+    STACK_TOP.store(top, Relaxed);
+    STACK_BOTTOM.store(top.saturating_sub(size), Relaxed);
+    MAIN_PORT.store(port, Relaxed);
+}
+
 /// Le fil des diagnostics passe devant (classe « interactive ») : il doit
 /// se réveiller à l'heure pour voir les retards des autres.
 pub fn raise_thread_priority() {

@@ -51,6 +51,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -239,27 +241,83 @@ pub struct FrameRecord {
 }
 
 /// Ce que la boucle d'événements a reçu depuis le dernier résumé.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Counters {
-    pub cursor_moves: u32,
-    pub clicks: u32,
-    /// Le curseur entre dans la fenêtre d'un animal.
-    pub hovers: u32,
-    pub redraws: u32,
+    pub cursor_moves: AtomicU32,
+    pub clicks: AtomicU32,
+    /// Le curseur entre dans la fenêtre d'un écran.
+    pub hovers: AtomicU32,
+    pub redraws: AtomicU32,
     /// Autres événements des fenêtres (déplacées, redimensionnées…).
-    pub other_window: u32,
+    pub other_window: AtomicU32,
     /// Battements de l'horloge de l'écran reçus.
-    pub beats: u32,
+    pub beats: AtomicU32,
     /// Autres événements de l'app (menus, réglages, dessins prêts…).
-    pub user: u32,
+    pub user: AtomicU32,
     /// Passages de la boucle avant de s'endormir.
-    pub waits: u32,
-    /// Gestionnaires lents (hors images) et le plus lent, en ms.
-    pub slow_handlers: u32,
-    pub slowest_handler: f32,
+    pub waits: AtomicU32,
+    /// Gestionnaires lents (hors images) et le plus lent, en µs.
+    pub slow_handlers: AtomicU32,
+    pub slowest_handler_us: AtomicU32,
     /// Images décompressées pour les calques de la scène, et oubliées.
-    pub images_decoded: u32,
-    pub images_evicted: u32,
+    pub images_decoded: AtomicU32,
+    pub images_evicted: AtomicU32,
+}
+
+impl Counters {
+    /// Un de plus.
+    pub fn bump(counter: &AtomicU32) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Le compte, remis à zéro.
+    fn take(counter: &AtomicU32) -> u32 {
+        counter.swap(0, Ordering::Relaxed)
+    }
+}
+
+/// De quoi écrire au journal d'un essai depuis un autre fil que celui des
+/// images (le fil principal : menus, réglages, gestionnaires lents), et
+/// compter ses événements.
+#[derive(Clone, Debug)]
+pub struct Notes {
+    sender: Option<Sender<String>>,
+    begun: Instant,
+    pub counters: Arc<Counters>,
+}
+
+impl Notes {
+    /// Note ce qui arrive, avec l'heure depuis le début de l'essai.
+    pub fn note(&self, what: impl std::fmt::Display) {
+        let line = format!("E {:.4} {what}", self.begun.elapsed().as_secs_f32());
+        match &self.sender {
+            Some(sender) => {
+                let _ = sender.send(line);
+            }
+            None => log::info!("{line}"),
+        }
+    }
+
+    /// Une ligne telle quelle.
+    pub fn raw(&self, line: impl Into<String>) {
+        let line = line.into();
+        match &self.sender {
+            Some(sender) => {
+                let _ = sender.send(line);
+            }
+            None => log::info!("{line}"),
+        }
+    }
+
+    #[must_use]
+    pub fn begun(&self) -> Instant {
+        self.begun
+    }
+
+    #[must_use]
+    pub fn sender(&self) -> Option<Sender<String>> {
+        self.sender.clone()
+    }
 }
 
 /// Un animal à une image : ce que le journal en garde.
@@ -328,8 +386,9 @@ pub struct FrameStats {
     images: usize,
     /// Ressources du processus au résumé précédent.
     usage: Option<(Instant, platform::ProcessUsage)>,
-    /// Ce que la boucle d'événements a reçu depuis le dernier résumé.
-    pub counters: Counters,
+    /// Ce que la boucle d'événements a reçu depuis le dernier résumé
+    /// (comptés aussi depuis le fil principal).
+    pub counters: Arc<Counters>,
 }
 
 #[derive(Debug, Default)]
@@ -371,7 +430,18 @@ impl FrameStats {
             images: 0,
             // Point de départ du temps de calcul du premier résumé.
             usage: platform::process_usage().map(|usage| (begun, usage)),
-            counters: Counters::default(),
+            counters: Arc::new(Counters::default()),
+        }
+    }
+
+    /// De quoi écrire au journal et compter ses événements depuis le fil
+    /// principal.
+    #[must_use]
+    pub fn notes(&self) -> Notes {
+        Notes {
+            sender: self.sender(),
+            begun: self.begun,
+            counters: Arc::clone(&self.counters),
         }
     }
 
@@ -569,7 +639,8 @@ impl FrameStats {
                 self.images as f64 / 1e6,
                 usage_since_last(&mut self.usage, started),
             );
-            let c = std::mem::take(&mut self.counters);
+            let c = &*self.counters;
+            let slowest = Counters::take(&c.slowest_handler_us) as f32 / 1000.0;
             let clock = format!(
                 "SH {at:.4} horloge {} fondus {} sautes {} appel_max_ms {:.1} passage_max_ms {:.1} \
                  minuterie_max_ms {:.1} dmax {:.1} amax {:.1} rates {} allocs_principal {} \
@@ -587,18 +658,18 @@ impl FrameStats {
                 period.phases.misses,
                 period.allocs,
                 period.alloc_bytes as f64 / 1024.0,
-                c.cursor_moves,
-                c.clicks,
-                c.hovers,
-                c.redraws,
-                c.other_window,
-                c.beats,
-                c.user,
-                c.waits,
-                c.slow_handlers,
-                c.slowest_handler,
-                c.images_decoded,
-                c.images_evicted,
+                Counters::take(&c.cursor_moves),
+                Counters::take(&c.clicks),
+                Counters::take(&c.hovers),
+                Counters::take(&c.redraws),
+                Counters::take(&c.other_window),
+                Counters::take(&c.beats),
+                Counters::take(&c.user),
+                Counters::take(&c.waits),
+                Counters::take(&c.slow_handlers),
+                slowest,
+                Counters::take(&c.images_decoded),
+                Counters::take(&c.images_evicted),
             );
             *period = Period::default();
             match &self.journal {

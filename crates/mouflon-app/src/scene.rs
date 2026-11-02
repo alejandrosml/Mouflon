@@ -10,23 +10,23 @@
 //! (ou si les calques manquent), les morceaux se dessinent sur le GPU dans
 //! la fenêtre de l'écran.
 //!
-//! La fenêtre d'un écran laisse passer la souris, sauf au-dessus d'un
-//! animal : l'app le décide à chaque image (voir [`Scene::set_hittest`]).
+//! Les fenêtres des écrans sont faites sur le fil principal (voir
+//! [`crate::screens`]) ; la scène reçoit de chacune la racine de ses calques
+//! (ou la fenêtre elle-même, pour le GPU) et n'y touche plus qu'à travers
+//! elle : elle peut ainsi vivre sur le fil de l'affichage.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mouflon_core::{PetView, Rect, SaucerView, Screen, Vec2};
+use mouflon_core::{PetView, Rect, SaucerView, Vec2};
 use mouflon_platform as platform;
 use mouflon_render::display::{Bitmap, Command, DisplayList};
 use mouflon_render::pieces::{Pieces, flatten};
 use mouflon_render::vello::kurbo::Affine;
 use mouflon_render::vello::peniko::Mix;
 use mouflon_render::{Frame, PetArt, SpriteKey, Style, paint_pet};
-use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event_loop::ActiveEventLoop;
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::window::Window;
 
 use crate::gpu::{Gpu, Job, PetSurface};
 
@@ -255,19 +255,21 @@ impl Node {
         self.shape = shape.to_vec();
     }
 
-    /// Met ses calques à jour : sa place sur l'écran `screen` (coin haut
-    /// gauche et hauteur, points), et ses morceaux s'ils ont changé.
+    /// Met ses calques à jour : sa place sur l'écran dont le coin haut
+    /// gauche est `screen` (points), et ses morceaux s'ils ont changé.
     /// `false` si une image n'a pas pu être prête à temps (on réessaie à
     /// l'image suivante).
     ///
-    /// Les calques suivent le repère ordinaire de Core Animation sur Mac :
-    /// origine en bas à gauche, y vers le haut (une image s'y affiche à
-    /// l'endroit). Le calque qui porte la chose est placé au coin haut
-    /// gauche de sa toile ; chaque morceau y descend (y négatif).
-    fn update(&mut self, shown: &Shown, screen: (f64, f64, f64), images: &mut Images) -> bool {
+    /// Les calques sont dans le repère de la vue de la fenêtre, qu'AppKit
+    /// retourne (winit la déclare `isFlipped`) : origine en haut à gauche, y
+    /// vers le bas — celui de Mouflon et de ses toiles —, et une image y
+    /// est montrée à l'endroit. Le calque qui porte la chose est placé au
+    /// coin haut gauche de sa toile ; chaque morceau s'y pose comme sur la
+    /// toile.
+    fn update(&mut self, shown: &Shown, screen: (f64, f64), images: &mut Images) -> bool {
         let position = (
             shown.origin.0 / shown.scale - screen.0,
-            screen.2 - (shown.origin.1 / shown.scale - screen.1),
+            shown.origin.1 / shown.scale - screen.1,
         );
         if self.position != Some(position) {
             self.container.set_position(position.0, position.1);
@@ -309,10 +311,8 @@ impl Node {
             }
             // L'image a une bordure transparente d'un pixel (ses bords
             // tournés restent lisses) : son coin est à (-1, -1).
-            let transform = upright(
-                (to_points * piece.transform * Affine::translate((-1.0, -1.0))).as_coeffs(),
-                f64::from(size.1),
-            );
+            let transform =
+                (to_points * piece.transform * Affine::translate((-1.0, -1.0))).as_coeffs();
             if slot.transform != transform {
                 slot.layer.set_transform(transform);
                 slot.transform = transform;
@@ -333,7 +333,36 @@ impl Node {
     }
 }
 
-/// Comment une fenêtre d'écran montre ce qu'elle porte.
+/// Ce que la scène sait de la fenêtre d'un écran.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenInfo {
+    /// La fenêtre (une par écran, jamais déplacée : une autre a une autre clé).
+    pub key: u64,
+    /// Le cadre de l'écran (repère commun, points).
+    pub rect: Rect,
+    /// Pixels par point.
+    pub scale: f64,
+    /// Images par seconde que l'écran sait afficher.
+    pub hz: f64,
+}
+
+/// Ce dans quoi la scène se montre sur un écran : la racine des calques
+/// posée dans sa fenêtre, ou la fenêtre elle-même (GPU, sur le fil
+/// principal seulement).
+#[derive(Clone, Debug)]
+pub enum Surface {
+    Layers(platform::SceneLayer),
+    Gpu(Arc<Window>),
+}
+
+/// La fenêtre d'un écran, telle que le fil principal la donne à la scène.
+#[derive(Clone, Debug)]
+pub struct Overlay {
+    pub info: ScreenInfo,
+    pub surface: Surface,
+}
+
+/// Comment la scène montre ce qu'elle porte sur un écran.
 enum Backend {
     /// Des calques Core Animation (Mac).
     Layers {
@@ -344,23 +373,18 @@ enum Backend {
     Gpu {
         surface: Box<PetSurface>,
         list: DisplayList,
+        window: Arc<Window>,
     },
 }
 
-/// La fenêtre transparente d'un écran.
-pub struct Overlay {
-    /// Le cadre de l'écran (repère commun, points).
-    pub rect: Rect,
-    pub scale: f64,
-    pub window: Arc<Window>,
-    /// Prend-elle la souris en ce moment ?
-    pub hittest: bool,
+/// Un écran de la scène.
+struct Place {
+    info: ScreenInfo,
     backend: Backend,
 }
 
-impl Overlay {
-    #[must_use]
-    pub fn uses_layers(&self) -> bool {
+impl Place {
+    fn uses_layers(&self) -> bool {
         matches!(self.backend, Backend::Layers { .. })
     }
 }
@@ -383,7 +407,7 @@ pub struct Timings {
 
 /// Toute la scène.
 pub struct Scene {
-    overlays: Vec<Overlay>,
+    places: Vec<Place>,
     shown: HashMap<Entity, Shown>,
     /// Ordre d'empilement : les soucoupes d'abord, puis les animaux dans
     /// l'ordre de leur arrivée.
@@ -393,15 +417,13 @@ pub struct Scene {
     list: DisplayList,
     frame: u64,
     timings: Timings,
-    /// Calques Core Animation quand le système en a (sinon le GPU).
-    layers_wanted: bool,
 }
 
 impl Scene {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            overlays: Vec::new(),
+            places: Vec::new(),
             shown: HashMap::new(),
             order: Vec::new(),
             images: Images::default(),
@@ -409,18 +431,12 @@ impl Scene {
             list: DisplayList::default(),
             frame: 0,
             timings: Timings::default(),
-            // `MOUFLON_GPU=1` : le GPU même sur Mac (pour comparer).
-            layers_wanted: !std::env::var("MOUFLON_GPU").is_ok_and(|v| !v.is_empty() && v != "0"),
         }
     }
 
-    pub fn overlays(&self) -> &[Overlay] {
-        &self.overlays
-    }
-
-    /// La fenêtre d'écran `window`, s'il en est une.
-    pub fn overlay(&self, window: WindowId) -> Option<&Overlay> {
-        self.overlays.iter().find(|o| o.window.id() == window)
+    /// Les écrans où elle se montre.
+    pub fn screens(&self) -> impl Iterator<Item = &ScreenInfo> {
+        self.places.iter().map(|place| &place.info)
     }
 
     /// Le GPU, s'il sert (fenêtres d'écran sans calques).
@@ -428,135 +444,85 @@ impl Scene {
         self.gpu.as_mut()
     }
 
-    /// Une fenêtre par écran : refaites quand les écrans changent. Renvoie
-    /// de quoi le dire au journal (rien si elles n'ont pas changé).
-    pub fn sync_screens(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        screens: &[Screen],
-    ) -> Vec<String> {
-        let rects: Vec<(Rect, f32)> = screens.iter().map(|s| (s.frame, s.scale)).collect();
-        let same = self.overlays.len() == rects.len()
-            && self
-                .overlays
-                .iter()
-                .all(|o| rects.iter().any(|(r, _)| *r == o.rect));
-        if same {
-            return Vec::new();
-        }
-        for overlay in self.overlays.drain(..) {
-            if let Backend::Layers { root, .. } = &overlay.backend {
-                root.remove();
-            }
-            platform::keep_pet_window(&*overlay.window);
-        }
+    /// Les fenêtres des écrans : celles qu'elle connaît déjà gardent leurs
+    /// calques (leur échelle ou leur fréquence a pu changer), les nouvelles
+    /// commencent vides, celles qui sont parties s'oublient. Renvoie de quoi
+    /// le dire au journal.
+    pub fn set_overlays(&mut self, overlays: Vec<Overlay>) -> Vec<String> {
+        let mut old = std::mem::take(&mut self.places);
         let mut notes = Vec::new();
-        for (rect, _) in rects {
-            match self.open_overlay(event_loop, rect) {
-                Ok(overlay) => {
+        for overlay in overlays {
+            if let Some(i) = old.iter().position(|p| p.info.key == overlay.info.key) {
+                let mut place = old.swap_remove(i);
+                place.info = overlay.info;
+                self.places.push(place);
+                continue;
+            }
+            let rect = overlay.info.rect;
+            match self.open(overlay) {
+                Ok(place) => {
                     notes.push(format!(
                         "scène : fenêtre de l'écran {:.0}×{:.0} en {:.0},{:.0} ({})",
                         rect.w,
                         rect.h,
                         rect.x,
                         rect.y,
-                        if overlay.uses_layers() {
+                        if place.uses_layers() {
                             "calques Core Animation"
                         } else {
                             "GPU"
                         }
                     ));
-                    self.overlays.push(overlay);
+                    self.places.push(place);
                 }
                 Err(e) => log::error!("fenêtre de l'écran impossible : {e}"),
             }
         }
+        // Les calques des fenêtres parties les quittent (le fil principal
+        // garde ces fenêtres, fermées, jusqu'à la fin).
+        if old.iter().any(Place::uses_layers) {
+            platform::scene_transaction(|| {
+                for place in &old {
+                    if let Backend::Layers { root, .. } = &place.backend {
+                        root.remove();
+                    }
+                }
+            });
+        }
         notes
     }
 
-    fn open_overlay(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        rect: Rect,
-    ) -> Result<Overlay, String> {
-        let attrs = Window::default_attributes()
-            .with_title("Mouflon")
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_inner_size(LogicalSize::new(f64::from(rect.w), f64::from(rect.h)))
-            .with_position(LogicalPosition::new(f64::from(rect.x), f64::from(rect.y)))
-            .with_active(false);
-        #[cfg(target_os = "macos")]
-        let attrs = {
-            use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs.with_has_shadow(false).with_accepts_first_mouse(true)
-        };
-        let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
-        platform::prepare_pet_window(&*window);
-        // Elle laisse passer la souris, sauf au-dessus d'un animal.
-        let _ = window.set_cursor_hittest(false);
-        let scale = window.scale_factor();
-        let layers = self
-            .layers_wanted
-            .then(|| platform::attach_scene(&*window))
-            .flatten();
-        let backend = match layers {
-            Some(root) => Backend::Layers {
+    fn open(&mut self, overlay: Overlay) -> Result<Place, String> {
+        let backend = match overlay.surface {
+            Surface::Layers(root) => Backend::Layers {
                 root,
                 nodes: HashMap::new(),
             },
-            None => {
+            Surface::Gpu(window) => {
                 let gpu = self.gpu.get_or_insert_with(Gpu::new);
                 let size = window.inner_size();
-                match gpu.create_surface(Arc::clone(&window), size.width, size.height) {
-                    Ok(surface) => Backend::Gpu {
-                        surface: Box::new(surface),
-                        list: DisplayList::default(),
-                    },
-                    Err(e) => {
-                        platform::keep_pet_window(&*window);
-                        return Err(format!("rendu indisponible : {e}"));
-                    }
+                let surface = gpu
+                    .create_surface(Arc::clone(&window), size.width, size.height)
+                    .map_err(|e| format!("rendu indisponible : {e}"))?;
+                Backend::Gpu {
+                    surface: Box::new(surface),
+                    list: DisplayList::default(),
+                    window,
                 }
             }
         };
-        Ok(Overlay {
-            rect,
-            scale,
-            window,
-            hittest: false,
+        Ok(Place {
+            info: overlay.info,
             backend,
         })
     }
 
-    /// La fenêtre `index` prend la souris (au-dessus d'un animal) ou la
-    /// laisse passer.
-    pub fn set_hittest(&mut self, index: usize, on: bool) -> bool {
-        let Some(overlay) = self.overlays.get_mut(index) else {
-            return false;
-        };
-        if overlay.hittest == on {
-            return false;
-        }
-        let _ = overlay.window.set_cursor_hittest(on);
-        overlay.hittest = on;
-        true
-    }
-
-    pub fn scale_changed(&mut self, window: WindowId, scale: f64) {
-        if let Some(overlay) = self.overlays.iter_mut().find(|o| o.window.id() == window) {
-            overlay.scale = scale;
-        }
-    }
-
-    pub fn resized(&mut self, window: WindowId, width: u32, height: u32) {
-        let Some(overlay) = self.overlays.iter_mut().find(|o| o.window.id() == window) else {
+    /// La fenêtre `key` a changé de taille (GPU).
+    pub fn resized(&mut self, key: u64, width: u32, height: u32) {
+        let Some(place) = self.places.iter_mut().find(|p| p.info.key == key) else {
             return;
         };
-        if let (Backend::Gpu { surface, .. }, Some(gpu)) = (&mut overlay.backend, self.gpu.as_ref())
-        {
+        if let (Backend::Gpu { surface, .. }, Some(gpu)) = (&mut place.backend, self.gpu.as_ref()) {
             gpu.resize(surface, width, height);
         }
     }
@@ -577,7 +543,7 @@ impl Scene {
     #[must_use]
     pub fn image_usage(&self) -> (usize, usize) {
         match &self.gpu {
-            Some(gpu) if self.overlays.iter().all(|o| !o.uses_layers()) => gpu.texture_usage(),
+            Some(gpu) if self.places.iter().all(|p| !p.uses_layers()) => gpu.texture_usage(),
             _ => (self.images.map.len(), self.images.bytes),
         }
     }
@@ -601,12 +567,13 @@ impl Scene {
         scale: f64,
     ) -> Vec<std::path::PathBuf> {
         let mut written = Vec::new();
-        for (i, overlay) in self.overlays.iter().enumerate() {
-            let Backend::Layers { root, .. } = &overlay.backend else {
+        for (i, place) in self.places.iter().enumerate() {
+            let Backend::Layers { root, .. } = &place.backend else {
                 continue;
             };
+            let rect = place.info.rect;
             let Some((width, height, mut rgba)) =
-                platform::render_scene(root, overlay.rect.w as u32, overlay.rect.h as u32, scale)
+                platform::render_scene(root, rect.w as u32, rect.h as u32, scale)
             else {
                 continue;
             };
@@ -619,14 +586,6 @@ impl Scene {
             }
         }
         written
-    }
-
-    /// Avant de quitter : les fenêtres ne seront jamais libérées (voir
-    /// `platform::keep_pet_window`).
-    pub fn shutdown(&mut self) {
-        for overlay in &self.overlays {
-            platform::keep_pet_window(&*overlay.window);
-        }
     }
 
     /// Prépare d'avance ce que montrera un animal (avant sa première
@@ -647,7 +606,7 @@ impl Scene {
         paint_pet(art, view, &frame, style, &mut self.list);
         let mut pieces = Pieces::default();
         flatten(&self.list, &mut pieces);
-        if self.overlays.iter().any(Overlay::uses_layers) {
+        if self.places.iter().any(Place::uses_layers) {
             for piece in &pieces.items {
                 self.images.prepare(&piece.bitmap);
             }
@@ -663,11 +622,11 @@ impl Scene {
 
     /// Échelle (pixels par point) de l'écran où se trouve `p`.
     fn scale_at(&self, p: Vec2) -> f64 {
-        self.overlays
+        self.places
             .iter()
-            .find(|o| o.rect.contains(p))
-            .or_else(|| self.overlays.first())
-            .map_or(2.0, |o| o.scale)
+            .find(|place| place.info.rect.contains(p))
+            .or_else(|| self.places.first())
+            .map_or(2.0, |place| place.info.scale)
     }
 
     /// Début d'une image.
@@ -780,18 +739,18 @@ impl Scene {
         self.order.retain(|entity| shown.contains_key(entity));
         let decode_before = self.images.spent;
         let started = Instant::now();
-        let uses_layers = self.overlays.iter().any(Overlay::uses_layers);
+        let uses_layers = self.places.iter().any(Place::uses_layers);
         if uses_layers {
             let Self {
-                overlays,
+                places,
                 shown,
                 order,
                 images,
                 ..
             } = self;
             platform::scene_transaction(|| {
-                for overlay in overlays.iter_mut() {
-                    update_layers(overlay, shown, order, images);
+                for place in places.iter_mut() {
+                    update_layers(place, shown, order, images);
                 }
                 self.timings.layers = started.elapsed();
             });
@@ -811,11 +770,17 @@ impl Scene {
         };
         let started = Instant::now();
         let mut jobs: Vec<Job<'_>> = Vec::new();
-        for overlay in &mut self.overlays {
-            let Backend::Gpu { surface, list } = &mut overlay.backend else {
+        for place in &mut self.places {
+            let Backend::Gpu {
+                surface,
+                list,
+                window,
+            } = &mut place.backend
+            else {
                 continue;
             };
-            let size = overlay.window.inner_size();
+            let overlay = place.info;
+            let size = window.inner_size();
             list.clear(size.width, size.height);
             for entity in &self.order {
                 let Some(shown) = self.shown.get(entity) else {
@@ -835,7 +800,7 @@ impl Scene {
             jobs.push(Job {
                 surface,
                 list,
-                window: &overlay.window,
+                window,
             });
         }
         if !jobs.is_empty() {
@@ -849,18 +814,6 @@ impl Default for Scene {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// La transformation d'un calque d'image de `height` pixels de haut, dans
-/// le repère de Core Animation (y vers le haut, l'image à l'endroit : sa
-/// première ligne en haut du calque), pour qu'il tombe là où `toward`
-/// (des pixels de l'image, y vers le bas, aux points du calque parent, y
-/// vers le bas depuis son origine) pose l'image.
-///
-/// Un point du calque (u, w) est la ligne `height - w` de l'image ; il va
-/// en `toward(u, height - w)`, puis y change de signe.
-fn upright([a, b, c, d, e, f]: [f64; 6], height: f64) -> [f64; 6] {
-    [a, -b, -c, d, c * height + e, -(d * height + f)]
 }
 
 /// RVBA prémultiplié → alpha non prémultiplié, sur place.
@@ -883,19 +836,16 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 /// Les calques d'une fenêtre d'écran : un nœud par chose qui s'y trouve
 /// (même en partie), dans l'ordre d'empilement.
 fn update_layers(
-    overlay: &mut Overlay,
+    place: &mut Place,
     shown: &HashMap<Entity, Shown>,
     order: &[Entity],
     images: &mut Images,
 ) {
-    let Backend::Layers { root, nodes } = &mut overlay.backend else {
+    let overlay = place.info;
+    let Backend::Layers { root, nodes } = &mut place.backend else {
         return;
     };
-    let screen = (
-        f64::from(overlay.rect.x),
-        f64::from(overlay.rect.y),
-        f64::from(overlay.rect.h),
-    );
+    let screen = (f64::from(overlay.rect.x), f64::from(overlay.rect.y));
     // Ce qui est parti, ou n'est plus sur cet écran.
     nodes.retain(|entity, node| {
         let here = shown
@@ -955,37 +905,5 @@ fn write_pieces(pieces: &Pieces, at: Affine, out: &mut DisplayList) {
     }
     if open != 0 {
         out.pop_layer();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Applique une transformation `[a, b, c, d, tx, ty]` à un point.
-    fn apply([a, b, c, d, tx, ty]: [f64; 6], (x, y): (f64, f64)) -> (f64, f64) {
-        (a * x + c * y + tx, b * x + d * y + ty)
-    }
-
-    #[test]
-    fn images_land_where_they_should_in_the_upward_frame() {
-        // Une image de 10 × 6 pixels, tournée, agrandie, déplacée (y vers le bas).
-        let toward = Affine::translate((40.0, 25.0)) * Affine::rotate(0.4) * Affine::scale(1.5);
-        let t = upright(toward.as_coeffs(), 6.0);
-        for (u, v) in [
-            (0.0, 0.0),
-            (10.0, 0.0),
-            (0.0, 6.0),
-            (10.0, 6.0),
-            (3.5, 2.25),
-        ] {
-            // La ligne `v` de l'image est à la hauteur `6 - v` du calque.
-            let (x, y) = apply(t, (u, 6.0 - v));
-            let p = toward * mouflon_render::vello::kurbo::Point::new(u, v);
-            assert!(
-                (x - p.x).abs() < 1e-9 && (y + p.y).abs() < 1e-9,
-                "({u}, {v})"
-            );
-        }
     }
 }
