@@ -29,6 +29,14 @@
 //! `physique` : la physique réaliste. Une fenêtre emporte l'animal, file sous
 //! lui d'un coup sec, se dérobe, le lance en l'air ; puis la main le prend
 //! par l'arrière, le balance et le lance en tournant.
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> jeux
+//! ```
+//!
+//! `jeux` : les jeux d'agneaux d'un animal qui les connaît (le Mannequin,
+//! Aquarelle) : deux agneaux reculent, s'élancent et se cognent le front, un
+//! bélier recule avant de charger ; puis sauts tordus et demi-tours en l'air.
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -131,6 +139,12 @@ fn main() -> Result<(), Error> {
         let frames = out_dir.join("frames");
         std::fs::create_dir_all(&frames)?;
         let count = render_greeting(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "jeux" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_play(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
     if mode == "physique" {
@@ -299,6 +313,77 @@ fn render_meeting(
                         p.position().y
                     )
                 })
+                .collect();
+            println!("{t:4.1} s : {}", states.join(", "));
+        }
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------- jeux
+
+/// Les jeux d'agneaux : deux agneaux qui reculent, s'élancent et se cognent
+/// le front, un bélier qui recule avant de charger ; puis un saut tordu et
+/// un demi-tour en l'air.
+fn render_play(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&[], LedgeOptions::default());
+    let mut flock = Flock::new();
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    let b = flock.spawn(Arc::clone(def), 5, &world, Some(420.0));
+    let c = flock.spawn(Arc::clone(def), 7, &world, Some(780.0));
+    give_reach(&mut flock, art);
+    let duration = 8.0;
+    let frames = (duration * RATE as f32) as u32;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        let mut play = |id: u32, facing: f32, name: &str| {
+            if let Some(pet) = flock.get_mut(id) {
+                pet.face(facing);
+                if !pet.force(name) {
+                    eprintln!("{} ne sait pas « {name} »", def.meta.name);
+                }
+            }
+        };
+        if at(1.5) {
+            play(a, 1.0, "play_back");
+            play(b, -1.0, "play_back");
+            play(c, -1.0, "back_up");
+        }
+        if at(5.0) {
+            play(a, 1.0, "gambol");
+            play(b, -1.0, "pivot");
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[]);
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &Frame {
+                    origin: Vec2::ZERO,
+                    scale: SCALE,
+                },
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 5) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| format!("{}@{:.0}", p.behavior_name(), p.position().x))
                 .collect();
             println!("{t:4.1} s : {}", states.join(", "));
         }

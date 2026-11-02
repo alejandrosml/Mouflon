@@ -343,14 +343,15 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     );
     let low = f(s.sleep_low);
     if low > 0.0 && rig.has_part(Part::Head) {
-        // Endormi la tête au sol, le cou tendu : elle penche et descend
-        // jusqu'à poser le menton.
-        let bow = 0.3;
-        let turn = rotate_about(head_pivot, head_angle + bow);
+        // Endormi la tête au sol, le cou tendu : la tête ne pend plus comme
+        // assoupie, le museau va en avant, et elle descend jusqu'à poser le
+        // menton.
+        let angle = head_angle - 0.42 * sleep + 0.15;
+        let turn = rotate_about(head_pivot, angle);
         let lowest = lowest_point(&turn, head_bounds) + head_shift.y;
         let lower = (g.y - u - lowest).max(0.0);
-        head_angle += low * bow;
-        head_shift += Vec2::new(low * u, low * lower);
+        head_angle += low * (angle - head_angle);
+        head_shift += Vec2::new(low * 1.5 * u, low * lower);
     }
     if graze > 0.0 && rig.has_part(Part::Head) {
         // Bouche au ras du sol, juste devant les pattes de devant : la tête
