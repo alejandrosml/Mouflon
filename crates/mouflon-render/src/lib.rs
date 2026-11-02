@@ -7,7 +7,11 @@
 //! - [`pieces`] : la même liste, toute en morceaux d'image (calques, quadrilatères) ;
 //! - [`bc7`] : compression des images des animaux pour le GPU ;
 //! - [`cache`] : images des animaux déjà prêtes, gardées sur le disque ;
-//! - [`vello_scene`] et [`svg`] : traduction vers Vello (écran) ou SVG (aperçu).
+//! - [`raster`] : dessin d'une liste sur le processeur (tiny-skia) ;
+//! - [`svg`] : traduction en SVG (aperçus).
+//!
+//! Tout ce qui se montre à l'écran devient des morceaux d'image ([`pieces`]) :
+//! les tracés, les ombres et les disques ne servent qu'à les préparer.
 #![forbid(unsafe_code)]
 
 pub mod animate;
@@ -25,9 +29,9 @@ pub mod skeleton;
 pub mod sprites;
 pub mod svg;
 pub mod thumbnail;
-pub mod vello_scene;
 
 pub use display::DisplayList;
 pub use paint::{Canvas, Frame, Look, PetArt, SpriteKey, SpriteMotion, Style, paint_pet};
+pub use peniko;
+pub use peniko::kurbo;
 pub use rig::{Part, Rig};
-pub use vello;

@@ -5,9 +5,9 @@
 //! Le rendu est celui du GPU, aux détails près : les ombres floutées y sont
 //! des formes adoucies, les modes de fusion des calques y sont ignorés.
 
+use peniko::kurbo::{Affine, Circle, Ellipse, Point, Shape};
+use peniko::{Extend, Fill};
 use tiny_skia::{FillRule, Mask, Pixmap, PixmapPaint, Transform};
-use vello::kurbo::{Affine, Circle, Ellipse, Point, Shape};
-use vello::peniko::{Extend, Fill};
 
 use crate::bake::{to_path, to_shader, to_stroke, to_transform};
 use crate::display::{Command, DisplayList, Paint, Stop};
@@ -217,7 +217,7 @@ pub fn rasterize(list: &DisplayList) -> Option<Pixmap> {
 
 fn fill(
     pixmap: &mut Pixmap,
-    path: &vello::kurbo::BezPath,
+    path: &peniko::kurbo::BezPath,
     transform: Affine,
     paint: &Paint,
     brush: Affine,
@@ -240,8 +240,8 @@ fn fill(
 
 #[cfg(test)]
 mod tests {
-    use vello::kurbo::Rect;
-    use vello::peniko::Color;
+    use peniko::Color;
+    use peniko::kurbo::Rect;
 
     use super::*;
 
@@ -257,7 +257,7 @@ mod tests {
             Rect::new(20.0, 0.0, 40.0, 20.0).to_path(0.1),
             Affine::IDENTITY,
             0.5,
-            vello::peniko::Mix::Normal,
+            peniko::Mix::Normal,
         );
         list.disc(
             Point::new(30.0, 10.0),

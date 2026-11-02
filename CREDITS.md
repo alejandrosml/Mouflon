@@ -60,7 +60,7 @@ domain (none requires credit; thanks to their authors all the same):
 
 ### Libraries
 
-Vello, wgpu, kurbo and peniko (Linebender), winit, tray-icon and muda (Tauri),
+kurbo and peniko (Linebender), wgpu (gfx-rs), tiny-skia, winit, tray-icon and muda (Tauri),
 usvg and resvg, objc2 and its bindings, serde, toml, roxmltree, directories and
 their dependencies: permissive licenses, mostly MIT and Apache-2.0 (also Zlib,
 BSD, ISC, Unicode-3.0; option-ext is under MPL-2.0, used unmodified). Their
@@ -126,7 +126,7 @@ au domaine public (aucun n'exige de mention ; merci quand même à leurs auteurs
 
 ### Bibliothèques
 
-Vello, wgpu, kurbo et peniko (Linebender), winit, tray-icon et muda (Tauri),
+kurbo et peniko (Linebender), wgpu (gfx-rs), tiny-skia, winit, tray-icon et muda (Tauri),
 usvg et resvg, objc2 et ses bindings, serde, toml, roxmltree, directories et
 leurs dépendances : licences permissives, surtout MIT et Apache-2.0 (aussi
 Zlib, BSD, ISC, Unicode-3.0 ; option-ext est sous MPL-2.0, utilisée telle quelle).

@@ -1,14 +1,14 @@
 //! Petits dessins du décor (les feuilles d'un coup de vent, la soucoupe
 //! volante), cuits une fois pour toutes en images. Le rendu direct les pose
-//! comme les images d'un animal, tournées et étirées, sans mettre Vello en
-//! route : sa mise en route prépare une vingtaine de programmes du GPU (plus
-//! d'une seconde sur certains Mac), puis il refait une dizaine de passes de
-//! calcul par fenêtre et par image.
+//! comme les images d'un animal, tournées et étirées : aucun tracé à refaire
+//! à chaque image (Vello, autrefois, préparait pour eux une vingtaine de
+//! programmes du GPU, plus d'une seconde sur certains Mac, puis refaisait
+//! une dizaine de passes de calcul par fenêtre et par image).
 
 use std::sync::OnceLock;
 
-use vello::kurbo::{Affine, BezPath, Point, Rect};
-use vello::peniko::{Color, Extend};
+use peniko::kurbo::{Affine, BezPath, Point, Rect};
+use peniko::{Color, Extend};
 
 use crate::bake::to_bitmap;
 use crate::display::{Bitmap, Command, DisplayList, LineCap, LineJoin, Paint, Stop, StrokeStyle};

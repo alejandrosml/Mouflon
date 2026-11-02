@@ -1,11 +1,11 @@
 //! Traduction de la liste d'affichage en SVG, pour l'outil d'aperçu et les tests.
-//! Le résultat est rendu par resvg à l'identique de ce que Vello affiche.
+//! Le résultat, rendu par resvg, est ce que montre l'écran.
 
 use std::fmt::Write as _;
 
 use base64::Engine as _;
-use vello::kurbo::{Affine, BezPath, Rect};
-use vello::peniko::{Color, Extend, Fill, Mix};
+use peniko::kurbo::{Affine, BezPath, Rect};
+use peniko::{Color, Extend, Fill, Mix};
 
 use crate::display::{Command, DisplayList, LineCap, LineJoin, Paint, Stop};
 use crate::sprites::encode_png_rgba;

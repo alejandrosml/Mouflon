@@ -2,9 +2,9 @@
 //!
 //! Un rig bouge par morceaux : à chaque image, chaque partie (tête, pattes,
 //! queue…) se déplace, tourne ou s'étire d'un bloc. Plutôt que de refaire
-//! tous ses tracés à chaque image (avec Vello : une dizaine de passes de
-//! calcul sur toute la fenêtre et plus de 150 Mo de tampons sur le GPU),
-//! chaque suite de tracés d'une même partie est dessinée une fois pour
+//! tous ses tracés à chaque image (avec un moteur de tracés sur le GPU,
+//! comme Vello autrefois : une dizaine de passes de calcul sur toute la
+//! fenêtre et plus de 150 Mo de tampons), chaque suite de tracés d'une même partie est dessinée une fois pour
 //! toutes dans une image, à la finesse de l'écran. Le rendu direct n'a plus
 //! qu'à poser ces images, tournées et étirées comme leur partie.
 //!
@@ -14,12 +14,12 @@
 
 use std::collections::HashMap;
 
+use peniko::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
+use peniko::{Color, Extend, Fill};
 use tiny_skia::{
     BlendMode, FillRule, GradientStop, LinearGradient, Mask, Pixmap, RadialGradient, Shader,
     SpreadMode, Transform,
 };
-use vello::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
-use vello::peniko::{Color, Extend, Fill};
 
 use crate::display::{Bitmap, LineCap, LineJoin, Paint, Stop, StrokeStyle};
 use crate::rig::{Item, Part, Rig};
@@ -49,8 +49,9 @@ pub struct BakedRig {
 impl BakedRig {
     /// Cuit le rig pour un affichage à `points_per_unit` points par unité du
     /// dessin, avec l'éclairage `lighting` sur le corps. `None` si le dessin
-    /// ne se cuit pas (groupe semi-transparent, morceau démesuré…) : Vello le
-    /// dessine alors tel quel.
+    /// ne se cuit pas (groupe semi-transparent, morceau démesuré…) : ses
+    /// tracés sont alors dessinés tels quels, d'un bloc, sur le processeur
+    /// (voir [`crate::pieces`]).
     #[must_use]
     pub fn bake(rig: &Rig, points_per_unit: f64, lighting: f32) -> Option<Self> {
         // Un groupe semi-transparent compose plusieurs morceaux ensemble.

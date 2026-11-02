@@ -1,14 +1,14 @@
 //! Liste d'affichage indépendante du moteur graphique.
 //!
 //! Le rendu de l'animal produit une liste de commandes simples (formes,
-//! dégradés, flous, calques). Deux traducteurs la consomment : Vello pour
-//! l'écran, SVG pour l'outil d'aperçu. Une seule description, deux sorties
-//! identiques.
+//! dégradés, flous, calques). L'écran la reçoit en morceaux d'image (voir
+//! [`crate::pieces`]), l'outil d'aperçu en SVG : une seule description,
+//! deux sorties pareilles.
 
 use std::borrow::Cow;
 
-use vello::kurbo::{Affine, BezPath, Point, Rect};
-use vello::peniko::{Blob, Color, Extend, Fill, Mix};
+use peniko::kurbo::{Affine, BezPath, Point, Rect};
+use peniko::{Blob, Color, Extend, Fill, Mix};
 
 use crate::bc7;
 

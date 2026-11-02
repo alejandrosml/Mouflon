@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use mouflon_core::SpriteSheet;
-use vello::peniko::Blob;
+use peniko::Blob;
 
 use crate::bc7;
 use crate::display::{Bitmap, Pixels};

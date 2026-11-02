@@ -37,7 +37,10 @@ thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"
 
-vello = "0.11"
+# Formes et couleurs (kurbo, peniko) : ce que les dessins décrivent.
+peniko = "0.6"
+# Le GPU, pour le dessin sans calques (Windows et Linux plus tard, `MOUFLON_GPU`).
+wgpu = "30"
 usvg = "0.49"
 resvg = "0.49"
 png = "0.18"
@@ -90,7 +93,7 @@ strip = false
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
-# Les dépendances (Vello, wgpu…) restent rapides même en debug.
+# Les dépendances (wgpu, tiny-skia…) restent rapides même en debug.
 opt-level = 2
 
 [profile.dev.package.mouflon-render]

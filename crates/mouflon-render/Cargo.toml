@@ -1,6 +1,6 @@
 [package]
 name = "mouflon-render"
-description = "Rendu de Mouflon : rigs vectoriels animés, sprites et effets, via Vello."
+description = "Rendu de Mouflon : rigs vectoriels animés, sprites et effets, en morceaux d'image."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 mouflon-core.workspace = true
-vello.workspace = true
+peniko.workspace = true
 usvg.workspace = true
 png.workspace = true
 tiny-skia.workspace = true

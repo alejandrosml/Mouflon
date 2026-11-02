@@ -6,7 +6,7 @@
 //! les os prennent leur pose : les animations à clés, mêlées selon ce que fait
 //! l'animal, puis les mouvements du moteur pour les os qui ont un rôle (celui
 //! des dessins vectoriels, voir [`crate::animate`]). Chaque morceau se pose
-//! avec son os, comme une image du rendu direct : pas de Vello.
+//! avec son os, comme une image du rendu direct : aucun tracé.
 //!
 //! Les mouvements du moteur sont calculés dans le repère de la toile, comme
 //! si chaque os avec un rôle était libre (le corps monte et descend, les
@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use mouflon_core::{BonePose, BoneRole, PoseSignals, RUN_STRIDE, Shown, Skeleton};
-use vello::kurbo::{Affine, Point, Rect, Vec2};
+use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
 use crate::animate::{about, ease, leg_phase, root_transform, rotate_about, scale_about, stepping};
 use crate::display::{Bitmap, Command, DisplayList};

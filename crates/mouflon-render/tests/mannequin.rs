@@ -67,8 +67,8 @@ fn mannequin_loads_simulates_and_paints() {
 #[test]
 fn mannequin_hooves_stay_planted_while_walking() {
     use mouflon_render::animate::pose;
+    use mouflon_render::kurbo::{Affine, Point, Vec2 as KVec2};
     use mouflon_render::rig::Part;
-    use mouflon_render::vello::kurbo::{Affine, Point, Vec2 as KVec2};
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/mannequin/pet.toml");
     let def = Arc::new(load_pet(&path).expect("pet.toml du mannequin"));

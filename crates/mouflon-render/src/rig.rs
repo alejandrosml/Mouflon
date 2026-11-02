@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 
-use vello::kurbo::{Affine, BezPath, Point, Rect};
-use vello::peniko::{Color, Extend, Fill};
+use peniko::kurbo::{Affine, BezPath, Point, Rect};
+use peniko::{Color, Extend, Fill};
 
 use crate::display::{LineCap, LineJoin, Paint, Stop, StrokeStyle};
 

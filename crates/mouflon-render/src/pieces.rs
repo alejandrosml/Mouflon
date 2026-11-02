@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use vello::kurbo::{Affine, Point, Rect, Shape, Vec2};
-use vello::peniko::{Color, Extend, Mix};
+use peniko::kurbo::{Affine, Point, Rect, Shape, Vec2};
+use peniko::{Color, Extend, Mix};
 
 use crate::display::{Bitmap, Command, DisplayList, Paint, Stop};
 

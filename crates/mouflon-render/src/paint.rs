@@ -6,8 +6,8 @@ use mouflon_core::{
     Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Shadow, Support,
     Vec2 as CoreVec2,
 };
-use vello::kurbo::{Affine, BezPath, Point, Rect, Shape};
-use vello::peniko::{Color, Extend, Fill, Mix};
+use peniko::kurbo::{Affine, BezPath, Point, Rect, Shape};
+use peniko::{Color, Extend, Fill, Mix};
 
 use crate::animate::{PoseTransforms, pose};
 use crate::bake::BakedRig;
@@ -49,7 +49,7 @@ pub struct PetArt {
     /// Effets déjà dessinés dans les images.
     pub drawn: Drawn,
     /// Dessin vectoriel cuit en images (voir [`crate::bake`]) : le rendu
-    /// direct le pose sans Vello. `None` : tracés dessinés tels quels.
+    /// direct le pose morceau par morceau. `None` : tracés dessinés tels quels.
     pub baked: Option<Arc<BakedRig>>,
     /// Distance parcourue pendant un cycle de marche (points) : les pattes
     /// d'un dessin vectoriel balaient juste ce qu'il faut pour ne pas glisser.

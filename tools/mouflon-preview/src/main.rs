@@ -40,11 +40,9 @@ use mouflon_core::{
     Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
 };
 use mouflon_render::display::{Command, DisplayList, Paint, Stop, rgba};
+use mouflon_render::kurbo::{Affine, BezPath, Circle, Point, Rect as KRect, RoundedRect, Shape};
+use mouflon_render::peniko::{Color, Extend};
 use mouflon_render::svg::to_svg;
-use mouflon_render::vello::kurbo::{
-    Affine, BezPath, Circle, Point, Rect as KRect, RoundedRect, Shape,
-};
-use mouflon_render::vello::peniko::{Color, Extend};
 use mouflon_render::{Frame, PetArt, Style, paint_pet};
 use resvg::{tiny_skia, usvg};
 

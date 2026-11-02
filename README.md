@@ -14,26 +14,24 @@ screen, stroll along your windows and ride with them when you move them, climb
 the edges of the screen, graze, bleat, doze off — and let you catch them and
 throw them across the desktop.
 
-- **Light**: a native menu bar app, drawn by the GPU (Metal on a Mac). A
-  pet made of images is a few quads drawn straight into its window (a soft
-  shadow, the image, round particles), each image uploaded once, and all
-  the windows of a frame go to the GPU in a single submission. A vector pet
-  is baked into images when it loads, one per moving piece (head, legs,
-  tail…), so it is drawn the same way; the full vector renderer (Vello)
-  only starts for drawings that cannot be baked, and stops when they leave.
-  At launch, each kind of pet decodes its sheets on its own threads, one
-  row of tiles at a time, while the menu and the GPU get ready. Its images
-  are then compressed to BC7 in the background (four times less memory,
-  read as is by the GPU) and kept on disk, mapped back in from there: the
-  next launches find them ready in about ten milliseconds, even after the
-  app is moved or updated, and those pages do not count in the app's memory
-  footprint. Images
-  follow the display's own clock
-  (its full rate for brisk moves, half a ProMotion display's rate for a
-  stroll, 30 fps at rest, 20 fps asleep), a sprite is
-  redrawn only when its image changes, and the window list is read on a
-  separate thread (often only while a window carrying a pet moves), so it
-  never holds up an image.
+- **Light**: a native menu bar app. On a Mac, each screen has a single
+  transparent window, and each pet is a few Core Animation layers showing
+  shared images (its current frame, its shadow, its particles): the
+  system's compositor draws them, and Mouflon only tells it what moved. The
+  simulation and the layers run on their own display thread, woken by the
+  screen's clock, and questions to the system about other apps' windows go
+  through a helper process: nothing holds up a frame. A vector pet is baked
+  into images when it loads, one per moving piece (head, legs, tail…), so
+  it is shown the same way. At launch, each kind of pet decodes its sheets
+  on its own threads, one row of tiles at a time, while the menu gets
+  ready. Its images are then compressed to BC7 in the background (four
+  times less memory) and kept on disk, mapped back in from there: the next
+  launches find them ready in about ten milliseconds, even after the app is
+  moved or updated, and those pages do not count in the app's memory
+  footprint (the layers get them back decompressed, within a set budget).
+  Frames follow the display's own clock (its full rate for brisk moves,
+  half a ProMotion display's rate for a stroll, 30 fps at rest, 20 fps
+  asleep), and a layer changes only when what it shows changes.
 - **Beautiful**: continuous 120 Hz physics, timed to the moment each image
   reaches the display (ProMotion included), sub-pixel motion, in-between
   images for smoother animations, sharp pixel-exact images at rest, soft
@@ -278,9 +276,9 @@ its behaviors: [docs/format.md](docs/format.md) (all in French).
 | Crate | Role | `unsafe` |
 |---|---|---|
 | `mouflon-core` | physics (classic, and the realistic rigid-body engine), behaviors, pet formats, world (screens, visible window ledges) | forbidden |
-| `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; rigs baked into images (tiny-skia); Vello or SVG output | forbidden |
-| `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating pet windows, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
-| `mouflon-app` | transparent windows (winit), GPU (wgpu: direct sprite renderer, Vello for vector pets), input, native menu, translations | forbidden |
+| `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; everything as pieces of image (rigs, shadows and discs baked with tiny-skia); SVG output | forbidden |
+| `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating screen windows, Core Animation layers and the display clock, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
+| `mouflon-app` | one transparent window per screen (winit), the display thread (flock, scene of layers, timing), GPU renderer for systems without layers (wgpu), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
@@ -342,27 +340,27 @@ l'écran, se promènent sur tes fenêtres et voyagent avec elles quand tu les
 déplaces, escaladent les bords de l'écran, broutent, bêlent, s'endorment — et
 se laissent attraper et lancer à travers le bureau.
 
-- **Léger** : une app native de la barre des menus, dessinée par le GPU
-  (Metal sur Mac). Un animal en images, ce sont quelques quadrilatères
-  dessinés droit dans sa fenêtre (une ombre douce, l'image, des particules
-  rondes), chaque image envoyée une fois au GPU, et toutes les fenêtres
-  d'une image partent au GPU en un seul envoi. Un animal vectoriel est cuit
-  en images à son chargement, une par morceau qui bouge (tête, pattes,
-  queue…), et se dessine de la même façon ; le moteur vectoriel complet
-  (Vello) ne se met en route que pour un dessin qui ne se cuit pas, et
-  s'arrête quand il s'en va. Au lancement, chaque espèce décode ses
-  planches sur ses propres fils, une rangée de cases à la fois, pendant que
-  le menu et le GPU se préparent. Ses images sont ensuite compressées en
-  BC7 en arrière-plan (quatre fois moins de mémoire, lues telles quelles
-  par le GPU) et gardées sur le disque, d'où elles sont projetées en
-  mémoire : les lancements suivants les retrouvent prêtes en une dizaine de
-  millisecondes, même après un déplacement ou une mise à jour de l'app, et
-  ces pages ne comptent pas dans l'empreinte mémoire de l'app. Les images suivent l'horloge de
-  l'écran lui-même (sa pleine cadence pour un mouvement vif, la moitié de
-  celle d'un écran ProMotion pour une promenade, 30 i/s au repos, 20 i/s
-  endormi), une image n'est redessinée que quand elle change, et la liste des
-  fenêtres est relevée sur un fil à part (souvent seulement lorsqu'une
-  fenêtre portant un animal bouge), sans jamais retenir une image.
+- **Léger** : une app native de la barre des menus. Sur Mac, chaque écran
+  a une seule fenêtre transparente, et chaque animal y est fait de quelques
+  calques Core Animation qui montrent des images partagées (son image du
+  moment, son ombre, ses particules) : le compositeur du système les
+  dessine, et Mouflon ne lui dit que ce qui bouge. La simulation et les
+  calques tournent sur leur propre fil, réveillé par l'horloge de l'écran,
+  et les questions au système sur les fenêtres des autres apps passent par
+  un processus auxiliaire : rien ne retient une image. Un animal vectoriel
+  est cuit en images à son chargement, une par morceau qui bouge (tête,
+  pattes, queue…), et se montre de la même façon. Au lancement, chaque
+  espèce décode ses planches sur ses propres fils, une rangée de cases à la
+  fois, pendant que le menu se prépare. Ses images sont ensuite compressées
+  en BC7 en arrière-plan (quatre fois moins de mémoire) et gardées sur le
+  disque, d'où elles sont projetées en mémoire : les lancements suivants
+  les retrouvent prêtes en une dizaine de millisecondes, même après un
+  déplacement ou une mise à jour de l'app, et ces pages ne comptent pas dans
+  l'empreinte mémoire de l'app (les calques les reçoivent décompressées,
+  dans un budget fixé). Les images suivent l'horloge de l'écran lui-même
+  (sa pleine cadence pour un mouvement vif, la moitié de celle d'un écran
+  ProMotion pour une promenade, 30 i/s au repos, 20 i/s endormi), et un
+  calque ne change que quand ce qu'il montre change.
 - **Beau** : une physique continue à 120 Hz, calée sur l'instant où chaque
   image arrive à l'écran (ProMotion compris), des mouvements au sous-pixel
   près, des images intermédiaires pour des animations plus fluides, des
@@ -625,9 +623,9 @@ squelette) ; pour régler ses comportements : [docs/format.md](docs/format.md).
 | Crate | Rôle | `unsafe` |
 |---|---|---|
 | `mouflon-core` | physique (classique, et le moteur réaliste de corps rigides), comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
-| `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; rigs cuits en images (tiny-skia) ; sortie Vello ou SVG | interdit |
-| `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'animaux non activantes, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
-| `mouflon-app` | fenêtres transparentes (winit), GPU (wgpu : rendu direct des images, Vello pour les dessins vectoriels), entrées, menu natif, traductions | interdit |
+| `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; tout en morceaux d'image (rigs, ombres et disques cuits avec tiny-skia) ; sortie SVG | interdit |
+| `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'écran non activantes, calques Core Animation et horloge de l'écran, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
+| `mouflon-app` | une fenêtre transparente par écran (winit), le fil de l'affichage (troupeau, scène de calques, rythme), dessin sur le GPU pour les systèmes sans calques (wgpu), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |

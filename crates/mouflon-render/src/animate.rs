@@ -8,7 +8,7 @@
 use std::f64::consts::PI;
 
 use mouflon_core::{PoseSignals, RUN_STRIDE};
-use vello::kurbo::{Affine, Point, Vec2};
+use peniko::kurbo::{Affine, Point, Vec2};
 
 use crate::rig::{Part, Rig};
 

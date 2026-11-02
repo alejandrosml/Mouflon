@@ -22,9 +22,9 @@ use std::time::{Duration, Instant};
 use mouflon_core::{PetView, Rect, SaucerView, Vec2};
 use mouflon_platform as platform;
 use mouflon_render::display::{Bitmap, Command, DisplayList};
+use mouflon_render::kurbo::Affine;
+use mouflon_render::peniko::Mix;
 use mouflon_render::pieces::{Pieces, flatten};
-use mouflon_render::vello::kurbo::Affine;
-use mouflon_render::vello::peniko::Mix;
 use mouflon_render::{Frame, PetArt, SpriteKey, Style, paint_pet};
 use winit::window::Window;
 

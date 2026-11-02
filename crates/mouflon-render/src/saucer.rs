@@ -5,13 +5,13 @@
 //!
 //! Le corps et le faisceau sont cuits une fois pour toutes en images (voir
 //! [`crate::props`]) ; les anneaux, la lueur et les lumières sont des
-//! disques : tout passe par le rendu direct, sans Vello.
+//! disques : rien que des images et des disques, sans tracé.
 
 use std::sync::OnceLock;
 
 use mouflon_core::{BEAM_MAX, SAUCER_HEIGHT, SAUCER_WIDTH, SaucerView, Vec2 as CoreVec2};
-use vello::kurbo::{Affine, BezPath, Ellipse, Point, Rect, Shape};
-use vello::peniko::{Color, Extend};
+use peniko::kurbo::{Affine, BezPath, Ellipse, Point, Rect, Shape};
+use peniko::{Color, Extend};
 
 use crate::display::{DisplayList, Paint, Stop, rgba};
 use crate::paint::{Canvas, Frame, Style};
@@ -259,7 +259,7 @@ mod tests {
     use super::*;
     use crate::display::Command;
 
-    /// Ni tracé ni contour : le rendu direct dessine tout, sans Vello.
+    /// Ni tracé ni contour : rien à dessiner sur le processeur à chaque image.
     #[test]
     fn the_saucer_needs_no_vector_paths() {
         let canvas = saucer_canvas();

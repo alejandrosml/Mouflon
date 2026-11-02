@@ -1,6 +1,6 @@
 //! Test de bout en bout : la brebis peinte sur son squelette se charge, vit
 //! un moment et se dessine en images seulement (le rendu direct la pose, sans
-//! Vello), dans toutes ses poses.
+//! aucun tracé), dans toutes ses poses.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ fn aquarelle_loads_lives_and_paints_in_images_only() {
                 bitmap, transform, ..
             } = command
             {
-                let rect = transform.transform_rect_bbox(mouflon_render::vello::kurbo::Rect::new(
+                let rect = transform.transform_rect_bbox(mouflon_render::kurbo::Rect::new(
                     0.0,
                     0.0,
                     f64::from(bitmap.width),
