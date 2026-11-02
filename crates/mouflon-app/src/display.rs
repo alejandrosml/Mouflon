@@ -2075,7 +2075,7 @@ mod tests {
         display.command(Command::Start {
             settle: Duration::ZERO,
         });
-        // Il tombe et se pose.
+        // Il arrive (il tombe un moment).
         for _ in 0..240 {
             display.next_frame = None;
             display.frame(None, 0);
@@ -2100,6 +2100,55 @@ mod tests {
         // Rien de neuf : rien n'est redit.
         display.frame(None, 0);
         assert_eq!(hits(&receiver), None);
+    }
+
+    #[test]
+    fn a_pet_is_grabbed_dragged_and_let_go() {
+        let (mut display, receiver) = display();
+        let (def, art) = mannequin();
+        display.command(screens());
+        display.command(Command::Spawn { def, art });
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        for _ in 0..240 {
+            display.next_frame = None;
+            display.frame(None, 0);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at = display.flock.pets()[0].position();
+        let start = Vec2::new(at.x, at.y - 10.0);
+        // Appuyé sur lui : pas encore pris (un simple clic le touche).
+        display.command(Command::Cursor(start));
+        display.command(Command::Press(Some(start)));
+        display.frame(None, 0);
+        assert_eq!(display.pointer.dragging, None);
+        // Le curseur s'éloigne : il est pris là où l'on a cliqué, et suit.
+        let to = Vec2::new(start.x + 120.0, start.y - 200.0);
+        display.command(Command::Cursor(to));
+        display.frame(None, 0);
+        let id = display.flock.pets()[0].id();
+        assert_eq!(display.pointer.dragging, Some(id));
+        assert_eq!(display.flock.pets()[0].support(), Support::Held);
+        // Il suit le curseur.
+        for _ in 0..60 {
+            display.next_frame = None;
+            display.frame(None, 0);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let held = display.flock.pets()[0].position();
+        assert!((held - at).length() > 100.0, "{held:?} {at:?}");
+        // Pendant qu'on le tient, la fenêtre prend la souris partout.
+        let hits = reports(&receiver).into_iter().rev().find_map(|r| match r {
+            Report::Hittest(hits) => Some(hits),
+            _ => None,
+        });
+        assert_eq!(hits, Some(vec![(7, true)]));
+        // Lâché : il tombe.
+        display.command(Command::Release(Some(to)));
+        assert_eq!(display.pointer.dragging, None);
+        display.frame(None, 0);
+        assert_eq!(display.flock.pets()[0].support(), Support::Air);
     }
 
     #[test]
