@@ -100,6 +100,21 @@ jobs:
             bash "tools/essai/Essai de charge.command" | tee essai-charge-console.log
           grep -q "essai terminé" essais/*-charge/sortie.log
 
+      # Budgets (docs/architecture.md, 3.7) : la construction échoue si
+      # Mouflon lui-même a causé des à-coups, dans l'essai de trois minutes
+      # ou l'essai de charge — son fil au travail, sans que la machine
+      # virtuelle retienne tout le processus (`analyse.py --budget`).
+      - name: Budgets des essais
+        run: |
+          failed=0
+          for dir in essais/*/; do
+            case "$dir" in *-gpu/) continue ;; esac
+            echo "== $dir"
+            python3 tools/essai/analyse.py --budget "$dir" > budget.txt 2>&1 || failed=1
+            awk '/^BUDGETS/,0' budget.txt
+          done
+          exit $failed
+
       # Vitrine : la fenêtre des réglages en images, en plusieurs langues
       # (`MOUFLON_LANGUE`) — claire, puis avec ses remarques en clair et en
       # sombre — et le texte du menu d'un animal (`vitrine/`). Rien n'y est

@@ -3,6 +3,7 @@
 
     python3 tools/essai/analyse.py essais/2026-10-30_21h40/   # dossier d'un essai
     python3 tools/essai/analyse.py journal.log                # un journal seul
+    python3 tools/essai/analyse.py --budget essais/…/         # échoue hors budget
 
 Le journal (format décrit dans `crates/mouflon-app/src/stats.rs`) note chaque
 image, chaque événement, les retards du fil des images avec sa pile, et toutes
@@ -13,8 +14,9 @@ autour : `top`, `log stream`, `sample`, `vm_stat`, `pmset`, et des repères.
 Ce script en tire ce qui cloche : les à-coups et leur cause probable, les
 blocages et où était le fil des images, les images longues à préparer, les
 animations trop lentes, les sauts de position, les collisions, puis les
-ressources (processeur, énergie, mémoire, allocations, fils, système) et ce
-qui se passait sur le Mac au moment des à-coups.
+ressources (processeur, énergie, mémoire, allocations, fils, système), ce
+qui se passait sur le Mac au moment des à-coups, et les budgets : avec
+`--budget`, le script échoue si Mouflon lui-même a causé trop d'à-coups.
 """
 
 import os
@@ -418,6 +420,59 @@ def report_frames(trial):
     return hitches
 
 
+# Budgets (docs/architecture.md, 3.7), vérifiés par la CI avec --budget.
+# Un à-coup est dû à Mouflon quand le fil qui fait les images travaillait
+# (bloqué « occupé », ou une image d'avant trop longue) sans que tout le
+# processus attende : le fil des diagnostics, lui, était à l'heure.
+# Au plus une image sur deux mille (le bruit d'une machine virtuelle).
+BUDGET_OWN_SHARE = 0.0005
+
+
+def held_up(trial, start, end, lost_ms):
+    """Tout le processus attendait-il entre `start` et `end` (secondes),
+    pour une bonne part des `lost_ms` perdues ? Le fil des diagnostics se
+    réveille souvent avec quelques dizaines de millisecondes de retard (les
+    minuteries de la machine virtuelle) : seul compte un retard qui explique
+    au moins la moitié de l'à-coup."""
+    for t, ms in trial.diag_late:
+        if ms >= max(20.0, lost_ms * 0.5) and t >= start and t - ms / 1000 <= end:
+            return True
+    return False
+
+
+def own_hitches(trial, hitches, normal):
+    """Les à-coups dus à Mouflon (voir plus haut) : [(t, cause)]."""
+    own = []
+    for i, f in hitches:
+        cause = classify(trial, i, normal)
+        busy = cause.endswith("(occupé)") or cause.startswith("image d'avant longue")
+        lost = f["gap"] - expected_interval(f, normal)
+        if busy and not held_up(trial, trial.frames[i - 1]["t"] - 0.002, f["t"], lost):
+            own.append((f["t"], cause))
+    return own
+
+
+def report_budgets(trial, hitches):
+    """Les budgets de l'essai : `True` s'ils sont tenus."""
+    frames = trial.frames
+    moving_gaps = [f["gap"] for f in frames[1:] if moving(f) and f["gap"] > 0]
+    if not moving_gaps:
+        return True
+    normal = statistics.median(moving_gaps)
+    own = own_hitches(trial, hitches, normal)
+    share = len(own) / max(len(moving_gaps), 1)
+    held = len(hitches) - len(own)
+    section("BUDGETS (vérifiés par la CI) :")
+    ok = share <= BUDGET_OWN_SHARE
+    print(f"  à-coups dus à Mouflon (son fil au travail, le processus pas retenu) : {len(own)} "
+          f"({100 * share:.2f} % des images en mouvement ; au plus {100 * BUDGET_OWN_SHARE:.2f} %) "
+          f"{'tenu' if ok else 'DÉPASSÉ'}")
+    for t, cause in own[:12]:
+        print(f"    {t:8.2f} s : {cause}")
+    print(f"  autres à-coups (écran, système, processus retenu) : {held}")
+    return ok
+
+
 def report_clock(trial):
     beats = [f["values"] for f in trial.frames if f["clock"] and "vs" in f["values"]]
     if not beats:
@@ -805,9 +860,12 @@ def report_load(trial, normal):
 
 
 def main():
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    budget = "--budget" in args
+    args = [a for a in args if a != "--budget"]
+    if len(args) != 1:
         sys.exit(__doc__.split("\n\n")[1])
-    target = sys.argv[1]
+    target = args[0]
     folder = target if os.path.isdir(target) else None
     path = os.path.join(target, "journal.log") if folder else target
     trial = parse(path)
@@ -837,6 +895,9 @@ def main():
         print(f"  {t:8.1f} s : " + " ".join(f"{k} {v:g}" for k, v in values.items()))
     if trial.bilan:
         print("\n" + trial.bilan)
+    kept = report_budgets(trial, hitches)
+    if budget and not kept:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
