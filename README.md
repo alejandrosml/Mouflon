@@ -166,8 +166,11 @@ closes and a notification tells you it is done. Everything goes to
 wrong: hitches and their likely cause, stalls of the thread that makes the
 images and where it was, the slowest images, animations short of images,
 position jumps, each collision step by step, the resources, and what the Mac
-was doing around the longest hitches. The CI runs the same trial on every Mac
-build, with pictures of the scene compared to screen captures.
+was doing around the longest hitches. It ends with the trial's budgets: a
+hitch is Mouflon's own when its thread was at work while the process was not
+held up by the machine, and `analyse.py --budget` fails past one moving frame
+in two thousand. The CI runs the same trial on every Mac build, with pictures
+of the scene compared to screen captures, and fails over budget.
 
 `Essai de 3 minutes (GPU).command` runs the same trial with the pets drawn on
 the GPU in each screen's window instead of Core Animation layers
@@ -507,9 +510,12 @@ va dans `essais/<date>/` :
 à-coups et leur cause probable, les blocages du fil qui fait les images et où
 il en était, les images les plus longues à préparer, les animations qui
 manquent d'images, les sauts de position, chaque collision pas à pas, les
-ressources, et ce que faisait le Mac autour des plus longs à-coups. La CI fait
-le même essai à chaque construction pour Mac, avec des instantanés de la
-scène comparés à des captures de l'écran.
+ressources, et ce que faisait le Mac autour des plus longs à-coups. Il finit
+par les budgets de l'essai : un à-coup est dû à Mouflon quand son fil
+travaillait sans que la machine retienne le processus, et
+`analyse.py --budget` échoue au-delà d'une image en mouvement sur deux mille.
+La CI fait le même essai à chaque construction pour Mac, avec des instantanés
+de la scène comparés à des captures de l'écran, et échoue hors budget.
 
 `Essai de 3 minutes (GPU).command` fait le même essai avec les animaux
 dessinés sur le GPU dans la fenêtre de chaque écran au lieu des calques Core
