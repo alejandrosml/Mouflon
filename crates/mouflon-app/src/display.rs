@@ -901,7 +901,7 @@ impl<C: Clock> Display<C> {
                     // vue entre deux pas n'est calculée que pour ceux qui sont
                     // tout près (une foule en compte des centaines).
                     let (half, height) = art.body;
-                    let at = pet.position();
+                    let at = pet.drawn_position();
                     let margin = 64.0;
                     (p.x - at.x).abs() <= half + margin
                         && p.y >= at.y - height - margin

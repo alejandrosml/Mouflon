@@ -260,6 +260,11 @@ impl Obb {
         self.support(Vec2::new(0.0, 1.0))
     }
 
+    /// Le même, ses axes déjà connus.
+    pub(crate) fn lowest_point_with(&self, axes: [Vec2; 2]) -> Vec2 {
+        self.support_with(axes, Vec2::new(0.0, 1.0))
+    }
+
     /// Le point le plus avancé dans la direction `dir` : un coin, ou le
     /// milieu d'un côté qui lui fait face.
     #[must_use]
@@ -339,6 +344,30 @@ pub(crate) fn obb_contact_with(
         return None;
     }
     separating_axes(a, axes_a, b, axes_b)
+}
+
+/// De combien ils s'enfoncent l'un dans l'autre (séparation des axes), sans
+/// chercher le point de contact ; leurs axes déjà connus.
+pub(crate) fn obb_depth_with(
+    a: &Obb,
+    axes_a: [Vec2; 2],
+    b: &Obb,
+    axes_b: [Vec2; 2],
+) -> Option<f32> {
+    if apart_circles(a, b) {
+        return None;
+    }
+    let mut depth = f32::INFINITY;
+    for axis in axes_a.into_iter().chain(axes_b) {
+        let (a0, a1) = a.project_with(axes_a, axis);
+        let (b0, b1) = b.project_with(axes_b, axis);
+        let overlap = a1.min(b1) - a0.max(b0);
+        if overlap <= 0.0 {
+            return None;
+        }
+        depth = depth.min(overlap);
+    }
+    Some(depth)
 }
 
 /// La séparation des axes elle-même.

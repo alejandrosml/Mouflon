@@ -22,6 +22,18 @@ mod script;
 
 /// Pas de simulation fixe : 120 Hz, la fréquence des écrans ProMotion.
 pub const TICK: f32 = 1.0 / 120.0;
+/// Temps que met le dessin à rejoindre son corps replacé d'un coup (voir
+/// `Pet::smooth`) : il en a fait les deux tiers en ce temps (secondes).
+const SMOOTH_TIME: f32 = 0.035;
+/// Vitesse à laquelle le dessin rejoint au plus son corps (points par
+/// seconde) : ramené de loin (un animal qui dépassait du bord de l'écran,
+/// heurté), il y revient d'un mouvement qu'on suit, pas d'un éclair.
+const SMOOTH_SPEED: f32 = 1000.0;
+/// Deux corps qui se chevauchaient de plus que ceci (fois la hauteur du
+/// plus petit) au début du pas passent l'un devant l'autre (voir
+/// `overlapped_before`). En deçà, c'est un contact qui dure (l'un appuyé
+/// sur l'autre) : on les sépare.
+const OVERLAP_BEFORE: f32 = 0.15;
 
 const BLINK_TIME: f32 = 0.13;
 /// Cadence qui suffit à un animal qui va son petit train (images par
@@ -481,6 +493,22 @@ pub struct Pet {
     /// Vitesse dans le repère de l'écran au pas précédent (physique
     /// réaliste) : ses accélérations font bouger oreilles et queue.
     prev_world_vel: Vec2,
+    /// Retard de son dessin sur son corps (points) : quand la simulation le
+    /// replace d'un coup (séparé d'un autre corps, ramené à un bord), son
+    /// dessin reste où il était et le rejoint en glissant, en quelques
+    /// centièmes de seconde (voir [`SMOOTH_TIME`] et [`SMOOTH_SPEED`]). Rien
+    /// ne saute à l'écran.
+    smooth: Vec2,
+    /// Le même au pas précédent (pour l'interpolation entre deux pas).
+    prev_smooth: Vec2,
+    /// Tout juste arrivé (apparu, réapparu) : jusqu'à ce qu'il se pose une
+    /// première fois, il passe devant les autres au lieu de les heurter.
+    /// Plusieurs animaux qui apparaissent ensemble se chevauchent souvent :
+    /// ils ne s'écartent pas d'un coup en tombant.
+    ghost: bool,
+    /// Hauteur du coin sur lequel il reposait, penché, la dernière fois
+    /// qu'on l'a vu au sol pendant ce pas (voir `keep_lift_on_take_off`).
+    ground_lift: Vec2,
 }
 
 /// Au revoir : l'animal joue son animation d'adieu, puis s'efface.
@@ -571,9 +599,11 @@ impl Pet {
         self.pos = Vec2::new(frame.x + left + p.width * 0.5, frame.y + top + p.height);
         self.prev_pos = self.pos;
         self.prev_lift = Vec2::ZERO;
+        self.clear_smooth();
         self.vel = Vec2::ZERO;
         self.hold = None;
         self.support = Support::Air;
+        self.ghost = true;
         self.ground_ref = None;
         self.walking_off = false;
         self.anim.flip = self.facing;
@@ -614,8 +644,10 @@ impl Pet {
         self.pos = Vec2::new(x, arena.top() + def.physics.height + 2.0);
         self.prev_pos = self.pos;
         self.prev_lift = Vec2::ZERO;
+        self.clear_smooth();
         self.vel = Vec2::ZERO;
         self.support = Support::Air;
+        self.ghost = true;
         self.ground_ref = None;
         self.walking_off = false;
         let first = self
@@ -659,6 +691,8 @@ impl Pet {
         self.support = Support::Ground {
             surface: surface.id,
         };
+        self.ghost = false;
+        self.ground_lift = self.tilt_lift();
         self.ground_ref = Some(GroundRef {
             surface: surface.id,
             x0: surface.x0,
@@ -768,6 +802,10 @@ impl Pet {
             grace: false,
             realistic: false,
             prev_world_vel: Vec2::ZERO,
+            smooth: Vec2::ZERO,
+            prev_smooth: Vec2::ZERO,
+            ghost: true,
+            ground_lift: Vec2::ZERO,
         }
     }
 
@@ -796,6 +834,14 @@ impl Pet {
     #[must_use]
     pub fn position(&self) -> Vec2 {
         self.pos
+    }
+
+    /// Où est son dessin, à peu près (au dernier pas, sans l'interpolation
+    /// ni le coin d'un animal penché) : sa position, plus le retard de son
+    /// dessin quand la simulation l'a replacé d'un coup (voir `smooth`).
+    #[must_use]
+    pub fn drawn_position(&self) -> Vec2 {
+        self.pos + self.smooth
     }
 
     #[must_use]
@@ -903,6 +949,9 @@ impl Pet {
         if self.is_child() || self.leaving.is_some() {
             return;
         }
+        // Pris en main, il est dessiné sous le curseur : plus de retard.
+        self.clear_smooth();
+        self.ghost = false;
         let offset = if self.realistic {
             // Le point de prise dans le repère du corps : l'animal pendra
             // dessous et tournera autour (voir `step_held_real`).
@@ -1253,6 +1302,7 @@ impl Pet {
         self.carry = Vec2::ZERO;
         self.air_time = 0.0;
         self.grace = false;
+        self.ground_lift = self.tilt_lift();
         self.support = Support::Air;
         self.ground_ref = None;
         self.walking_off = false;
@@ -1423,6 +1473,8 @@ impl Pet {
         self.realistic = tracker.is_some();
         self.prev_pos = self.pos;
         self.prev_lift = self.tilt_lift();
+        self.ground_lift = self.prev_lift;
+        self.prev_smooth = self.smooth;
         self.follow_back_top(dt);
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
@@ -1455,6 +1507,37 @@ impl Pet {
         self.update_shadow(world);
         self.prev_vel_x = self.vel.x;
         self.prev_world_vel = self.vel + self.carry;
+        // Le dessin rejoint son corps.
+        if self.smooth != Vec2::ZERO {
+            let left = self.smooth.length();
+            let catch_up = (left * (1.0 - (-dt / SMOOTH_TIME).exp())).min(SMOOTH_SPEED * dt);
+            self.smooth *= 1.0 - catch_up / left;
+            if left - catch_up < 0.05 {
+                self.smooth = Vec2::ZERO;
+            }
+        }
+    }
+
+    /// Son dessin est là où il est (rien à rattraper).
+    fn clear_smooth(&mut self) {
+        self.smooth = Vec2::ZERO;
+        self.prev_smooth = Vec2::ZERO;
+    }
+
+    /// Le replace d'un coup à l'abscisse `x` (un mur, un bord de l'écran, un
+    /// bout de rebord) : son dessin y glisse (voir `Pet::smooth`), ou y
+    /// apparaît s'il vient de plus loin que sa largeur (un animal desktopPet
+    /// sorti de l'écran qui revient par le bord).
+    pub(super) fn snap_x(&mut self, x: f32) {
+        let moved = x - self.pos.x;
+        self.pos.x = x;
+        if moved.abs() > self.def.physics.width {
+            self.prev_pos.x = x;
+            self.smooth.x = 0.0;
+            self.prev_smooth.x = 0.0;
+        } else {
+            self.smooth.x -= moved;
+        }
     }
 
     fn step_ground(&mut self, dt: f32, world: &World, input: &Input, surface_id: SurfaceId) {
@@ -1493,7 +1576,7 @@ impl Pet {
         if desired != 0.0
             && let Some((next, x)) = self.window_side(self.vel.x * dt, world, input, true)
         {
-            self.pos.x = x;
+            self.snap_x(x);
             self.vel.x = 0.0;
             self.enter(next);
             return;
@@ -1529,13 +1612,13 @@ impl Pet {
         let arena = world.arena();
         let half = p.width * 0.5;
         if self.pos.x - half < arena.left() {
-            self.pos.x = arena.left() + half;
+            self.snap_x(arena.left() + half);
             if self.vel.x < 0.0 {
                 self.vel.x = 0.0;
                 self.on_wall(world, input);
             }
         } else if self.pos.x + half > arena.right() {
-            self.pos.x = arena.right() - half;
+            self.snap_x(arena.right() - half);
             if self.vel.x > 0.0 {
                 self.vel.x = 0.0;
                 self.on_wall(world, input);
@@ -1719,7 +1802,7 @@ impl Pet {
             // Garde le museau sur le rebord (sans dépasser le milieu si le rebord est étroit).
             let lo = (surface.x0 + reach).min(surface.x0 + surface.width() * 0.5);
             let hi = (surface.x1 - reach).max(surface.x1 - surface.width() * 0.5);
-            self.pos.x = self.pos.x.clamp(lo, hi);
+            self.snap_x(self.pos.x.clamp(lo, hi));
             if !matches!(def.behaviors[self.behavior].motion, Motion::Jump { .. }) {
                 self.vel.x = 0.0;
             }
@@ -2396,6 +2479,17 @@ impl Pet {
         }
     }
 
+    /// Parti en l'air pendant le pas alors qu'il reposait penché sur un
+    /// coin (voir `tilt_lift`) : son corps repart d'où on le voyait, pas
+    /// d'un coin enfoncé dans la surface. Son dessin ne tombe pas d'un coup
+    /// de la hauteur du coin, et il ne passe pas à travers un rebord.
+    fn keep_lift_on_take_off(&mut self) {
+        if self.ground_lift != Vec2::ZERO && self.support == Support::Air {
+            self.pos -= self.ground_lift;
+        }
+        self.ground_lift = Vec2::ZERO;
+    }
+
     /// Posé au sol encore penché (il se redresse après une culbute, en
     /// physique réaliste) : il repose sur le coin le plus bas de son corps,
     /// pas sur ses pattes. Son dessin monte d'autant, et redescend à mesure
@@ -2460,8 +2554,10 @@ impl Pet {
                 Some(hold) => hold.target - hold.offset,
                 // Penché au sol, il repose sur un coin : son dessin monte
                 // d'autant, d'un pas à l'autre comme sa position.
-                None => (self.prev_pos - self.prev_lift)
-                    .lerp(self.pos - self.tilt_lift(), alpha.clamp(0.0, 1.0)),
+                None => (self.prev_pos - self.prev_lift + self.prev_smooth).lerp(
+                    self.pos - self.tilt_lift() + self.smooth,
+                    alpha.clamp(0.0, 1.0),
+                ),
             },
             facing: a.flip,
             pose: PoseSignals {
@@ -2578,28 +2674,75 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
 
 /// Ces deux animaux peuvent-ils se heurter comme des corps (physique
 /// réaliste) ? Il en faut un en l'air ; ni l'un ni l'autre ne doit être un
-/// personnage secondaire ou en partance, ni porté par l'autre.
-fn physical_pair(a: &Pet, b: &Pet) -> bool {
+/// personnage secondaire, en partance ou tout juste arrivé, ni porté par
+/// l'autre.
+fn physical_pair(a: &Pet, b: &Pet, axes_a: [Vec2; 2], axes_b: [Vec2; 2]) -> bool {
     let flying = |p: &Pet| p.support == Support::Air;
-    let free = |p: &Pet| !p.is_child() && p.leaving.is_none() && !p.finished;
+    let free = |p: &Pet| !p.is_child() && p.leaving.is_none() && !p.finished && !p.ghost;
     let carried = |p: &Pet, by: &Pet| {
         p.support
             == Support::Ground {
                 surface: crate::physics::pet_surface(by.id),
             }
     };
-    // Arrivant d'en haut sur un animal au sol, il se pose sur son dos (une
-    // surface), au lieu de rebondir sur son corps.
-    let landing_on = |p: &Pet, by: &Pet| {
-        flying(p) && by.back().is_some() && p.body().center.y < by.pos.y - by.def.physics.height
+    // Arrivant d'en haut au-dessus du dos d'un animal au sol, il s'y pose
+    // (une surface), au lieu de rebondir sur son corps. À côté du dos, il
+    // heurte son corps dès qu'il le touche : il ne s'y enfonce pas jusqu'à
+    // la taille pour en être chassé d'un coup.
+    let landing_on = |p: &Pet, axes: [Vec2; 2], by: &Pet| {
+        if !flying(p) {
+            return false;
+        }
+        let body = p.body();
+        body.center.y < by.pos.y - by.def.physics.height
+            && by.back().is_some_and(|back| {
+                back.surface.contains_x(
+                    body.lowest_point_with(axes).x,
+                    p.def.physics.width * LANDING_REACH,
+                )
+            })
     };
     (flying(a) || flying(b))
         && free(a)
         && free(b)
         && !carried(a, b)
         && !carried(b, a)
-        && !landing_on(a, b)
-        && !landing_on(b, a)
+        && !landing_on(a, axes_a, b)
+        && !landing_on(b, axes_b, a)
+}
+
+/// Leurs corps se chevauchaient déjà franchement au début du pas : ils ne
+/// sont pas l'un contre l'autre, mais l'un devant l'autre. Au sol, deux
+/// animaux se croisent ainsi ; l'un part en l'air (heurté, une culbute) du
+/// milieu d'un groupe, ou retombe d'un tas où il était coincé. Les séparer
+/// d'un coup le jetterait de côté, d'un corps dans le suivant : il ne les
+/// heurte qu'une fois sorti d'eux.
+/// `reach` : la somme des demi-côtés de leurs rectangles droits.
+fn overlapped_before(
+    a: &Pet,
+    b: &Pet,
+    (axes_a, axes_b): ([Vec2; 2], [Vec2; 2]),
+    reach: Vec2,
+) -> bool {
+    let before = |p: &Pet| crate::physics::Obb {
+        center: p.prev_pos - Vec2::new(0.0, p.def.physics.height * 0.5),
+        ..p.body()
+    };
+    let (was_a, was_b) = (before(a), before(b));
+    let depth = OVERLAP_BEFORE * a.def.physics.height.min(b.def.physics.height);
+    // Ils ne s'enfoncent pas l'un dans l'autre de plus que leurs rectangles
+    // droits ne se chevauchent, ni de moins que les cercles qu'ils
+    // contiennent : le plus souvent, pas besoin d'aller plus loin.
+    let apart = was_b.center - was_a.center;
+    let overlap = reach - Vec2::new(apart.x.abs(), apart.y.abs());
+    if overlap.x.min(overlap.y) <= depth {
+        return false;
+    }
+    let inner = was_a.half.x.min(was_a.half.y) + was_b.half.x.min(was_b.half.y) - depth;
+    if inner > 0.0 && apart.dot(apart) < inner * inner {
+        return true;
+    }
+    crate::physics::obb_depth_with(&was_a, axes_a, &was_b, axes_b).is_some_and(|d| d > depth)
 }
 
 /// Deux corps se heurtent : échange d'élan au point de contact (avec
@@ -2630,16 +2773,22 @@ fn bodies_hit(
         PET_RESTITUTION,
         PET_FRICTION,
     );
-    // Séparés le long de la normale, selon qui peut bouger.
+    // Séparés le long de la normale, selon qui peut bouger. Un corps entré
+    // loin dans un autre (lâché dessus, une foule serrée) en ressort d'un
+    // coup, mais son dessin y glisse (voir `Pet::smooth`) : rien ne saute à
+    // l'écran.
     let movable = |p: &Pet| if p.support == Support::Air { 1.0 } else { 0.0 };
     let (ma, mb) = (movable(a), movable(b));
     if ma + mb > 0.0 {
+        let (from_a, from_b) = (a.pos, b.pos);
         let push = contact.normal * (contact.depth / (ma + mb));
         a.pos -= push * ma;
         b.pos += push * mb;
         // Poussé vers le bas, il ne passe pas sous le sol.
         a.keep_above_floor(world);
         b.keep_above_floor(world);
+        a.smooth += from_a - a.pos;
+        b.smooth += from_b - b.pos;
     }
     for (pet, after) in [(a, ra), (b, rb)] {
         match pet.support {
@@ -2692,6 +2841,10 @@ fn meeting(a: &Pet, b: &Pet) -> bool {
 /// Sans réaction, `a` passe son chemin (il croise l'autre).
 fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
     let (def_a, def_b) = (Arc::clone(&a.def), Arc::clone(&b.def));
+    // Où leurs dessins se touchent (ce que `meeting` vient de voir), avant
+    // que leurs réactions ne les retournent.
+    let side = (b.pos.x - a.pos.x).signum();
+    let touching = a.reach_toward(side) + b.reach_toward(-side);
     let list_a = a.meet_reactions(&def_a);
     let list_b = b.meet_reactions(&def_b);
     let name_a = |t: &Transition| def_a.behaviors[t.to].name.as_str();
@@ -2746,10 +2899,11 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
         }
     }
     if a_reacts {
-        // Il s'arrête contre l'autre, sans le chevaucher.
-        let dir = (b.pos.x - a.pos.x).signum();
-        let reach = 0.5 * (def_a.physics.width + def_b.physics.width);
-        a.pos.x = b.pos.x - dir * reach;
+        // Il s'arrête contre l'autre, sans le chevaucher : là où leurs
+        // dessins se touchent, à un pas près (jamais d'un bond).
+        if (b.pos.x - a.pos.x).abs() < touching {
+            a.pos.x = b.pos.x - side * touching;
+        }
         a.vel.x = 0.0;
     }
     if a_reacts || b_reacts {
@@ -2824,6 +2978,7 @@ impl Flock {
         if let Some(pet) = id.and_then(|id| self.pets.iter_mut().find(|p| p.id == id)) {
             // Plus rien à interpoler : il est dessiné là où il est.
             pet.prev_pos = pet.pos;
+            pet.prev_smooth = pet.smooth;
         }
     }
 
@@ -3030,6 +3185,11 @@ impl Flock {
         } else {
             self.meet(tracker.world(), input);
         }
+        for pet in &mut self.pets {
+            if self.still != Some(pet.id) {
+                pet.keep_lift_on_take_off();
+            }
+        }
         self.tracker = tracker;
     }
 
@@ -3060,14 +3220,17 @@ impl Flock {
         }));
         for &(i, j) in pairs {
             let (a, b) = self.pair_mut(i, j);
-            if !physical_pair(a, b) || still == Some(a.id) || still == Some(b.id) {
-                continue;
-            }
             let ((axes_a, extent_a), (axes_b, extent_b)) = (axes[i as usize], axes[j as usize]);
             let (body_a, body_b) = (a.body(), b.body());
             let apart = body_b.center - body_a.center;
             let reach = extent_a + extent_b;
-            if apart.x.abs() > reach.x + 1e-3 || apart.y.abs() > reach.y + 1e-3 {
+            if apart.x.abs() > reach.x + 1e-3
+                || apart.y.abs() > reach.y + 1e-3
+                || still == Some(a.id)
+                || still == Some(b.id)
+                || !physical_pair(a, b, axes_a, axes_b)
+                || overlapped_before(a, b, (axes_a, axes_b), reach)
+            {
                 continue;
             }
             let Some(contact) = crate::physics::obb_contact_with(&body_a, axes_a, &body_b, axes_b)

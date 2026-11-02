@@ -311,7 +311,10 @@ impl Pet {
         let mut rigid = self.rigid();
         let arena = world.arena();
 
-        // Bords des écrans, et le haut (derrière la barre des menus).
+        // Bords des écrans, et le haut (derrière la barre des menus). Un
+        // corps qui en dépassait déjà (un animal desktopPet sorti en
+        // marchant, puis heurté) y est ramené d'un coup, mais son dessin y
+        // glisse (voir `Pet::smooth`).
         let ex = body.extent_x();
         for (side, edge) in [(1.0, arena.left()), (-1.0, arena.right())] {
             if (body.center.x - edge) * side < ex {
@@ -325,7 +328,9 @@ impl Pet {
                     WALL_RESTITUTION,
                     WALL_FRICTION,
                 );
-                body.center.x = edge + side * ex;
+                let x = edge + side * ex;
+                self.smooth.x -= x - body.center.x;
+                body.center.x = x;
             }
         }
         let ey = body.extent_y();
@@ -341,7 +346,9 @@ impl Pet {
                 WALL_RESTITUTION,
                 WALL_FRICTION,
             );
-            body.center.y = ceiling + ey;
+            let y = ceiling + ey;
+            self.smooth.y -= y - body.center.y;
+            body.center.y = y;
         }
 
         // Côtés des fenêtres, quand il y arrive de l'extérieur.
@@ -411,6 +418,7 @@ impl Pet {
             self.place(&body, rigid);
             return;
         };
+        let falling_through = body.center.y;
         body.center.y = surface.y - ey;
         // Il monte encore : c'est un coin qui touche la surface parce qu'il
         // tourne (une culbute qui part du ras du sol). Il s'appuie sur ce
@@ -441,8 +449,9 @@ impl Pet {
             return;
         }
         // Un animal desktopPet dans une animation scriptée décide de ce
-        // qu'il fait d'une surface : s'y poser, ou passer devant. (Un animal
-        // Mouflon, lui, s'y pose toujours.)
+        // qu'il fait d'un rebord : s'y poser, ou passer devant. Le sol, lui,
+        // arrête toujours sa chute, comme sans la physique réaliste. (Un
+        // animal Mouflon se pose toujours.)
         if scripted && self.free_fall && def.rules == Rules::DesktopPet {
             self.place(&body, rigid);
             if self.land_script(&surface, impact, world, input) {
@@ -450,6 +459,17 @@ impl Pet {
                 self.grace = false;
                 self.carry = platform;
                 self.vel = Vec2::ZERO;
+            } else if surface.kind == SurfaceKind::Floor {
+                self.free_fall = false;
+                self.grace = false;
+                self.carry = platform;
+                self.vel = Vec2::ZERO;
+                self.set_ground(&surface);
+                self.pos.y = surface.y;
+            } else {
+                // Il passe devant le rebord, sans s'y arrêter.
+                body.center.y = falling_through;
+                self.place(&body, rigid);
             }
             return;
         }
@@ -519,7 +539,7 @@ mod tests {
     use super::*;
     use crate::format::parse_pet_toml;
     use crate::math::Rect;
-    use crate::pet::{Flock, TICK};
+    use crate::pet::{Flock, SMOOTH_SPEED, TICK};
     use crate::world::{LedgeOptions, Screen, WindowRect};
 
     const PET: &str = r#"
@@ -980,6 +1000,109 @@ mod tests {
         }
         assert!(bounced, "il repart vers la gauche");
         assert!(flock.pets()[0].position().x < 1440.0);
+    }
+
+    /// Comme dans l'essai du 2 novembre (taille 2) : Pelote, un animal
+    /// desktopPet, rentrait par le bord de l'écran, à moitié dehors ; Lainou
+    /// lui a couru dedans. Heurtée, Pelote était ramenée d'un bond dans
+    /// l'écran (une centaine de points), puis chassée d'un autre bond hors de
+    /// Lainou. Son corps est toujours ramené ; son dessin y glisse, et rien
+    /// ne saute à l'écran.
+    #[test]
+    fn a_pet_knocked_half_off_screen_glides_back() {
+        let world = World::new(vec![Screen {
+            frame: Rect::new(0.0, 0.0, 2056.0, 1329.0),
+            usable: Rect::new(0.0, 32.0, 2056.0, 1233.0),
+            scale: 2.0,
+        }]);
+        let mut flock = Flock::new();
+        flock.set_realistic(true);
+        flock.set_collisions(true);
+        let a = flock.spawn(
+            Arc::new(bundled("lainou").scaled(2.0)),
+            5,
+            &world,
+            Some(1700.0),
+        );
+        let b = flock.spawn(
+            Arc::new(bundled("pelote").scaled(2.0)),
+            6,
+            &world,
+            Some(2000.0),
+        );
+        for _ in 0..(3.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        for (id, behavior, facing, x) in [(a, "course", 1.0, 1925.6), (b, "walk", -1.0, 2075.8)] {
+            let pet = flock.get_mut(id).unwrap();
+            pet.pos.x = x;
+            pet.prev_pos = pet.pos;
+            pet.facing = facing;
+            assert!(pet.force(behavior), "{behavior}");
+            pet.bump_cooldown = 0.0;
+            pet.meet_cooldown = 0.0;
+        }
+        let mut knocked = false;
+        for step in 0..(1.5 / TICK) as usize {
+            let before: Vec<(u32, Vec2, f32)> = flock
+                .pets()
+                .iter()
+                .map(|p| (p.id(), p.view(1.0).ground, p.velocity().length()))
+                .collect();
+            flock.advance(TICK, &world, &Input::default());
+            knocked |= pet(&flock, b).support() == Support::Air;
+            for (id, drawn, speed) in before {
+                let pet = pet(&flock, id);
+                let moved = (pet.view(1.0).ground - drawn).length();
+                let expected = speed.max(pet.velocity().length()) * TICK;
+                // Au plus : la glissade du dessin, et le redressement.
+                assert!(
+                    moved - expected < SMOOTH_SPEED * TICK + 2.0,
+                    "pas {step}, n° {id} ({}) : {moved:.1} pt au lieu de {expected:.1}",
+                    pet.behavior_name()
+                );
+            }
+        }
+        assert!(knocked, "Pelote n'a pas été heurtée");
+        // Ramenée dans l'écran.
+        let pelote = pet(&flock, b);
+        assert!(pelote.body().center.x + pelote.body().extent_x() <= 2056.0 + 0.5);
+    }
+
+    /// Comme dans un tas : Pelote, tombée du dos d'un autre pendant
+    /// « fall soft », une animation desktopPet qui ne dit pas comment se
+    /// poser. Arrivée au sol, elle y restait en l'air, de plus en plus vite,
+    /// sans jamais se poser ; ceux qui lui tombaient dessus restaient coincés
+    /// avec elle. Le sol arrête toujours sa chute, comme sans la physique
+    /// réaliste.
+    #[test]
+    fn a_desktoppet_fall_that_never_lands_still_stops_on_the_floor() {
+        let world = world(None);
+        let mut flock = Flock::new();
+        flock.set_realistic(true);
+        let id = flock.spawn(bundled("pelote"), 3, &world, Some(400.0));
+        for _ in 0..(2.0 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let falling = flock.get_mut(id).unwrap();
+        assert!(falling.force("fall soft"));
+        falling.support = Support::Air;
+        falling.ground_ref = None;
+        falling.free_fall = true;
+        falling.pos.y -= 200.0;
+        falling.prev_pos = falling.pos;
+        falling.vel = Vec2::new(0.0, 300.0);
+        for _ in 0..(1.5 / TICK) as usize {
+            flock.advance(TICK, &world, &Input::default());
+        }
+        let landed = pet(&flock, id);
+        assert!(
+            matches!(landed.support(), Support::Ground { .. }) && landed.velocity().y.abs() < 1.0,
+            "{:?} à {:?}, {:?}",
+            landed.support(),
+            landed.position(),
+            landed.velocity()
+        );
     }
 
     #[test]

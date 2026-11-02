@@ -81,7 +81,7 @@ impl Pet {
             };
             if (front + dx - wall) * dir > 0.0 {
                 if let Some(next) = self.pick(&behavior.on_wall, &def.reflexes.wall, world, input) {
-                    self.pos.x = wall - dir * half;
+                    self.snap_x(wall - dir * half);
                     self.enter(next);
                     return;
                 }
@@ -94,21 +94,27 @@ impl Pet {
             } else if let Some((next, x)) = self.window_side(dx, world, input, support.is_some()) {
                 // Le côté d'une fenêtre lui barre le chemin (avant le bout du
                 // rebord : une fenêtre posée devant est un mur, pas un vide).
-                self.pos.x = x;
+                self.snap_x(x);
                 self.enter(next);
                 return;
             } else if let Some(s) = support.filter(|s| s.kind == SurfaceKind::Window) {
                 let edge = if dir < 0.0 { s.x0 } else { s.x1 };
                 if !self.walking_off && (front + dx - edge) * dir > 0.0 {
+                    // Il s'arrête l'avant au bout du rebord ; sur un rebord
+                    // plus étroit que lui (le dos d'un autre animal), au
+                    // milieu, au lieu d'être renvoyé d'un bout à l'autre.
+                    let middle = (s.x0 + s.x1) * 0.5;
+                    let stop = (edge - dir * half)
+                        .clamp((s.x0 + half).min(middle), (s.x1 - half).max(middle));
                     if let Some(next) =
                         self.pick(&behavior.on_edge, &def.reflexes.edge, world, input)
                     {
-                        self.pos.x = edge - dir * half;
+                        self.snap_x(stop);
                         self.enter(next);
                         return;
                     }
                     if native && !behavior.walk_off_edges {
-                        self.stop_at(edge - dir * half, dir);
+                        self.stop_at(stop, dir);
                         return;
                     }
                     // Il continue tout droit et tombera quand son centre aura dépassé le bord.
@@ -229,7 +235,7 @@ impl Pet {
     /// Arrêté contre un bord en allant dans le sens `dir` : il se retourne
     /// s'il y allait de face (pas s'il reculait).
     fn stop_at(&mut self, x: f32, dir: f32) {
-        self.pos.x = x;
+        self.snap_x(x);
         self.vel.x = 0.0;
         if dir * self.facing > 0.0 {
             self.facing = -self.facing;
@@ -299,12 +305,24 @@ impl Pet {
         world: &World,
         input: &Input,
     ) -> bool {
-        let before = (self.support, self.ground_ref, self.walking_off);
+        let before = (
+            self.support,
+            self.ground_ref,
+            self.walking_off,
+            self.ghost,
+            self.ground_lift,
+        );
         // Les conditions « sur le sol » ou « sur une fenêtre » portent sur la surface d'arrivée.
         self.set_ground(surface);
         let def = Arc::clone(&self.def);
         let Some(next) = self.choose(&def.behaviors[self.behavior].on_land, world, input) else {
-            (self.support, self.ground_ref, self.walking_off) = before;
+            (
+                self.support,
+                self.ground_ref,
+                self.walking_off,
+                self.ghost,
+                self.ground_lift,
+            ) = before;
             return false;
         };
         self.pos.y = surface.y;
