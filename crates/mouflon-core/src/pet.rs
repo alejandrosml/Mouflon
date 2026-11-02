@@ -14,6 +14,7 @@ use crate::def::{
 use crate::expr::Expr;
 use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep, wrap_phase};
 use crate::physics::{Back, Tracker};
+use crate::temper::{Mood, Temper};
 use crate::world::{Surface, SurfaceId, SurfaceKind, World};
 
 mod near;
@@ -263,6 +264,23 @@ pub struct Shadow {
     pub y: f32,
     /// Distance entre les pattes et cette surface.
     pub distance: f32,
+    /// Bouts de cette surface (le rebord d'une fenêtre, le dos d'un autre) :
+    /// l'ombre ne déborde pas dans le vide.
+    pub x0: f32,
+    pub x1: f32,
+}
+
+impl Shadow {
+    /// L'ombre sur une surface sans bouts (le sol d'un écran large).
+    #[must_use]
+    pub fn on(y: f32, distance: f32) -> Self {
+        Self {
+            y,
+            distance,
+            x0: f32::NEG_INFINITY,
+            x1: f32::INFINITY,
+        }
+    }
 }
 
 /// Ce que le rendu a besoin de savoir pour dessiner une image.
@@ -462,6 +480,8 @@ pub struct Pet {
     back_top: f32,
     /// Temps avant de pouvoir rencontrer un autre animal.
     meet_cooldown: f32,
+    /// Son tempérament (voir [`crate::temper`]) : donné par le troupeau.
+    temper: Temper,
     /// En train de dire au revoir.
     leaving: Option<Leaving>,
     anim: Anim,
@@ -779,6 +799,7 @@ impl Pet {
             knocked: false,
             slide: 0.0,
             bump_cooldown: 0.0,
+            temper: Temper::Even,
             startle_cooldown: 0.0,
             nap_in: None,
             wake_in: None,
@@ -862,6 +883,12 @@ impl Pet {
     #[must_use]
     pub fn is_held(&self) -> bool {
         self.support == Support::Held
+    }
+
+    /// Son tempérament (voir [`crate::temper`]).
+    #[must_use]
+    pub fn temper(&self) -> Temper {
+        self.temper
     }
 
     /// Personnage secondaire d'une scène desktopPet : il ne s'attrape pas.
@@ -1956,7 +1983,9 @@ impl Pet {
             None => 1,
         };
         self.behavior_length = match behavior.duration {
-            Duration::Range(min, max) => self.rng.range(min, max),
+            Duration::Range(min, max) => {
+                self.rng.range(min, max) * self.temper.patience(def.energy(index))
+            }
             Duration::Clip => behavior.clip.as_ref().map_or(1.0, |c| {
                 self.clip_total as f32 * (c.interval_start + c.interval_end) * 0.5
             }),
@@ -2061,9 +2090,14 @@ impl Pet {
             .iter()
             .filter(|t| t.when.iter().all(|c| self.condition(*c, world, input)))
             .collect();
-        let i = self
-            .rng
-            .pick_weighted(candidates.iter().map(|t| t.weight))?;
+        // Son tempérament penche vers certaines allures (voir `temper`).
+        let temper = self.temper;
+        let def = &self.def;
+        let i = self.rng.pick_weighted(
+            candidates
+                .iter()
+                .map(|t| t.weight * temper.appetite(def.energy(t.to))),
+        )?;
         Some(candidates[i].to)
     }
 
@@ -2403,17 +2437,32 @@ impl Pet {
     }
 
     fn update_shadow(&mut self, world: &World) {
+        // Sur le rebord d'une fenêtre, l'ombre s'arrête à ses bouts. Le dos
+        // d'un autre animal est plus étroit que son corps : l'ombre y tombe
+        // en entier.
+        let on = |s: &Surface, distance: f32| {
+            if crate::physics::surface_pet(s.id).is_some() {
+                Shadow::on(s.y, distance)
+            } else {
+                Shadow {
+                    y: s.y,
+                    distance,
+                    x0: s.x0,
+                    x1: s.x1,
+                }
+            }
+        };
         self.shadow = match self.support {
-            Support::Ground { .. } => Some(Shadow {
-                y: self.pos.y,
-                distance: 0.0,
+            Support::Ground { surface } => Some(match world.surface(surface) {
+                Some(s) => Shadow {
+                    y: self.pos.y,
+                    ..on(s, 0.0)
+                },
+                None => Shadow::on(self.pos.y, 0.0),
             }),
             _ => world
                 .surface_below(self.pos, self.def.physics.width * 0.2)
-                .map(|s| Shadow {
-                    y: s.y,
-                    distance: s.y - self.pos.y,
-                }),
+                .map(|s| on(s, s.y - self.pos.y)),
         };
     }
 
@@ -2603,6 +2652,8 @@ pub struct Flock {
     next_id: u32,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     collisions: bool,
+    /// Le tempérament des animaux (voir [`crate::temper`]).
+    mood: Mood,
     /// Change quand un animal arrive, s'en va ou part (voir [`Flock::generation`]).
     generation: u64,
     /// L'animal qui attend, immobile (son menu est ouvert) : voir
@@ -2925,9 +2976,27 @@ impl Flock {
     pub fn spawn(&mut self, def: Arc<PetDef>, seed: u64, world: &World, x: Option<f32>) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
-        self.pets.push(Pet::spawn(id, def, seed, world, x));
+        let mut pet = Pet::spawn(id, def, seed, world, x);
+        pet.temper = self.mood.temper_of(id);
+        self.pets.push(pet);
         self.generation += 1;
         id
+    }
+
+    /// Le tempérament des animaux, pour tous (ceux qui sont là et ceux qui
+    /// arriveront) ; les personnages secondaires suivent leur rôle.
+    pub fn set_mood(&mut self, mood: Mood) {
+        self.mood = mood;
+        for pet in &mut self.pets {
+            if !pet.is_child() {
+                pet.temper = mood.temper_of(pet.id);
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn mood(&self) -> Mood {
+        self.mood
     }
 
     pub fn remove(&mut self, id: u32) {
@@ -3269,11 +3338,20 @@ impl Flock {
             }
             // Chacun peut atteindre l'autre.
             for (from, to) in [(i, j), (j, i)] {
-                if !meeting(&self.pets[from as usize], &self.pets[to as usize]) {
+                let (a, b) = (&self.pets[from as usize], &self.pets[to as usize]);
+                if !meeting(a, b) {
                     continue;
                 }
+                // Un énervé bouscule celui qu'il atteint au lieu de le
+                // saluer : tous deux partent à la renverse.
+                let jostle = a.temper.jostles().then(|| bump(a, b)).flatten();
                 let (a, b) = self.pair_mut(from, to);
-                encounter(a, b, world, input);
+                if let Some((push_a, push_b)) = jostle {
+                    a.knock(push_a, world, input);
+                    b.knock(push_b, world, input);
+                } else {
+                    encounter(a, b, world, input);
+                }
             }
         }
         self.near = near;
@@ -4086,6 +4164,62 @@ mod tests {
             eprintln!("{name:>20} : {s:7.0} s");
         }
         (def, seconds_in)
+    }
+
+    /// Quatre Lainou, `minutes` durant, de ce tempérament : la part de leur
+    /// temps passée au repos (debout, assis, à dormir, à brouter), et le
+    /// temps passé à la renverse (heurtés).
+    fn lives_of(mood: Mood, minutes: f32) -> (f32, f32) {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/lainou/pet.toml");
+        let def = Arc::new(crate::format::load_pet(&path).unwrap());
+        let world = world();
+        let mut flock = Flock::new();
+        flock.set_mood(mood);
+        for seed in 0..4 {
+            flock.spawn(Arc::clone(&def), seed * 7919 + 1, &world, None);
+        }
+        let input = Input {
+            cursor: Some(Vec2::new(700.0, 700.0)),
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let (mut resting, mut moving, mut tumbling) = (0.0, 0.0, 0.0);
+        for _ in 0..(minutes * 60.0 / TICK) as usize {
+            flock.advance(TICK, &world, &input);
+            for pet in flock.pets() {
+                assert_eq!(pet.temper(), mood.temper_of(pet.id()));
+                match def.energy(pet.behavior) {
+                    crate::Energy::Rest | crate::Energy::Sleep => resting += TICK,
+                    crate::Energy::Walk | crate::Energy::Dash => moving += TICK,
+                    crate::Energy::Neutral => {}
+                }
+                if pet.behavior_name() == "culbute" {
+                    tumbling += TICK;
+                }
+            }
+        }
+        (resting / (resting + moving), tumbling)
+    }
+
+    #[test]
+    fn tempers_change_how_the_flock_spends_its_time() {
+        let (calm, _) = lives_of(Mood::Calm, 6.0);
+        let (even, even_tumbling) = lives_of(Mood::Even, 6.0);
+        let (lively, _) = lives_of(Mood::Lively, 6.0);
+        let (rowdy, rowdy_tumbling) = lives_of(Mood::Rowdy, 6.0);
+        eprintln!(
+            "au repos : calmes {calm:.2}, tels quels {even:.2}, actifs {lively:.2}, énervés {rowdy:.2}"
+        );
+        assert!(calm > even + 0.1, "calmes {calm} contre {even}");
+        assert!(lively < even - 0.1, "actifs {lively} contre {even}");
+        assert!(rowdy < even - 0.1, "énervés {rowdy} contre {even}");
+        // Sans mode collisions, seuls les énervés se bousculent.
+        assert_eq!(even_tumbling, 0.0);
+        assert!(
+            rowdy_tumbling > 0.0,
+            "les énervés ne se sont jamais bousculés"
+        );
     }
 
     fn never_played<'a>(

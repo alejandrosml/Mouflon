@@ -8,6 +8,7 @@ author = "Alejandro San Martin Lamas"
 description = "Une brebis peinte à l'aquarelle, faite de morceaux posés sur un squelette : le moteur la fait marcher, brouter, se coucher et dormir, sans une seule image d'animation."
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+category = "sheep"     # sa famille : tous les moutons ensemble
 
 [appearance]
 skeleton = "squelette.toml"

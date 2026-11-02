@@ -21,11 +21,12 @@ pub mod pet;
 pub mod physics;
 pub mod skeleton;
 pub mod surprise;
+pub mod temper;
 pub mod world;
 
 pub use def::{
-    Appearance, Drawn, Facings, Inbetweens, PetDef, PngData, Pose, Rules, Sound, SoundCue,
-    SpritePage, SpriteSheet,
+    Appearance, CATEGORIES, Drawn, Facings, Inbetweens, PetDef, PetMeta, PngData, Pose, Rules,
+    Sound, SoundCue, SpritePage, SpriteSheet,
 };
 pub use format::{LoadError, Resources, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};
@@ -38,6 +39,7 @@ pub use skeleton::{
     parse_skeleton,
 };
 pub use surprise::{BEAM_MAX, Gust, SAUCER_HEIGHT, SAUCER_WIDTH, Saucer, SaucerView};
+pub use temper::{Energy, Mood, Temper};
 pub use world::{
     DOCK_ID, IdHasher, LedgeOptions, Screen, Surface, SurfaceKind, Wall, WindowRect, World,
     exact_dock,

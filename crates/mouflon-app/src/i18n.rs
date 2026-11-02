@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 /// Langues connues : code (comme les dossiers `.lproj` de macOS) et textes.
 /// La première sert de repli.
-const LOCALES: &[(&str, &str)] = &[
+pub const LOCALES: &[(&str, &str)] = &[
     ("en", include_str!("../locales/en.toml")),
     ("fr", include_str!("../locales/fr.toml")),
     ("es", include_str!("../locales/es.toml")),
@@ -89,6 +89,19 @@ pub struct Texts {
     pub settings: String,
     pub about: String,
     pub quit: String,
+    /// « Ajouter dix animaux au hasard ».
+    pub add_random: String,
+    /// « Un de chaque » : un animal de chaque espèce d'une famille.
+    pub one_of_each: String,
+    /// Les familles d'animaux (voir [`mouflon_core::CATEGORIES`]).
+    pub category_sheep: String,
+    pub category_farm: String,
+    pub category_cats: String,
+    pub category_dogs: String,
+    pub category_birds: String,
+    pub category_wild: String,
+    pub category_fantasy: String,
+    pub category_others: String,
     // Menu d'un animal (clic droit).
     /// « Dire au revoir à Lainou » : `{name}` est le nom de l'animal.
     pub goodbye_named: String,
@@ -128,6 +141,19 @@ pub struct Texts {
     pub my_pets_section: String,
     pub my_pets_help: String,
     pub open_pets_folder: String,
+    /// L'humeur des animaux : au hasard, calmes, actifs, énervés.
+    pub mood: String,
+    pub mood_random: String,
+    pub mood_calm: String,
+    pub mood_active: String,
+    pub mood_angry: String,
+    pub mood_help: String,
+    /// Les raccourcis clavier, et Échap pour quitter.
+    pub shortcuts_section: String,
+    pub shortcuts: String,
+    pub shortcuts_help: String,
+    pub escape_quits: String,
+    pub escape_quits_help: String,
     // Galerie des animaux : son titre, le bouton d'une carte, l'auteur
     // (`{author}`).
     pub gallery_title: String,

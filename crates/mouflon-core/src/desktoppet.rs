@@ -334,6 +334,7 @@ pub fn import_with(xml: &str, overrides: Overrides) -> Result<PetDef, LoadError>
         description: header_text("info").map(|i| i.replace("[br]", "\n")),
         version: header_text("version"),
         license: None,
+        category: None,
     });
 
     // Planche d'origine : elle donne la taille de référence des déplacements.

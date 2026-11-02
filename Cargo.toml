@@ -57,6 +57,8 @@ tray-icon = "0.26"
 muda = "0.21"
 
 objc2 = "0.6"
+# Les blocs d'Objective-C (écoute de la touche Échap).
+block2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 objc2-core-graphics = "0.3"

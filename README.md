@@ -82,17 +82,46 @@ state (a change made in one is seen at once in the others):
 
 - **The menu bar icon**, for what changes often: add pets (the same one as many
   times as you like: each kind shows how many are on screen when there are
-  several), say goodbye to all of them or to one of a kind, get them to play
-  together, pause, mute them; *Settings…* (⌘,), *About Mouflon*, *Quit*. The
-  *Pet Gallery…*, at the top of *Add another pet*, shows every pet walking,
-  with its description and an *Add* button.
+  several; kinds are sorted by family, sheep together, with *One of Each* in
+  every family), add ten pets at random, say goodbye to all of them or to one
+  of a kind, get them to play together, pause, mute them; *Settings…* (⌘,),
+  *About Mouflon*, *Quit*. Press the icon, slide to an item and let go: it is
+  chosen, as in every menu bar menu. The *Pet Gallery…*, at the top of *Add
+  another pet*, shows every pet walking, family by family, with its
+  description and an *Add* button.
 - **A right click on a pet** (or Control-click): say goodbye to that one, add
   another of its kind, change its own size (that pet only), mute, pause, open
   the settings. It waits under its menu; the others go on with their lives.
-- **The settings window**: size (of all the pets), sounds, surprises, realistic
-  physics, collisions between pets, walking only on the frontmost app, walking
-  under the Dock, opening Mouflon at login, and the pets folder, each option
-  with a line saying what it does.
+- **The settings window**: size (of all the pets), temperament, sounds,
+  surprises, realistic physics, collisions between pets, walking only on the
+  frontmost app, walking under the Dock, keyboard shortcuts, opening Mouflon at
+  login, and the pets folder, each option with a line saying what it does.
+
+Mouflon's own windows (settings, gallery, About) come in front of the pets
+while you use them, even when hundreds of big pets cover the screen: a click
+there always reaches the window, never a pet. Back in another app, they go
+behind its windows again, like any other window.
+
+The first launch picks the size from the main screen: large on a sharp, roomy
+screen (Retina, at least 1,600 points wide), normal elsewhere, where
+everything already looks bigger. Every setting is kept from one launch to the
+next.
+
+*Temperament*: mixed (each pet has its own: four in ten as their author made
+them, a quarter calm, a quarter lively, one in ten rowdy), calm (they sleep,
+sit and graze more, and longer), lively (they walk, run and jump more) or
+rowdy (they charge about, and bump into the pets they meet instead of greeting
+them). A temperament only changes what a pet chooses among what its author
+planned, and for how long.
+
+*Keyboard shortcuts* work in every app: ⌃⌥⌘N adds a pet, ⌃⌥⌘T ten at random,
+⌃⌥⌘B says goodbye to everyone, ⌃⌥⌘P pauses or resumes, ⌃⌥⌘S turns sounds on
+or off, ⌃⌥⌘Q quits. The letter counts, not the place of the key (⌃⌥⌘Q is the
+key marked Q on an AZERTY keyboard too), and the menu shows them. They need no
+permission. With *Escape pressed twice, or held, quits Mouflon* (off by
+default), Escape pressed twice within half a second, or held for a second,
+quits Mouflon from any app: hearing Escape in other apps needs the
+Accessibility permission, and every other key is ignored.
 
 Pets notice what you do, without reading anything: a pointer rushing past
 startles them; while you type, Lainou keeps quiet (it grazes, rests, watches
@@ -280,7 +309,7 @@ its behaviors: [docs/format.md](docs/format.md) (all in French).
 |---|---|---|
 | `mouflon-core` | physics (classic, and the realistic rigid-body engine), behaviors, pet formats, world (screens, visible window ledges) | forbidden |
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; everything as pieces of image (rigs, shadows and discs baked with tiny-skia); SVG output | forbidden |
-| `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating screen windows, Core Animation layers and the display clock, settings window and a pet's menu (AppKit), opening at login | isolated and commented |
+| `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating screen windows, Core Animation layers and the display clock, settings window, gallery and a pet's menu (AppKit), the menu bar icon, Mouflon's windows in front of its pets, keyboard shortcuts in every app (Carbon hot keys) and the Escape key (Accessibility), opening at login | isolated and commented |
 | `mouflon-app` | one transparent window per screen (winit), the display thread (flock, scene of layers, timing), GPU renderer for systems without layers (wgpu), input, native menu, translations | forbidden |
 | `tools/mouflon-preview` | off-screen preview: poses, video scene, flock, encounter, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
@@ -322,8 +351,8 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 
 ### Roadmap
 
-- Window tracking through accessibility notifications.
-- A settings window.
+- A livelier flying saucer: hit by a thrown pet, it smokes, then flees at full
+  speed or crashes to the ground (hitting only its beam does nothing).
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
 
@@ -417,20 +446,52 @@ Pelote. Mouflon se règle à trois endroits, qui montrent toujours le même éta
 
 - **L'icône de la barre des menus**, pour ce qu'on change souvent : ajouter des
   animaux (le même autant de fois qu'on veut : chaque espèce dit combien des
-  siens sont à l'écran quand ils sont plusieurs), dire au revoir à tous ou à un
-  seul d'une espèce, les faire jouer ensemble, mettre en pause, couper les
-  sons ; « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ». La
-  « Galerie des animaux… », en tête de « Ajouter un autre animal », montre
-  chacun en train de marcher, avec sa description et un bouton « Ajouter ».
+  siens sont à l'écran quand ils sont plusieurs ; les espèces sont rangées par
+  famille, les moutons ensemble, avec « Un de chaque » dans chaque famille),
+  ajouter dix animaux au hasard, dire au revoir à tous ou à un seul d'une
+  espèce, les faire jouer ensemble, mettre en pause, couper les sons ;
+  « Réglages… » (⌘,), « À propos de Mouflon », « Quitter ». On peut appuyer sur
+  l'icône, glisser jusqu'à un article et relâcher dessus : il est choisi, comme
+  dans tous les menus de la barre. La « Galerie des animaux… », en tête de
+  « Ajouter un autre animal », montre chacun en train de marcher, famille par
+  famille, avec sa description et un bouton « Ajouter ».
 - **Un clic droit sur un animal** (ou Contrôle-clic) : lui dire au revoir, en
   ajouter un autre de son espèce, changer sa taille à lui (cet animal
   seulement), couper les sons, mettre en pause, ouvrir les réglages. Il
   attend sous son menu ; les autres continuent leur vie.
-- **La fenêtre des réglages** : taille (de tous les animaux), sons, surprises,
-  physique réaliste, collisions entre animaux, marche sur la seule app au
-  premier plan, marche sous le Dock, ouverture de Mouflon à l'ouverture de
-  session et dossier des animaux, chaque option avec une ligne qui dit ce
-  qu'elle fait.
+- **La fenêtre des réglages** : taille (de tous les animaux), humeur, sons,
+  surprises, physique réaliste, collisions entre animaux, marche sur la seule
+  app au premier plan, marche sous le Dock, raccourcis clavier, ouverture de
+  Mouflon à l'ouverture de session et dossier des animaux, chaque option avec
+  une ligne qui dit ce qu'elle fait.
+
+Les fenêtres de Mouflon (réglages, galerie, « À propos ») passent devant les
+animaux tant qu'on s'en sert, même quand des centaines de grands animaux
+couvrent l'écran : un clic y va toujours à la fenêtre, jamais à un animal. De
+retour dans une autre app, elles repassent derrière ses fenêtres, comme toute
+fenêtre.
+
+Au premier lancement, la taille dépend de l'écran principal : grande sur un
+écran fin et vaste (Retina, au moins 1 600 points de large), normale ailleurs,
+où tout paraît déjà plus gros. Chaque réglage est gardé d'un lancement à
+l'autre.
+
+« Humeur » : au hasard (chacun la sienne : quatre sur dix tels que leur auteur
+les a faits, un quart calmes, un quart actifs, un sur dix énervé), calmes (ils
+dorment, s'assoient et broutent davantage, et plus longtemps), actifs (ils
+marchent, courent et sautent davantage) ou énervés (ils foncent, et bousculent
+ceux qu'ils rencontrent au lieu de les saluer). L'humeur change seulement ce
+qu'un animal choisit parmi ce que son auteur a prévu, et combien de temps.
+
+Les « Raccourcis clavier » marchent dans toutes les apps : ⌃⌥⌘N ajoute un
+animal, ⌃⌥⌘T dix au hasard, ⌃⌥⌘B dit au revoir à tous, ⌃⌥⌘P met en pause ou
+reprend, ⌃⌥⌘S coupe ou remet les sons, ⌃⌥⌘Q quitte. La lettre compte, pas la
+place de la touche (sur un clavier AZERTY aussi, ⌃⌥⌘Q est la touche marquée
+Q), et le menu les montre. Ils ne demandent aucune autorisation. Avec « Échap
+deux fois, ou maintenu, quitte Mouflon » (décochée d'origine), Échap deux fois
+en moins d'une demi-seconde, ou maintenue une seconde, fait quitter Mouflon
+depuis n'importe quelle app : l'entendre dans les autres apps demande
+l'autorisation d'Accessibilité, et toutes les autres touches sont ignorées.
 
 Les animaux remarquent ce que tu fais, sans rien lire : un pointeur qui file
 tout près les fait sursauter ; quand tu tapes, Lainou se fait discret (il
@@ -630,7 +691,7 @@ squelette) ; pour régler ses comportements : [docs/format.md](docs/format.md).
 |---|---|---|
 | `mouflon-core` | physique (classique, et le moteur réaliste de corps rigides), comportements, formats d'animaux, monde (écrans, rebords visibles des fenêtres) | interdit |
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; tout en morceaux d'image (rigs, ombres et disques cuits avec tiny-skia) ; sortie SVG | interdit |
-| `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'écran non activantes, calques Core Animation et horloge de l'écran, fenêtre des réglages et menu d'un animal (AppKit), ouverture à l'ouverture de session | isolé et commenté |
+| `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'écran non activantes, calques Core Animation et horloge de l'écran, fenêtre des réglages, galerie et menu d'un animal (AppKit), icône de la barre des menus, fenêtres de Mouflon devant ses animaux, raccourcis clavier dans toutes les apps (« hot keys » de Carbon) et touche Échap (Accessibilité), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | une fenêtre transparente par écran (winit), le fil de l'affichage (troupeau, scène de calques, rythme), dessin sur le GPU pour les systèmes sans calques (wgpu), entrées, menu natif, traductions | interdit |
 | `tools/mouflon-preview` | aperçu hors écran : poses, scène vidéo, troupeau, rencontre, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
@@ -673,8 +734,9 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 
 ### Feuille de route
 
-- Suivi des fenêtres par notifications d'accessibilité.
-- Fenêtre de réglages.
+- Une soucoupe volante plus vivante : percutée par un animal lancé, elle fume,
+  puis s'enfuit en trombe ou s'écrase au sol (viser seulement son rayon ne lui
+  fait rien).
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.
 

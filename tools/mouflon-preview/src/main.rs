@@ -748,10 +748,7 @@ fn render_sheet(
                 ground,
                 facing,
                 pose: PoseSignals::default(),
-                shadow: Some(Shadow {
-                    y: ground.y,
-                    distance: 0.0,
-                }),
+                shadow: Some(Shadow::on(ground.y, 0.0)),
                 sprite_frame: Some(*frame),
                 sprite_offset_y: 0.0,
                 opacity: 1.0,
@@ -847,10 +844,7 @@ fn render_icon(art: &PetArt, path: &Path) -> Result<(), Error> {
             breath: 0.3,
             ..PoseSignals::default()
         },
-        shadow: Some(Shadow {
-            y: 0.0,
-            distance: 0.0,
-        }),
+        shadow: Some(Shadow::on(0.0, 0.0)),
         sprite_frame: Some(0),
         sprite_offset_y: 0.0,
         opacity: 1.0,
@@ -1495,10 +1489,7 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             ground: Vec2::new(0.0, -lift),
             facing,
             pose,
-            shadow: shadow.map(|d| Shadow {
-                y: 0.0,
-                distance: d,
-            }),
+            shadow: shadow.map(|d| Shadow::on(0.0, d)),
             sprite_frame: None,
             sprite_offset_y: 0.0,
             opacity: 1.0,

@@ -186,7 +186,8 @@ pub enum UiEvent {
     MenuClosed,
     /// Case des réglages cochée (`true`) ou décochée.
     Check(u32, bool),
-    /// Cran choisi sur un curseur des réglages.
+    /// Cran choisi sur un curseur des réglages, ou choix dans une liste
+    /// ([`FormRow::Choice`]) : son rang.
     Step(u32, usize),
     /// Bouton des réglages.
     Button(u32),
@@ -197,6 +198,33 @@ pub enum UiEvent {
     Quit,
     /// « Ajouter » sur une carte de la galerie (son identifiant).
     GalleryAdd(u32),
+    /// Un raccourci clavier de Mouflon ([`set_shortcuts`]), dans n'importe
+    /// quelle app (son identifiant).
+    Shortcut(u32),
+    /// La touche Échap, dans n'importe quelle app ([`listen_escape`]).
+    Escape(KeyMove),
+}
+
+/// Ce que fait une touche écoutée.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyMove {
+    /// Enfoncée.
+    Down,
+    /// Toujours enfoncée : la répétition automatique du clavier.
+    Repeat,
+    /// Relâchée.
+    Up,
+}
+
+/// Un raccourci clavier de Mouflon, valable dans toutes les apps : ⌃⌥⌘ et
+/// une lettre. La lettre compte, pas la place de la touche : sur un clavier
+/// AZERTY comme sur un QWERTY, ⌃⌥⌘Q est la touche marquée Q.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shortcut {
+    /// Rendu par [`UiEvent::Shortcut`].
+    pub id: u32,
+    /// La lettre, en minuscule (a à z).
+    pub key: char,
 }
 
 /// Une carte de la galerie des animaux ([`show_gallery`]).
@@ -209,6 +237,9 @@ pub struct GalleryCard {
     pub detail: String,
     /// Le libellé du bouton (« Ajouter »).
     pub button: String,
+    /// Le nom de sa famille (« Moutons ») : les cartes d'une même famille se
+    /// suivent, sous son nom quand il y a plusieurs familles.
+    pub family: String,
 }
 
 /// Une image de l'aperçu animé d'une carte : pixels RGBA prémultipliés, et
@@ -279,6 +310,15 @@ pub enum FormRow {
         text: String,
         button: Option<FormButton>,
     },
+    /// Un choix dans une liste : le libellé à gauche, la liste à droite,
+    /// une explication dessous. Montré et rendu par rang
+    /// ([`FormValue::Step`], [`UiEvent::Step`]).
+    Choice {
+        id: u32,
+        label: String,
+        choices: Vec<String>,
+        help: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -300,6 +340,7 @@ pub struct FormExtra {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormValue {
     Check(u32, bool),
+    /// Le cran d'un curseur, ou le rang du choix d'une liste.
     Step(u32, usize),
     /// Montre ou cache un complément (identifiant de son bouton).
     Shown(u32, bool),
@@ -353,15 +394,17 @@ pub struct Beat {
 }
 
 #[cfg(target_os = "macos")]
+pub use macos::StatusItem;
+#[cfg(target_os = "macos")]
 pub use macos::{
     Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
     attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
-    frontmost_pid, keep_pet_window, login_item, login_item_available, open_accessibility_settings,
-    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, render_scene, request_accessibility, run_loop_for, scene_transaction,
-    screens, set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler,
-    show_about, show_form, show_gallery, snapshot_form, snapshot_gallery, update_form,
-    user_activity, warm_up_sounds, window_max_fps, windows,
+    frontmost_pid, keep_pet_window, listen_escape, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, render_scene, request_accessibility, run_loop_for,
+    scene_transaction, screens, set_gallery_preview, set_login_item, set_shortcuts, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form, snapshot_gallery,
+    update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 /// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
@@ -412,6 +455,17 @@ mod fallback {
     /// Pas de galerie ici : les animaux s'ajoutent par le menu.
     #[must_use]
     pub fn show_gallery(_title: &str, _cards: &[super::GalleryCard]) -> bool {
+        false
+    }
+
+    /// Pas encore de raccourcis dans toutes les apps ici : aucun n'est pris.
+    #[must_use]
+    pub fn set_shortcuts(shortcuts: &[super::Shortcut]) -> Vec<u32> {
+        shortcuts.iter().map(|s| s.id).collect()
+    }
+
+    /// Pas d'écoute de la touche Échap ici.
+    pub fn listen_escape(_on: bool) -> bool {
         false
     }
 
@@ -733,12 +787,12 @@ mod fallback {
 pub use fallback::{
     Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
     attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
-    frontmost_pid, keep_pet_window, login_item, login_item_available, open_accessibility_settings,
-    open_folder, open_login_items_settings, play_sound, pop_up_menu, preferred_languages,
-    prepare_pet_window, render_scene, request_accessibility, run_loop_for, scene_transaction,
-    screens, set_gallery_preview, set_login_item, set_ui_handler, set_window_moves_handler,
-    show_about, show_form, show_gallery, snapshot_form, snapshot_gallery, update_form,
-    user_activity, warm_up_sounds, window_max_fps, windows,
+    frontmost_pid, keep_pet_window, listen_escape, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, render_scene, request_accessibility, run_loop_for,
+    scene_transaction, screens, set_gallery_preview, set_login_item, set_shortcuts, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form, snapshot_gallery,
+    update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

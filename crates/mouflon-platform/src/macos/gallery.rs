@@ -2,7 +2,8 @@
 //! (l'animal qui marche, dessiné par Mouflon), son nom, sa description et
 //! un bouton pour en ajouter un à l'écran.
 //!
-//! Les cartes se rangent par trois, de haut en bas ; au-delà de la hauteur
+//! Les cartes se rangent par trois, de haut en bas, famille par famille
+//! (sous le nom de chacune, s'il y en a plusieurs) ; au-delà de la hauteur
 //! de l'écran, la galerie défile. Les aperçus arrivent après coup
 //! ([`set_gallery_preview`]) : l'app les dessine sur un fil à part.
 
@@ -35,6 +36,9 @@ const PAD: f64 = 12.0;
 const PREVIEW: f64 = 120.0;
 /// Hauteur la plus grande de la fenêtre : au-delà, elle défile.
 const MAX_HEIGHT: f64 = 640.0;
+/// Avant le nom d'une famille (après la précédente), et après lui.
+const FAMILY_GAP: f64 = 10.0;
+const HEADER_GAP: f64 = 8.0;
 /// Images par seconde des aperçus.
 const PREVIEW_FPS: f64 = 10.0;
 
@@ -56,6 +60,9 @@ struct Gallery {
     scroll: Retained<NSScrollView>,
     root: Retained<FlippedView>,
     cards: Vec<Card>,
+    /// Le nom de chaque famille, quand il y en a plusieurs : le rang de sa
+    /// première carte, et son titre.
+    families: Vec<(usize, Retained<objc2_app_kit::NSTextField>)>,
     timer: Option<Retained<NSTimer>>,
 }
 
@@ -112,7 +119,19 @@ fn build(title: &str, cards: &[GalleryCard], mtm: MainThreadMarker) -> Gallery {
     let root = FlippedView::new(mtm);
     let card_width = (WIDTH - 2.0 * MARGIN - (COLUMNS as f64 - 1.0) * GAP) / COLUMNS as f64;
     let mut built = Vec::new();
-    for card in cards {
+    let several = cards
+        .windows(2)
+        .any(|pair| pair[0].family != pair[1].family);
+    let mut families = Vec::new();
+    for (i, card) in cards.iter().enumerate() {
+        if several && (i == 0 || cards[i - 1].family != card.family) {
+            let header = label(&card.family, mtm);
+            header.setFont(Some(
+                &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()),
+            ));
+            root.addSubview(&header);
+            families.push((i, header));
+        }
         let frame = NSBox::new(mtm);
         frame.setBoxType(NSBoxType::Custom);
         frame.setTitlePosition(NSTitlePosition::NoTitle);
@@ -183,17 +202,52 @@ fn build(title: &str, cards: &[GalleryCard], mtm: MainThreadMarker) -> Gallery {
         scroll,
         root,
         cards: built,
+        families,
         timer: None,
     };
     layout(&gallery, card_width);
     gallery
 }
 
-/// Met les cartes en place, par rangées de trois, et ajuste la fenêtre.
+/// Met les cartes en place, par rangées de trois, famille par famille, et
+/// ajuste la fenêtre.
 fn layout(gallery: &Gallery, card_width: f64) {
     let inner = card_width - 2.0 * PAD;
     let mut y = MARGIN;
-    for row in gallery.cards.chunks(COLUMNS) {
+    // Les familles : du rang de leur première carte à celui de la suivante.
+    let mut starts: Vec<usize> = gallery.families.iter().map(|(i, _)| *i).collect();
+    if starts.first() != Some(&0) {
+        starts.insert(0, 0);
+    }
+    for (f, &start) in starts.iter().enumerate() {
+        let end = starts.get(f + 1).copied().unwrap_or(gallery.cards.len());
+        if let Some((_, header)) = gallery.families.iter().find(|(i, _)| *i == start) {
+            if f > 0 {
+                y += FAMILY_GAP;
+            }
+            let h = header.intrinsicContentSize().height;
+            place(header, MARGIN + 2.0, y, WIDTH - 2.0 * MARGIN - 4.0, h);
+            y += h + HEADER_GAP;
+        }
+        y = layout_rows(&gallery.cards[start..end], card_width, inner, y);
+    }
+    let total = (y - GAP + MARGIN).max(2.0 * MARGIN);
+    gallery.root.setFrame(rect(0.0, 0.0, WIDTH, total));
+    let shown = total.min(MAX_HEIGHT);
+    let window = &gallery.window;
+    let old = window.frame();
+    let mut frame = window.frameRectForContentRect(rect(0.0, 0.0, WIDTH, shown));
+    frame.origin.x = old.origin.x;
+    // Le haut reste où il est.
+    frame.origin.y = old.origin.y + old.size.height - frame.size.height;
+    window.setFrame_display(frame, true);
+    gallery.scroll.setFrame(rect(0.0, 0.0, WIDTH, shown));
+}
+
+/// Les cartes d'une famille, par rangées de trois, à partir de `y` ; rend
+/// le haut de ce qui suit.
+fn layout_rows(cards: &[Card], card_width: f64, inner: f64, mut y: f64) -> f64 {
+    for row in cards.chunks(COLUMNS) {
         // La rangée prend la hauteur de sa plus haute carte.
         let heights: Vec<f64> = row
             .iter()
@@ -228,17 +282,7 @@ fn layout(gallery: &Gallery, card_width: f64) {
         }
         y += height + GAP;
     }
-    let total = (y - GAP + MARGIN).max(2.0 * MARGIN);
-    gallery.root.setFrame(rect(0.0, 0.0, WIDTH, total));
-    let shown = total.min(MAX_HEIGHT);
-    let window = &gallery.window;
-    let old = window.frame();
-    let mut frame = window.frameRectForContentRect(rect(0.0, 0.0, WIDTH, shown));
-    frame.origin.x = old.origin.x;
-    // Le haut reste où il est.
-    frame.origin.y = old.origin.y + old.size.height - frame.size.height;
-    window.setFrame_display(frame, true);
-    gallery.scroll.setFrame(rect(0.0, 0.0, WIDTH, shown));
+    y
 }
 
 /// Montre la galerie (la refait si les cartes ont changé) au premier plan.
@@ -265,6 +309,7 @@ pub fn show_gallery(title: &str, cards: &[GalleryCard]) -> bool {
         activate(&NSApplication::sharedApplication(mtm));
         gallery.window.makeKeyAndOrderFront(None);
         gallery.window.orderFrontRegardless();
+        super::front::bring_forward(mtm);
         true
     })
 }

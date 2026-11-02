@@ -595,10 +595,7 @@ mod tests {
                         // En l'air : ombre floue sous lui.
                         3 => {
                             view.support = Support::Air;
-                            view.shadow = Some(Shadow {
-                                y: view.ground.y + 30.0,
-                                distance: 6.0,
-                            });
+                            view.shadow = Some(Shadow::on(view.ground.y + 30.0, 6.0));
                             view.pose.lean = 0.3;
                         }
                         // Il s'efface.

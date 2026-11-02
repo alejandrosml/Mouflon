@@ -11,6 +11,7 @@ mod gpu;
 mod helper;
 mod i18n;
 mod icon;
+mod keys;
 mod library;
 mod menu;
 mod quick;
@@ -47,10 +48,20 @@ fn main() {
     }
 
     let paths = settings::Paths::new();
+    // Premier lancement : pas encore de réglages enregistrés.
+    let first_launch = paths.as_ref().is_some_and(|p| !p.settings.exists());
     let mut settings = paths
         .as_ref()
         .map(|p| settings::Settings::load(&p.settings))
         .unwrap_or_default();
+    if first_launch {
+        // La taille qui va à l'écran, gardée ensuite comme un choix.
+        settings.size = settings::default_size(&mouflon_platform::screens());
+        if let Some(paths) = &paths {
+            settings.save(&paths.settings);
+        }
+        log::info!("premier lancement : taille × {}", settings.size);
+    }
     // Les images prêtes se projettent en mémoire depuis le disque.
     let images = paths.as_ref().map(|p| {
         mouflon_render::cache::Store::new(&p.images).opened_with(mouflon_platform::map_file)

@@ -297,16 +297,99 @@ pub fn paint_pet(
     paint_particles(view.particles, world, style, out);
 }
 
-/// L'ombre que Mouflon dessine sous l'animal, s'il en dessine une, avec sa
-/// force : 1 au sol, de moins en moins en l'air, rien au-delà de 288 points.
-fn drawn_shadow(art: &PetArt, view: &PetView<'_>) -> Option<(Shadow, f32)> {
+/// L'ombre que Mouflon dessine sous l'animal, s'il en dessine une : sa
+/// surface, et la part de l'animal au-dessus d'elle (de quoi savoir si elle
+/// se voit encore).
+fn drawn_shadow(art: &PetArt, view: &PetView<'_>) -> Option<(Shadow, ShadowShape)> {
     let shadow = view.shadow?;
     // Les images dessinent déjà leur ombre au sol : la nôtre ne sert qu'en l'air.
     if art.drawn.shadow && matches!(view.support, Support::Ground { .. }) {
         return None;
     }
-    let near = (1.0 - (shadow.distance.max(0.0) / 320.0).min(1.0)).powi(2);
-    (near >= 0.01).then_some((shadow, near))
+    let shape = ShadowShape::of(art, view, &shadow);
+    (shape.cast_alpha >= MIN_SHADOW).then_some((shadow, shape))
+}
+
+/// En deçà de cette opacité, une ombre ne se voit plus.
+const MIN_SHADOW: f32 = 0.006;
+
+/// L'ombre d'un animal, comme sous un ciel couvert : le corps cache surtout
+/// la lumière d'en haut. Au contact, une ombre sombre et serrée sous les
+/// pattes (le corps bouche presque tout le ciel) ; autour, une ombre douce
+/// à la taille de ce qui touche le sol, le corps tourné compris. En
+/// s'élevant, l'ombre de contact s'efface vite, et l'ombre portée s'élargit,
+/// devient plus floue et pâlit, comme celle d'une main qu'on lève au-dessus
+/// d'une table. Elle reste sur sa surface : au bout d'un rebord, il ne reste
+/// que la part de l'ombre qui tombe dessus.
+///
+/// Deux formes seulement, toujours les mêmes à l'échelle près (flou compris) :
+/// une seule image cuite pour chacune, partagée par tous les animaux.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ShadowShape {
+    /// Ombre portée : milieu, largeur, opacité.
+    cast_x: f64,
+    cast_w: f64,
+    cast_alpha: f32,
+    /// Ombre de contact (largeur nulle : aucune).
+    contact_x: f64,
+    contact_w: f64,
+    contact_alpha: f32,
+}
+
+/// Hauteur d'une ombre portée, pour sa largeur (vue de face, une ellipse
+/// très aplatie), et son flou, pour sa hauteur.
+const CAST_FLAT: f64 = 0.17;
+const CAST_BLUR: f64 = 0.5;
+/// Les mêmes pour l'ombre de contact, plus serrée et plus nette.
+const CONTACT_FLAT: f64 = 0.1;
+const CONTACT_BLUR: f64 = 0.3;
+
+impl ShadowShape {
+    fn of(art: &PetArt, view: &PetView<'_>, shadow: &Shadow) -> Self {
+        let opacity = view.opacity.clamp(0.0, 1.0);
+        // Demi-largeur de ce qui pose au sol : le corps, tourné de sa
+        // culbute (debout sur la tête, il est plus étroit ; couché sur le
+        // flanc, sa hauteur s'étale), écrasé à l'atterrissage.
+        let (half, height) = (f64::from(art.body.0) * 0.92, f64::from(art.body.1));
+        let (sin, cos) = f64::from(view.pose.roll).sin_cos();
+        let squash = 1.0 + 0.2 * f64::from(view.pose.squash.max(0.0));
+        let reach = (half * cos.abs() + 0.45 * height * sin.abs()) * squash;
+        let distance = f64::from(shadow.distance.max(0.0));
+        let height = height.max(1.0);
+        // Portée : plus large, plus floue et plus pâle avec la hauteur.
+        let spread = 1.0 + distance / (2.5 * height);
+        let fade = 1.0 / (1.0 + distance / (1.2 * height)).powi(2);
+        // Contact : s'efface en s'élevant d'un tiers de sa hauteur.
+        let touch = (1.0 - distance / (0.35 * height)).max(0.0);
+        let x = f64::from(view.ground.x);
+        let (lo, hi) = (f64::from(shadow.x0), f64::from(shadow.x1));
+        let (cast_x, cast_w, cast_part) = clip_shadow(x, 2.0 * reach * spread, lo, hi);
+        let (contact_x, contact_w, contact_part) =
+            clip_shadow(x, 2.0 * reach * 0.62 * (0.7 + 0.3 * touch), lo, hi);
+        Self {
+            cast_x,
+            cast_w,
+            cast_alpha: (0.27 * fade * cast_part) as f32 * opacity,
+            contact_x,
+            contact_w: if touch > 0.0 { contact_w } else { 0.0 },
+            contact_alpha: (0.27 * 0.9 * touch * touch * contact_part) as f32 * opacity,
+        }
+    }
+}
+
+/// La part d'une ombre (milieu `x`, largeur `w`) qui tombe sur la surface de
+/// `lo` à `hi` : son milieu, sa largeur, et ce qu'il en reste (0 à 1). Elle
+/// garde sa forme et rétrécit (une seule image cuite, à l'échelle près).
+fn clip_shadow(x: f64, w: f64, lo: f64, hi: f64) -> (f64, f64, f64) {
+    let (left, right) = ((x - w / 2.0).max(lo), (x + w / 2.0).min(hi));
+    if right <= left || w <= 0.0 {
+        return (x, 0.0, 0.0);
+    }
+    let kept = (right - left) / w;
+    if kept >= 0.999 {
+        return (x, w, 1.0);
+    }
+    ((left + right) / 2.0, right - left, kept.sqrt())
 }
 
 fn paint_shadow(
@@ -316,38 +399,42 @@ fn paint_shadow(
     style: &Style,
     out: &mut DisplayList,
 ) {
-    let Some((shadow, near)) = drawn_shadow(art, view) else {
+    let Some((shadow, shape)) = drawn_shadow(art, view) else {
         return;
     };
-    let strength = if style.dark { 0.42 } else { 0.27 } * view.opacity.clamp(0.0, 1.0);
-    let body_width = art.body.0 / 0.46;
-    let w = f64::from(body_width * (0.5 + 0.36 * near) * (1.0 + 0.2 * view.pose.squash.max(0.0)));
-    let h = w * 0.17;
-    let cx = f64::from(view.ground.x);
-    let cy = f64::from(shadow.y) - h * 0.1;
-    out.push(Command::BlurredRect {
-        rect: Rect::new(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0),
-        radius: h / 2.0,
-        std_dev: h * 0.5,
-        color: Color::BLACK.with_alpha(strength * near),
-        transform: world,
-    });
-    if shadow.distance < 12.0 {
-        let w2 = w * 0.58;
-        let h2 = h * 0.55;
+    // Sur un fond sombre, une ombre un peu plus franche se voit autant.
+    let boost = if style.dark { 0.42 / 0.27 } else { 1.0 };
+    let y = f64::from(shadow.y);
+    let mut ellipse = |x: f64, w: f64, flat: f64, blur: f64, lift: f64, alpha: f32| {
+        if w <= 0.0 || alpha * boost < MIN_SHADOW {
+            return;
+        }
+        let h = w * flat;
+        let cy = y - h * lift;
         out.push(Command::BlurredRect {
-            rect: Rect::new(
-                cx - w2 / 2.0,
-                cy - h2 / 2.0 + h * 0.08,
-                cx + w2 / 2.0,
-                cy + h2 / 2.0 + h * 0.08,
-            ),
-            radius: h2 / 2.0,
-            std_dev: h2 * 0.3,
-            color: Color::BLACK.with_alpha(strength * 0.9 * near),
+            rect: Rect::new(x - w / 2.0, cy - h / 2.0, x + w / 2.0, cy + h / 2.0),
+            radius: h / 2.0,
+            std_dev: h * blur,
+            color: Color::BLACK.with_alpha((alpha * boost).min(1.0)),
             transform: world,
         });
-    }
+    };
+    ellipse(
+        shape.cast_x,
+        shape.cast_w,
+        CAST_FLAT,
+        CAST_BLUR,
+        0.1,
+        shape.cast_alpha,
+    );
+    ellipse(
+        shape.contact_x,
+        shape.contact_w,
+        CONTACT_FLAT,
+        CONTACT_BLUR,
+        -0.3,
+        shape.contact_alpha,
+    );
 }
 
 fn paint_rig(rig: &Rig, art: &PetArt, view: &PetView<'_>, world: Affine, out: &mut DisplayList) {
@@ -658,8 +745,9 @@ pub struct SpriteKey {
     opacity: u8,
     mirrored: bool,
     /// L'ombre, tant qu'elle se voit : sa distance à l'animal au demi-point
-    /// (elle reste au sol quand la fenêtre bouge), son écrasement au millième.
-    shadow: Option<[i32; 2]>,
+    /// (elle reste au sol quand la fenêtre bouge), son écrasement au millième,
+    /// et ses bouts par rapport à l'animal (au bout d'un rebord), au demi-point.
+    shadow: Option<[i32; 4]>,
     /// Le mouvement ajouté par Mouflon : une inclinaison qui ne change pas
     /// (au plafond, contre un mur) ne fait rien redessiner.
     motion: [i32; 4],
@@ -678,10 +766,15 @@ impl SpriteKey {
             offset: (view.sprite_offset_y * 4.0).round() as i32,
             opacity: (view.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
             mirrored: view.facing > 0.0,
-            shadow: drawn_shadow(art, view).map(|(shadow, _)| {
+            shadow: drawn_shadow(art, view).map(|(shadow, shape)| {
+                let x = f64::from(view.ground.x);
+                let left = shape.cast_x - shape.cast_w / 2.0 - x;
+                let right = shape.cast_x + shape.cast_w / 2.0 - x;
                 [
                     (shadow.distance * 2.0).round() as i32,
                     (view.pose.squash.max(0.0) * 1000.0).round() as i32,
+                    (left * 2.0).round() as i32,
+                    (right * 2.0).round() as i32,
                 ]
             }),
             motion: SpriteMotion::of(view, art).key(),

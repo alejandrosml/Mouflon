@@ -12,6 +12,7 @@ author = "Alejandro San Martin Lamas"
 description = "Mouton de bureau tout en laine douce, avec son collier et sa clochette."
 version = "1.0"
 license = "MIT OR Apache-2.0"
+category = "sheep"     # sa famille : tous les moutons ensemble
 
 [appearance]
 sprites = "pelote.png"        # 12 × 10 images de 240 pixels

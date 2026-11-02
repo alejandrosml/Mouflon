@@ -84,6 +84,8 @@ pub struct Live {
     pub surprises: bool,
     pub frontmost_only: bool,
     pub walk_under_dock: bool,
+    /// Le tempérament des animaux.
+    pub mood: mouflon_core::Mood,
 }
 
 /// Un changement de dessin : les animaux dessinés d'après `from` prennent
@@ -390,6 +392,7 @@ impl<C: Clock> Display<C> {
         let mut flock = Flock::new();
         flock.set_collisions(init.live.collisions);
         flock.set_realistic(init.live.realistic);
+        flock.set_mood(init.live.mood);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -702,6 +705,9 @@ impl<C: Clock> Display<C> {
         self.live = live;
         self.flock.set_collisions(live.collisions);
         self.flock.set_realistic(live.realistic);
+        if before.mood != live.mood {
+            self.flock.set_mood(live.mood);
+        }
         if before.paused != live.paused {
             // Au réveil, les animaux repartent d'où ils étaient, sans
             // rattraper le temps de la pause.
@@ -1060,6 +1066,9 @@ impl<C: Clock> Display<C> {
     /// Applique le dernier relevé des fenêtres (sans rien redemander au système).
     fn refresh_windows(&mut self, now: Instant) {
         let mut windows = Vec::new();
+        // Celles où l'on marche ; les autres ne font que cacher ce qui est
+        // derrière elles.
+        let mut walkable = Vec::new();
         let me = platform::current_pid();
         for w in &self.os_windows {
             // Les fenêtres de Mouflon ne sont jamais des rebords (le relevé
@@ -1073,7 +1082,7 @@ impl<C: Clock> Display<C> {
                 && self.world.screens().iter().any(|s| {
                     f64::from(s.frame.w) * f64::from(s.frame.h) * 0.9 <= w.frame.w * w.frame.h
                 });
-            let walkable = w.is_walkable() && !overlay;
+            let walkable_level = w.is_walkable() && !overlay;
             // Panneaux flottants (visualiseur de clavier…) : notés une fois au journal.
             if w.is_floating() && self.floating_seen.insert((w.owner.clone(), w.layer)) {
                 log::info!(
@@ -1084,16 +1093,21 @@ impl<C: Clock> Display<C> {
                     w.frame.h,
                     w.frame.x,
                     w.frame.y,
-                    if walkable { "" } else { ", ignorée" }
+                    if walkable_level { "" } else { ", ignorée" }
                 );
             }
-            if !walkable {
+            if !walkable_level {
                 continue;
             }
-            // Un panneau flottant reste visible quelle que soit l'app au premier plan.
-            if self.live.frontmost_only && !w.is_floating() && Some(w.pid) != self.frontmost {
-                continue;
-            }
+            // Seulement sur l'app au premier plan : les fenêtres des autres
+            // apps ne portent personne, mais cachent toujours le rebord
+            // qu'elles couvrent (sans cela, un mouton marchait sur le bord
+            // d'une fenêtre du Terminal cachée derrière le Finder, au milieu
+            // de la liste des fichiers). Un panneau flottant reste visible
+            // quelle que soit l'app au premier plan.
+            walkable.push(
+                !self.live.frontmost_only || w.is_floating() || Some(w.pid) == self.frontmost,
+            );
             windows.push(WindowRect {
                 id: w.id,
                 frame: to_rect(w.frame),
@@ -1102,6 +1116,7 @@ impl<C: Clock> Display<C> {
         // Le Dock passe devant toutes les fenêtres.
         if let Some(dock) = self.dock {
             windows.insert(0, dock);
+            walkable.insert(0, true);
         }
         // Une fenêtre qui porte un animal bouge : on relève plus souvent
         // pour qu'il suive en douceur.
@@ -1116,7 +1131,8 @@ impl<C: Clock> Display<C> {
                 _ => None,
             })
             .collect();
-        self.world.set_windows(&windows, LedgeOptions::default());
+        self.world
+            .set_windows_among(&windows, &walkable, LedgeOptions::default());
         let moved = supports.iter().any(|&(id, x0, y)| {
             self.world
                 .surface(id)
@@ -1945,6 +1961,7 @@ mod tests {
                 surprises: false,
                 frontmost_only: false,
                 walk_under_dock: false,
+                mood: mouflon_core::Mood::Even,
             },
             dark: false,
             watcher: None,
@@ -1995,6 +2012,51 @@ mod tests {
             Report::Flock { done, pets, .. } => Some((*done, pets.clone())),
             _ => None,
         })
+    }
+
+    /// Comme dans l'essai du 2 novembre : seulement sur l'app au premier
+    /// plan (le Terminal, qui lançait l'essai), un mouton broutait sur le
+    /// bord d'une vieille fenêtre du Terminal cachée derrière le Finder, au
+    /// milieu de la liste des fichiers. Une fenêtre d'une autre app ne porte
+    /// personne, mais cache toujours le rebord qu'elle couvre.
+    #[test]
+    fn other_apps_windows_still_hide_the_ledges_behind_them() {
+        let (mut display, _receiver) = display();
+        display.command(screens());
+        let window = |id, pid, x: f64, y: f64, w: f64, h: f64| platform::OsWindow {
+            id,
+            pid,
+            frame: platform::OsRect { x, y, w, h },
+            layer: 0,
+            owner: String::new(),
+        };
+        // Le Finder devant (de 300 à 700), le Terminal derrière (de 100 à 900).
+        display.os_windows = vec![
+            window(2, 20, 300.0, 200.0, 400.0, 400.0),
+            window(1, 10, 100.0, 300.0, 800.0, 300.0),
+        ];
+        display.frontmost = Some(10);
+        display.live.frontmost_only = true;
+        display.refresh_windows(Instant::now());
+        let mut ledges: Vec<(f32, f32, f32)> = display
+            .world
+            .surfaces()
+            .iter()
+            .filter(|s| s.kind == mouflon_core::SurfaceKind::Window)
+            .map(|s| (s.x0, s.x1, s.y))
+            .collect();
+        ledges.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(ledges, [(100.0, 300.0, 300.0), (700.0, 900.0, 300.0)]);
+        // Sans cette option, on marche aussi sur le Finder.
+        display.live.frontmost_only = false;
+        display.refresh_windows(Instant::now());
+        assert!(
+            display
+                .world
+                .surfaces()
+                .iter()
+                .any(|s| s.kind == mouflon_core::SurfaceKind::Window && s.y == 200.0)
+        );
     }
 
     #[test]

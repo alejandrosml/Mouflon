@@ -11,7 +11,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOn, NSMenuItem, NSSlider, NSWindow, NSWindowDelegate,
+    NSButton, NSControlStateValueOn, NSMenuItem, NSPopUpButton, NSSlider, NSWindow,
+    NSWindowDelegate,
 };
 use objc2_foundation::NSNotification;
 
@@ -104,6 +105,13 @@ define_class!(
             emit(UiEvent::Step(id_of(sender.tag()), step));
         }
 
+        // SAFETY: action d'une liste de choix (seuls des NSPopUpButton l'ont).
+        #[unsafe(method(pick:))]
+        fn pick(&self, sender: &NSPopUpButton) {
+            let index = usize::try_from(sender.indexOfSelectedItem()).unwrap_or(0);
+            emit(UiEvent::Step(id_of(sender.tag()), index));
+        }
+
         // SAFETY: action d'un bouton (seuls des NSButton l'ont).
         #[unsafe(method(press:))]
         fn press(&self, sender: &NSButton) {
@@ -134,6 +142,26 @@ define_class!(
         #[unsafe(method(popUp:))]
         fn pop_up(&self, _sender: Option<&AnyObject>) {
             super::popup::show_pending();
+        }
+
+        // SAFETY: appelée par le centre de notifications, avec une
+        // NSNotification : Mouflon passe au premier plan.
+        #[unsafe(method(appDidBecomeActive:))]
+        fn app_did_become_active(&self, _notification: &NSNotification) {
+            super::front::set_front(self.mtm(), true);
+        }
+
+        // SAFETY: comme ci-dessus : Mouflon quitte le premier plan.
+        #[unsafe(method(appDidResignActive:))]
+        fn app_did_resign_active(&self, _notification: &NSNotification) {
+            super::front::set_front(self.mtm(), false);
+        }
+
+        // SAFETY: comme ci-dessus (centre distribué) : la disposition du
+        // clavier a changé.
+        #[unsafe(method(keyboardChanged:))]
+        fn keyboard_changed(&self, _notification: &NSNotification) {
+            super::keys::layout_changed();
         }
     }
 );

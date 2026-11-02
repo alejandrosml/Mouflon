@@ -23,6 +23,11 @@ const LOGIN_APPROVAL: u32 = 8;
 const FOLDER: u32 = 9;
 const PHYSICS: u32 = 10;
 const SURPRISES: u32 = 11;
+const MOOD: u32 = 12;
+const SHORTCUTS: u32 = 13;
+const ESCAPE: u32 = 14;
+/// « Ouvrir Réglages Système » sous « Échap deux fois… ».
+const ESCAPE_ACCESSIBILITY: u32 = 15;
 
 /// Ce que la fenêtre montre : les réglages de l'app, et ce qu'en dit le
 /// système (autorisation d'Accessibilité, ouverture de session).
@@ -30,12 +35,16 @@ const SURPRISES: u32 = 11;
 pub struct Shown {
     /// Rang de la taille dans [`crate::settings::SIZES`].
     pub size: usize,
+    /// Rang du tempérament dans [`crate::settings::MOODS`].
+    pub mood: usize,
     pub sounds: bool,
     pub surprises: bool,
     pub collisions: bool,
     pub realistic_physics: bool,
     pub frontmost_only: bool,
     pub walk_under_dock: bool,
+    pub shortcuts: bool,
+    pub escape_quits: bool,
     /// Mouflon a l'autorisation d'Accessibilité.
     pub trusted: bool,
     pub login: LoginItem,
@@ -77,6 +86,15 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
                         .collect(),
                     help: Some(t.size_help.clone()),
                 },
+                FormRow::Choice {
+                    id: MOOD,
+                    label: t.mood.clone(),
+                    choices: [&t.mood_random, &t.mood_calm, &t.mood_active, &t.mood_angry]
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    help: Some(t.mood_help.clone()),
+                },
                 check(SOUNDS, &t.pet_sounds, None, None),
                 check(SURPRISES, &t.surprises, Some(&t.surprises_help), None),
             ],
@@ -104,6 +122,22 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
                     Some(extra(
                         &t.accessibility_waiting,
                         ACCESSIBILITY,
+                        &t.open_system_settings,
+                    )),
+                ),
+            ],
+        },
+        FormSection {
+            title: t.shortcuts_section.clone(),
+            rows: vec![
+                check(SHORTCUTS, &t.shortcuts, Some(&t.shortcuts_help), None),
+                check(
+                    ESCAPE,
+                    &t.escape_quits,
+                    Some(&t.escape_quits_help),
+                    Some(extra(
+                        &t.accessibility_waiting,
+                        ESCAPE_ACCESSIBILITY,
                         &t.open_system_settings,
                     )),
                 ),
@@ -148,6 +182,7 @@ pub fn form(t: &Texts, login: LoginItem) -> Form {
 pub fn values(shown: &Shown) -> Vec<FormValue> {
     vec![
         FormValue::Step(SIZE, shown.size),
+        FormValue::Step(MOOD, shown.mood),
         FormValue::Check(SOUNDS, shown.sounds),
         FormValue::Check(SURPRISES, shown.surprises),
         FormValue::Check(PHYSICS, shown.realistic_physics),
@@ -155,6 +190,9 @@ pub fn values(shown: &Shown) -> Vec<FormValue> {
         FormValue::Check(FRONTMOST, shown.frontmost_only),
         FormValue::Check(DOCK, shown.walk_under_dock),
         FormValue::Shown(ACCESSIBILITY, shown.walk_under_dock && !shown.trusted),
+        FormValue::Check(SHORTCUTS, shown.shortcuts),
+        FormValue::Check(ESCAPE, shown.escape_quits),
+        FormValue::Shown(ESCAPE_ACCESSIBILITY, shown.escape_quits && !shown.trusted),
         FormValue::Check(LOGIN, shown.login.is_requested()),
         FormValue::Shown(LOGIN_APPROVAL, shown.login == LoginItem::NeedsApproval),
     ]
@@ -166,6 +204,10 @@ pub fn values(shown: &Shown) -> Vec<FormValue> {
 pub fn action(event: UiEvent) -> Option<Action> {
     Some(match event {
         UiEvent::Step(SIZE, size) => Action::SetSize(size),
+        UiEvent::Step(MOOD, mood) => Action::SetMood(mood),
+        UiEvent::Check(SHORTCUTS, on) => Action::SetShortcuts(on),
+        UiEvent::Check(ESCAPE, on) => Action::SetEscapeQuits(on),
+        UiEvent::Button(ESCAPE_ACCESSIBILITY) => Action::OpenAccessibilitySettings,
         UiEvent::Check(SOUNDS, on) => Action::SetSounds(on),
         UiEvent::Check(SURPRISES, on) => Action::SetSurprises(on),
         UiEvent::Check(COLLISIONS, on) => Action::SetCollisions(on),
@@ -193,12 +235,15 @@ mod tests {
     fn shown() -> Shown {
         Shown {
             size: 1,
+            mood: 0,
             sounds: true,
             surprises: true,
             collisions: false,
             realistic_physics: true,
             frontmost_only: true,
             walk_under_dock: false,
+            shortcuts: true,
+            escape_quits: false,
             trusted: false,
             login: LoginItem::Off,
         }
@@ -214,7 +259,7 @@ mod tests {
                     values.push(*id);
                     extras.extend(extra.as_ref().map(|e| e.button.id));
                 }
-                FormRow::Steps { id, .. } => values.push(*id),
+                FormRow::Steps { id, .. } | FormRow::Choice { id, .. } => values.push(*id),
                 FormRow::Text { button, .. } => buttons.extend(button.as_ref().map(|b| b.id)),
             }
         }
@@ -264,6 +309,11 @@ mod tests {
             Some(Action::SetWalkUnderDock(true))
         );
         assert_eq!(action(UiEvent::Step(SIZE, 3)), Some(Action::SetSize(3)));
+        assert_eq!(action(UiEvent::Step(MOOD, 3)), Some(Action::SetMood(3)));
+        assert_eq!(
+            action(UiEvent::Check(ESCAPE, true)),
+            Some(Action::SetEscapeQuits(true))
+        );
         assert_eq!(
             action(UiEvent::Check(PHYSICS, false)),
             Some(Action::SetRealisticPhysics(false))
@@ -284,6 +334,17 @@ mod tests {
         assert!(shown_extra(&s, ACCESSIBILITY), "autorisation manquante");
         s.trusted = true;
         assert!(!shown_extra(&s, ACCESSIBILITY));
+        s.trusted = false;
+        s.walk_under_dock = false;
+        assert!(!shown_extra(&s, ESCAPE_ACCESSIBILITY));
+        s.escape_quits = true;
+        assert!(
+            shown_extra(&s, ESCAPE_ACCESSIBILITY),
+            "Échap : autorisation manquante"
+        );
+        assert!(!shown_extra(&s, ACCESSIBILITY), "le Dock n'est pas demandé");
+        s.trusted = true;
+        assert!(!shown_extra(&s, ESCAPE_ACCESSIBILITY));
         assert!(!shown_extra(&s, LOGIN_APPROVAL));
         s.login = LoginItem::NeedsApproval;
         assert!(shown_extra(&s, LOGIN_APPROVAL));

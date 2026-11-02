@@ -236,6 +236,8 @@ pub struct App {
     dark: bool,
     /// L'autorisation d'Accessibilité, telle que le relevé la voit.
     trusted: bool,
+    /// Échap deux fois, ou tenue (voir `crate::keys`).
+    escape: crate::keys::EscapeGesture,
     /// Dernière position du curseur vue par les événements des fenêtres.
     cursor: Option<Vec2>,
     /// Animaux demandés dont le dessin se prépare encore (identifiant → nombre).
@@ -351,6 +353,7 @@ impl App {
             surprises: settings.surprises,
             frontmost_only: settings.frontmost_only,
             walk_under_dock: settings.walk_under_dock,
+            mood: settings.mood,
         };
         Self {
             settings,
@@ -369,6 +372,7 @@ impl App {
             live_sent: None,
             dark: false,
             trusted: false,
+            escape: crate::keys::EscapeGesture::default(),
             cursor: None,
             pending: HashMap::new(),
             decoding: HashSet::new(),
@@ -884,6 +888,7 @@ impl App {
             match crate::menu::TrayMenu::new(&self.library, self.settings.sounds) {
                 Ok(menu) => {
                     menu.set_paused(self.live.paused);
+                    menu.show_shortcuts(self.settings.shortcuts);
                     self.menu = Some(menu);
                 }
                 Err(e) => log::error!("impossible de recréer le menu : {e}"),
@@ -985,6 +990,36 @@ impl App {
                 self.spawn(index);
                 self.make_favorite(index);
             }
+            Action::AddRandom => {
+                // Chacun d'une espèce tirée au hasard (pas le préféré : de
+                // quoi découvrir les autres).
+                let species = self.library.pets.len();
+                if species > 0 {
+                    let seed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos() as u64);
+                    let mut rng = mouflon_core::math::Rng::new(seed);
+                    for _ in 0..crate::menu::RANDOM_COUNT {
+                        self.spawn(rng.next_u32() as usize % species);
+                    }
+                }
+            }
+            Action::AddEach(group) => {
+                let categories: Vec<&str> = self
+                    .library
+                    .pets
+                    .iter()
+                    .map(|entry| entry.def.meta.category())
+                    .collect();
+                let pets = crate::menu::groups(&categories)
+                    .into_iter()
+                    .nth(group)
+                    .map(|(_, pets)| pets)
+                    .unwrap_or_default();
+                for index in pets {
+                    self.spawn(index);
+                }
+            }
             Action::RemoveOne(index) => self.goodbye_one(index),
             Action::RemoveAll => self.send(Command::GoodbyeAll),
             Action::Goodbye(id) => self.send(Command::Goodbye(id)),
@@ -998,6 +1033,9 @@ impl App {
             Action::SetSurprises(on) => self.set_surprises(on),
             Action::SetFrontmostOnly(on) => self.set_frontmost_only(on),
             Action::SetWalkUnderDock(on) => self.set_walk_under_dock(on),
+            Action::SetMood(index) => self.set_mood(index),
+            Action::SetShortcuts(on) => self.set_shortcuts(on),
+            Action::SetEscapeQuits(on) => self.set_escape_quits(on),
             Action::SetOpenAtLogin(on) => {
                 // La case reste comme on l'a cochée en attendant la réponse.
                 self.login = if on {
@@ -1064,6 +1102,7 @@ impl App {
     fn shown(&self) -> Shown {
         Shown {
             size: self.settings.size_index(),
+            mood: self.settings.mood_index(),
             sounds: self.settings.sounds,
             surprises: self.settings.surprises,
             // Celles de l'affichage : un essai peut les imposer.
@@ -1071,6 +1110,8 @@ impl App {
             realistic_physics: self.live.realistic,
             frontmost_only: self.settings.frontmost_only,
             walk_under_dock: self.settings.walk_under_dock,
+            shortcuts: self.settings.shortcuts,
+            escape_quits: self.settings.escape_quits,
             trusted: self.trusted,
             login: self.login,
         }
@@ -1116,6 +1157,86 @@ impl App {
             self.settings.default_pet = Some(entry.def.meta.id.clone());
             self.save_settings();
         }
+    }
+
+    fn set_mood(&mut self, index: usize) {
+        let Some(&mood) = crate::settings::MOODS.get(index) else {
+            return;
+        };
+        if self.settings.mood == mood {
+            return;
+        }
+        self.settings.mood = mood;
+        self.live.mood = mood;
+        self.save_settings();
+    }
+
+    fn set_shortcuts(&mut self, on: bool) {
+        if self.settings.shortcuts == on {
+            return;
+        }
+        self.settings.shortcuts = on;
+        self.save_settings();
+        self.apply_shortcuts();
+    }
+
+    /// Les raccourcis de Mouflon sont réservés auprès du système (ou rendus),
+    /// et le menu les montre (ou plus).
+    fn apply_shortcuts(&self) {
+        let wanted = if self.settings.shortcuts {
+            crate::keys::Shortcut::for_system()
+        } else {
+            Vec::new()
+        };
+        let missed = platform::set_shortcuts(&wanted);
+        if !wanted.is_empty() && !missed.is_empty() {
+            let keys: Vec<char> = missed
+                .iter()
+                .filter_map(|id| crate::keys::Shortcut::from_id(*id))
+                .map(|s| s.key().to_ascii_uppercase())
+                .collect();
+            log::info!("raccourcis déjà pris par une autre app (ou indisponibles ici) : {keys:?}");
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(menu) = &self.menu {
+            menu.show_shortcuts(self.settings.shortcuts);
+        }
+    }
+
+    fn set_escape_quits(&mut self, on: bool) {
+        if self.settings.escape_quits == on {
+            return;
+        }
+        self.settings.escape_quits = on;
+        self.save_settings();
+        // Entendre Échap dans les autres apps demande l'autorisation
+        // d'Accessibilité : macOS propose de l'accorder si Mouflon ne l'a pas.
+        if on && !platform::request_accessibility() {
+            log::info!("Échap : en attente de l'autorisation d'Accessibilité");
+        }
+        let heard = platform::listen_escape(on);
+        if on && !heard {
+            log::info!("Échap : seulement dans Mouflon tant que l'autorisation manque");
+        }
+    }
+
+    /// Un raccourci de Mouflon, d'où que ce soit.
+    fn shortcut_pressed(&mut self, id: u32) -> Option<Action> {
+        if !self.settings.shortcuts {
+            return None;
+        }
+        let shortcut = crate::keys::Shortcut::from_id(id)?;
+        Some(shortcut.action(self.live.paused, self.settings.sounds))
+    }
+
+    /// La touche Échap bouge, dans n'importe quelle app.
+    fn escape_moved(&mut self, change: platform::KeyMove) -> Option<Action> {
+        if !self.settings.escape_quits {
+            return None;
+        }
+        self.escape
+            .key(change, Instant::now())
+            .then_some(Action::Quit)
     }
 
     fn set_sounds(&mut self, on: bool) {
@@ -1206,12 +1327,21 @@ impl App {
     /// vitrine de la CI).
     fn open_gallery(&mut self, now: bool) {
         let t = crate::i18n::texts();
-        let cards: Vec<platform::GalleryCard> = self
+        // Famille par famille, comme dans le menu.
+        let categories: Vec<&str> = self
             .library
             .pets
             .iter()
-            .enumerate()
-            .map(|(i, entry)| {
+            .map(|entry| entry.def.meta.category())
+            .collect();
+        let cards: Vec<platform::GalleryCard> = crate::menu::groups(&categories)
+            .into_iter()
+            .flat_map(|(category, pets)| {
+                let family = crate::menu::category_name(t, &category);
+                pets.into_iter().map(move |i| (i, family.clone()))
+            })
+            .map(|(i, family)| {
+                let entry = &self.library.pets[i];
                 let meta = &entry.def.meta;
                 let mut detail = meta.description.clone().unwrap_or_default();
                 if let Some(author) = meta.author.as_deref().filter(|a| !a.is_empty()) {
@@ -1225,6 +1355,7 @@ impl App {
                     name: meta.name.clone(),
                     detail,
                     button: t.gallery_add.clone(),
+                    family,
                 }
             })
             .collect();
@@ -1302,6 +1433,7 @@ impl App {
         // section « Démarrage » même si le système ne la permet pas ici.
         let full = Shown {
             walk_under_dock: true,
+            escape_quits: true,
             trusted: false,
             login: platform::LoginItem::NeedsApproval,
             ..self.shown()
@@ -1548,6 +1680,11 @@ impl App {
             }
             Report::PetMenu { id, def } => self.open_pet_menu(id, def),
             Report::Trusted(trusted) => {
+                // L'autorisation arrive : l'écoute d'Échap est refaite, pour
+                // l'entendre aussi dans les autres apps.
+                if trusted && !self.trusted && self.settings.escape_quits {
+                    platform::listen_escape(true);
+                }
                 self.trusted = trusted;
                 // La fenêtre des réglages montre ce qui manque (ou plus).
                 platform::update_form(&crate::settings_window::values(&self.shown()));
@@ -1652,6 +1789,13 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // Les noms et les nombres du menu sont justes avant même la première image.
         self.sync_menu();
+        // Les raccourcis clavier, dans toutes les apps (montrés dans le menu).
+        if trial.is_none() {
+            self.apply_shortcuts();
+            if self.settings.escape_quits {
+                platform::listen_escape(true);
+            }
+        }
 
         // Préchargement, avant la première image : dessins des animaux du
         // lancement, affichage, sons, premier relevé des fenêtres. Rien de
@@ -1880,6 +2024,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ui(event) => {
                 let action = match event {
                     platform::UiEvent::Menu(id) => self.pet_menu_action(id),
+                    platform::UiEvent::Shortcut(id) => self.shortcut_pressed(id),
+                    platform::UiEvent::Escape(change) => self.escape_moved(change),
                     // « Ajouter » sur une carte de la galerie : son espèce.
                     platform::UiEvent::GalleryAdd(index) => Some(Action::Add(index as usize)),
                     other => crate::settings_window::action(other),

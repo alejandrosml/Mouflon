@@ -78,9 +78,48 @@ Ce qui a été fait, en bref :
   écran : aucun saut, et un cinquième seulement en l'air au lieu des deux
   tiers (`tests/tas.rs`).
 
+Le 2 novembre en fin de journée, après les trois essais de l'après-midi
+(essai 14 : 0,58 % d'images en retard en charge, 1,32 % sur trois minutes,
+aucune par la faute de Mouflon) :
+- **les rebords cachés par les autres apps** (`world.rs`) : avec « Seulement
+  sur l'app au premier plan », les fenêtres des autres apps étaient retirées
+  du monde, si bien qu'une vieille fenêtre cachée derrière celles du Finder
+  gardait tout son rebord, où un mouton broutait par-dessus la liste des
+  fichiers. Elles ne portent plus personne, mais cachent toujours ce qui est
+  derrière elles (`set_windows_among`, un masque des fenêtres où l'on marche) ;
+- **des ombres plus justes, toujours aussi peu chères** (`paint.rs`) : une
+  ombre de contact, serrée et sombre sous les pattes, et une ombre portée qui
+  s'élargit, pâlit et devient plus floue avec la hauteur ; la forme suit le
+  corps tourné ; l'ombre reste sur son rebord (coupée au bout, plus petite et
+  plus pâle). Deux formes seulement, cuites une fois, mises à l'échelle
+  (`tests/ombres.rs`) ;
+- **le menu de la barre des menus, natif** (`status.rs`) : AppKit montre
+  lui-même le menu de l'icône, on peut appuyer, glisser et relâcher sur un
+  article (`tray-icon` simulait un clic) ;
+- **les fenêtres de Mouflon devant ses animaux** (`front.rs`) : tant que
+  Mouflon est au premier plan, réglages, galerie et « À propos » passent un
+  niveau au-dessus des fenêtres flottantes des animaux, qui ne prennent plus
+  leurs clics ; à son départ, elles reprennent leur niveau, juste derrière la
+  fenêtre de devant de l'autre app ;
+- **les raccourcis clavier** (`keys.rs` des deux côtés) : ⌃⌥⌘ et une lettre,
+  réservés à Mouflon par les « hot keys » de Carbon (sans autorisation), la
+  touche cherchée d'après sa lettre sur la disposition du clavier ; Échap deux
+  fois, ou tenue (option), écoutée avec l'Accessibilité, rien d'autre ;
+- **l'humeur** (`mouflon_core::temper`) : chaque comportement a une allure
+  (repos, sommeil, marche, élan, ou neutre) ; le tempérament multiplie les
+  poids des transitions selon l'allure visée et allonge ou raccourcit les
+  durées ; les énervés bousculent ceux qu'ils rencontrent. Au hasard, chacun
+  le sien, tiré d'après son numéro ;
+- **les familles** (`def.rs`, `menu.rs`, galerie) : chaque espèce a une
+  famille (écrite dans son `pet.toml`, sinon devinée de son nom), le menu et
+  la galerie les rangent ; « Un de chaque » et « Ajouter dix animaux au
+  hasard » ;
+- **la taille du premier lancement** d'après l'écran principal (grande sur
+  un écran Retina d'au moins 1 600 points, normale ailleurs).
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
-(la barre des menus, la galerie), et un essai sur le vrai Mac avec beaucoup
-plus d'animaux.
+(la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
+plus d'animaux, et la soucoupe qu'on peut percuter.
 
 ## 1. Ce que disent les essais
 

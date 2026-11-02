@@ -8,6 +8,7 @@ author = "Alejandro San Martin Lamas"
 description = "Un mouton dessiné en vecteurs, tête bleu ardoise (d'après la race Bleu du Maine) : il montre le moteur et sert de modèle à ton propre dessin."
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+category = "sheep"     # sa famille : tous les moutons ensemble
 
 [appearance]
 rig = "mannequin.svg"

@@ -15,6 +15,7 @@ author = "Alejandro San Martin Lamas"
 description = "Petit mouton de bureau tout en laine, avec sa clochette."
 version = "1.0.0"
 license = "MIT OR Apache-2.0"
+category = "sheep"     # sa famille : tous les moutons ensemble
 
 [appearance]
 strips_left = "planches/gauche/{name}.png"

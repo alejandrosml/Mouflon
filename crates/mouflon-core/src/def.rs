@@ -15,6 +15,174 @@ pub struct PetMeta {
     pub description: Option<String>,
     pub version: Option<String>,
     pub license: Option<String>,
+    /// Sa famille (`category = "sheep"` dans `pet.toml`) : voir
+    /// [`PetMeta::category`].
+    pub category: Option<String>,
+}
+
+/// Les familles d'animaux, pour ranger les menus et la galerie quand il y en
+/// a beaucoup : tous les moutons ensemble, les chats ensemble… Un `pet.toml`
+/// peut en donner une autre, montrée telle quelle.
+pub const CATEGORIES: [&str; 8] = [
+    "sheep", "farm", "cats", "dogs", "birds", "wild", "fantasy", "others",
+];
+
+/// Des mots qui trahissent une famille, dans les langues de Mouflon (le nom
+/// et la description d'un animal qui ne dit pas la sienne).
+const CATEGORY_WORDS: [(&str, &[&str]); 7] = [
+    (
+        "sheep",
+        &[
+            "sheep",
+            "mouton",
+            "brebis",
+            "agneau",
+            "bélier",
+            "lamb",
+            "ewe",
+            "oveja",
+            "cordero",
+            "carnero",
+            "schaf",
+            "lamm",
+            "widder",
+            "pecora",
+            "agnello",
+            "montone",
+            "schaap",
+            "ovelha",
+            "cordeiro",
+            "carneiro",
+            "овц",
+            "овеч",
+            "барашек",
+            "ягн",
+            "баран",
+            "羊",
+            "양",
+        ],
+    ),
+    (
+        "cats",
+        &[
+            "cat",
+            "chat",
+            "chaton",
+            "gato",
+            "katze",
+            "gatto",
+            "kat",
+            "кот",
+            "кошк",
+            "猫",
+            "고양이",
+            "neko",
+        ],
+    ),
+    (
+        "dogs",
+        &[
+            "dog",
+            "chien",
+            "chiot",
+            "perro",
+            "hund",
+            "cane",
+            "hond",
+            "cão",
+            "cachorro",
+            "собак",
+            "пёс",
+            "犬",
+            "狗",
+            "개",
+            "puppy",
+        ],
+    ),
+    (
+        "birds",
+        &[
+            "bird", "oiseau", "pájaro", "ave", "vogel", "uccello", "pássaro", "птиц", "鳥", "鸟",
+            "새", "duck", "canard", "pingouin", "penguin", "owl", "hibou", "chouette",
+        ],
+    ),
+    (
+        "farm",
+        &[
+            "cow", "vache", "pig", "cochon", "goat", "chèvre", "horse", "cheval", "chicken",
+            "poule", "donkey", "âne", "rabbit", "lapin", "vaca", "cerdo", "cabra", "kuh",
+            "schwein", "ziege",
+        ],
+    ),
+    (
+        "wild",
+        &[
+            "fox",
+            "renard",
+            "bear",
+            "ours",
+            "wolf",
+            "loup",
+            "deer",
+            "cerf",
+            "squirrel",
+            "écureuil",
+            "hedgehog",
+            "hérisson",
+            "panda",
+            "tiger",
+            "tigre",
+            "lion",
+            "zorro",
+            "fuchs",
+            "volpe",
+        ],
+    ),
+    (
+        "fantasy",
+        &[
+            "dragon", "unicorn", "licorne", "ghost", "fantôme", "alien", "monster", "monstre",
+            "robot", "fairy", "fée", "slime",
+        ],
+    ),
+];
+
+impl PetMeta {
+    /// Sa famille : celle que dit son `pet.toml`, sinon celle que trahissent
+    /// son nom et sa description (un mouton desktopPet se reconnaît), sinon
+    /// `others`.
+    #[must_use]
+    pub fn category(&self) -> &str {
+        if let Some(category) = self.category.as_deref().map(str::trim)
+            && !category.is_empty()
+        {
+            return category;
+        }
+        let text = format!(
+            "{} {} {}",
+            self.id,
+            self.name,
+            self.description.as_deref().unwrap_or_default()
+        )
+        .to_lowercase();
+        // Un mot entier pour les mots courts en lettres latines (« cat »
+        // n'est pas dans « catapulte ») ; partout ailleurs (« eSheep »).
+        let words: Vec<&str> = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let has = |needle: &str| {
+            if needle.is_ascii() && needle.len() <= 4 {
+                words.contains(&needle)
+            } else {
+                text.contains(needle)
+            }
+        };
+        CATEGORY_WORDS
+            .iter()
+            .find(|(_, needles)| needles.iter().any(|n| has(n)))
+            .map_or("others", |(category, _)| category)
+    }
 }
 
 /// Apparence de l'animal.
@@ -644,6 +812,8 @@ pub struct PetDef {
     /// Sons de l'animal (voir [`Behavior::sounds`]).
     pub sounds: Vec<Sound>,
     by_name: HashMap<String, usize>,
+    /// L'allure de chaque comportement (voir [`PetDef::energy`]).
+    energies: Vec<crate::temper::Energy>,
     default_ground: usize,
     default_air: Option<usize>,
 }
@@ -741,6 +911,7 @@ impl PetDef {
             })
             .ok_or(DefError::NoGroundBehavior)?;
         let default_air = behaviors.iter().position(|b| b.motion == Motion::Fall);
+        let energies = behaviors.iter().map(crate::temper::Energy::of).collect();
         if !(physics.width > 0.0 && physics.height > 0.0) {
             return Err(DefError::Invalid(
                 "la taille de l'animal doit être positive".into(),
@@ -757,8 +928,20 @@ impl PetDef {
             unit: 1.0,
             sounds: Vec::new(),
             by_name,
+            energies,
             default_ground,
             default_air,
+        })
+    }
+
+    /// L'allure du comportement `index` : ce que le tempérament de l'animal
+    /// lui fait choisir plus ou moins volontiers (voir [`crate::Temper`]).
+    #[must_use]
+    pub fn energy(&self, index: usize) -> crate::temper::Energy {
+        self.energies.get(index).copied().unwrap_or_else(|| {
+            self.behaviors
+                .get(index)
+                .map_or(crate::temper::Energy::Neutral, crate::temper::Energy::of)
         })
     }
 
@@ -892,6 +1075,40 @@ impl PetDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta(name: &str, description: &str, category: Option<&str>) -> PetMeta {
+        PetMeta {
+            id: name.to_lowercase(),
+            name: name.to_owned(),
+            author: None,
+            description: Some(description.to_owned()),
+            version: None,
+            license: None,
+            category: category.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_pet_belongs_to_the_family_it_says_or_that_shows() {
+        // Ce que dit son pet.toml d'abord, même une famille inconnue.
+        assert_eq!(meta("Pelote", "", Some("sheep")).category(), "sheep");
+        assert_eq!(meta("Bulle", "", Some("poissons")).category(), "poissons");
+        // Sinon, son nom et sa description, dans plusieurs langues.
+        assert_eq!(
+            meta("Poete", "Poe, le mouton égaré", None).category(),
+            "sheep"
+        );
+        assert_eq!(meta("eSheep", "", None).category(), "sheep");
+        assert_eq!(meta("Mimi", "Un petit chat roux", None).category(), "cats");
+        assert_eq!(meta("Pochi", "子犬", None).category(), "dogs");
+        assert_eq!(
+            meta("Kiki", "Une chouette qui vole", None).category(),
+            "birds"
+        );
+        // Un mot court ne se trouve pas au milieu d'un autre.
+        assert_eq!(meta("Boum", "Une catapulte", None).category(), "others");
+        assert_eq!(meta("Truc", "", None).category(), "others");
+    }
 
     fn clip(frames: &[u32], repeat: u32, from: usize) -> SpriteClip {
         SpriteClip {

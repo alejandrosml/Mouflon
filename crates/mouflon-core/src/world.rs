@@ -291,6 +291,9 @@ pub struct World {
     /// Fenêtres et réglages d'où viennent les rebords et les côtés actuels
     /// (`None` : à recalculer au prochain relevé).
     windows: Vec<WindowRect>,
+    /// Celles sur lesquelles on marche (vide : toutes ; voir
+    /// [`World::set_windows_among`]).
+    walkable: Vec<bool>,
     options: Option<LedgeOptions>,
     /// Relevés des fenêtres reçus, même identiques au précédent : la
     /// physique réaliste sait ainsi qu'une fenêtre n'a pas bougé.
@@ -339,16 +342,33 @@ impl World {
     /// fournie par le système. Le relevé revient plusieurs fois par seconde,
     /// le plus souvent à l'identique : rien n'est alors recalculé.
     pub fn set_windows(&mut self, windows: &[WindowRect], options: LedgeOptions) {
+        self.set_windows_among(windows, &[], options);
+    }
+
+    /// Les fenêtres, au premier plan d'abord, dont seules certaines portent
+    /// les animaux : `walkable[i]` dit si on marche sur la i-ème (son rebord,
+    /// ses côtés). Les autres ne font que cacher ce qui est derrière elles :
+    /// quand les animaux ne vont que sur l'app au premier plan, une fenêtre
+    /// d'une autre app posée devant cache toujours le rebord qu'elle couvre.
+    /// `walkable` vide : on marche sur toutes.
+    pub fn set_windows_among(
+        &mut self,
+        windows: &[WindowRect],
+        walkable: &[bool],
+        options: LedgeOptions,
+    ) {
         self.polls += 1;
-        if self.options == Some(options) && self.windows == windows {
+        if self.options == Some(options) && self.windows == windows && self.walkable == walkable {
             return;
         }
-        let ledges = visible_ledges(windows, &self.screens, options);
+        let ledges = visible_ledges_among(windows, walkable, &self.screens, options);
         self.surfaces.retain(|s| s.kind == SurfaceKind::Floor);
         self.surfaces.extend(ledges);
-        self.walls = visible_walls(windows);
+        self.walls = visible_walls_among(windows, walkable);
         self.windows.clear();
         self.windows.extend_from_slice(windows);
+        self.walkable.clear();
+        self.walkable.extend_from_slice(walkable);
         self.options = Some(options);
         self.reindex();
     }
@@ -394,6 +414,7 @@ impl World {
         self.indexed = false;
         self.walls.clone_from(&other.walls);
         self.windows.clone_from(&other.windows);
+        self.walkable.clone_from(&other.walkable);
         self.arena = other.arena;
         self.bounds = other.bounds;
         self.options = other.options;
@@ -596,8 +617,23 @@ pub fn visible_ledges(
     screens: &[Screen],
     options: LedgeOptions,
 ) -> Vec<Surface> {
+    visible_ledges_among(windows, &[], screens, options)
+}
+
+/// Les mêmes, seulement pour les fenêtres où l'on marche (`walkable`, vide :
+/// toutes) ; les autres cachent quand même ce qu'elles couvrent.
+#[must_use]
+pub fn visible_ledges_among(
+    windows: &[WindowRect],
+    walkable: &[bool],
+    screens: &[Screen],
+    options: LedgeOptions,
+) -> Vec<Surface> {
     let mut out = Vec::new();
     for (index, window) in windows.iter().enumerate() {
+        if !walkable.get(index).copied().unwrap_or(true) {
+            continue;
+        }
         let y = window.frame.top();
         let Some(screen) = screens.iter().find(|s| {
             s.frame
@@ -669,8 +705,18 @@ pub fn exact_dock(screens: &mut [Screen], dock: Rect) -> Option<WindowRect> {
 /// placée devant cache la partie d'un côté qu'elle recouvre.
 #[must_use]
 pub fn visible_walls(windows: &[WindowRect]) -> Vec<Wall> {
+    visible_walls_among(windows, &[])
+}
+
+/// Les mêmes, seulement pour les fenêtres où l'on marche (`walkable`, vide :
+/// toutes) ; les autres cachent quand même ce qu'elles couvrent.
+#[must_use]
+pub fn visible_walls_among(windows: &[WindowRect], walkable: &[bool]) -> Vec<Wall> {
     let mut out = Vec::new();
     for (index, window) in windows.iter().enumerate() {
+        if !walkable.get(index).copied().unwrap_or(true) {
+            continue;
+        }
         let f = window.frame;
         for (x, facing) in [(f.left(), -1.0), (f.right(), 1.0)] {
             let mut spans = vec![(f.top(), f.bottom())];

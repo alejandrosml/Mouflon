@@ -189,6 +189,7 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
         description: file.pet.description.clone(),
         version: file.pet.version.clone(),
         license: file.pet.license.clone(),
+        category: file.pet.category.clone(),
     };
 
     if let Some(desktoppet) = &file.desktoppet {
@@ -902,6 +903,8 @@ struct MetaToml {
     description: Option<String>,
     version: Option<String>,
     license: Option<String>,
+    /// Sa famille (`sheep`, `cats`… : voir [`crate::def::CATEGORIES`]).
+    category: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -21,6 +21,11 @@ pub enum Action {
     AddDefault,
     /// Ajoute cet animal de la bibliothèque (un de plus), qui devient le préféré.
     Add(usize),
+    /// Ajoute [`RANDOM_COUNT`] animaux, chacun d'une espèce tirée au hasard.
+    AddRandom,
+    /// Ajoute un animal de chaque espèce de cette famille (son rang dans
+    /// [`groups`]).
+    AddEach(usize),
     /// Dit au revoir à un animal de cette espèce (le dernier arrivé).
     RemoveOne(usize),
     RemoveAll,
@@ -42,6 +47,12 @@ pub enum Action {
     SetFrontmostOnly(bool),
     /// Marcher sous le Dock (il faut l'autorisation d'Accessibilité).
     SetWalkUnderDock(bool),
+    /// Le tempérament des animaux : rang dans [`crate::settings::MOODS`].
+    SetMood(usize),
+    /// Les raccourcis clavier de Mouflon, dans toutes les apps.
+    SetShortcuts(bool),
+    /// Échap deux fois, ou tenue, fait quitter Mouflon.
+    SetEscapeQuits(bool),
     /// Ouvrir Mouflon à l'ouverture de session.
     SetOpenAtLogin(bool),
     OpenSettings,
@@ -55,6 +66,54 @@ pub enum Action {
     OpenLoginItemsSettings,
     About,
     Quit,
+}
+
+/// Combien d'animaux « Ajouter dix animaux au hasard » fait arriver.
+pub const RANDOM_COUNT: usize = 10;
+
+/// Les espèces de la bibliothèque rangées par famille : les familles connues
+/// dans leur ordre ([`mouflon_core::CATEGORIES`]), puis les autres par ordre
+/// alphabétique ; dans chacune, les espèces dans l'ordre de la bibliothèque.
+/// `categories[i]` : la famille de la i-ème espèce.
+#[must_use]
+pub fn groups(categories: &[&str]) -> Vec<(String, Vec<usize>)> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, category) in categories.iter().enumerate() {
+        match groups.iter_mut().find(|(c, _)| c == category) {
+            Some((_, pets)) => pets.push(index),
+            None => groups.push(((*category).to_owned(), vec![index])),
+        }
+    }
+    let rank = |c: &str| {
+        mouflon_core::CATEGORIES
+            .iter()
+            .position(|known| *known == c)
+            .unwrap_or(mouflon_core::CATEGORIES.len())
+    };
+    groups.sort_by(|(a, _), (b, _)| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    groups
+}
+
+/// Le nom d'une famille dans la langue de l'utilisateur ; une famille
+/// inconnue (donnée par un `pet.toml`) garde le sien, avec une majuscule.
+#[must_use]
+pub fn category_name(t: &Texts, category: &str) -> String {
+    match category {
+        "sheep" => t.category_sheep.clone(),
+        "farm" => t.category_farm.clone(),
+        "cats" => t.category_cats.clone(),
+        "dogs" => t.category_dogs.clone(),
+        "birds" => t.category_birds.clone(),
+        "wild" => t.category_wild.clone(),
+        "fantasy" => t.category_fantasy.clone(),
+        "others" => t.category_others.clone(),
+        other => {
+            let mut chars = other.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(chars).collect()
+            })
+        }
+    }
 }
 
 /// Une espèce dans le menu : son nom, suivi du nombre d'animaux à l'écran
@@ -180,13 +239,14 @@ pub fn pet_menu(name: &str, state: PetMenuState, t: &Texts) -> Vec<PopupItem> {
 mod native {
     use std::cell::Cell;
 
-    use tray_icon::menu::accelerator::{Accelerator, CMD_OR_CTRL, Code};
+    use tray_icon::menu::accelerator::{Accelerator, CMD_OR_CTRL, Code, Modifiers};
     use tray_icon::menu::{
         CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     };
+    #[cfg(target_os = "windows")]
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-    use super::{Action, counted};
+    use super::{Action, category_name, counted, groups};
     use crate::library::Library;
 
     /// Raccourci affiché dans le menu (⌘, ou ⌘Q sur Mac).
@@ -194,20 +254,47 @@ mod native {
         cfg!(target_os = "macos").then(|| Accelerator::new(CMD_OR_CTRL, key))
     }
 
-    /// Le menu de l'icône de Mouflon, en neuf articles :
+    /// Un raccourci de Mouflon dans toutes les apps (⌃⌥⌘ et sa lettre),
+    /// montré dans le menu, sur Mac seulement (ailleurs, il n'y en a pas).
+    fn global(shortcut: crate::keys::Shortcut) -> Option<Accelerator> {
+        use crate::keys::Shortcut;
+        let code = match shortcut {
+            Shortcut::Add => Code::KeyN,
+            Shortcut::AddRandom => Code::KeyT,
+            Shortcut::GoodbyeAll => Code::KeyB,
+            Shortcut::Pause => Code::KeyP,
+            Shortcut::Sounds => Code::KeyS,
+            Shortcut::Quit => Code::KeyQ,
+        };
+        cfg!(target_os = "macos")
+            .then(|| Accelerator::new(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META, code))
+    }
+
+    /// Le menu de l'icône de Mouflon, en dix articles :
     ///
     /// - « Ajouter Lainou » (le préféré), « Ajouter un autre animal ▸ »
-    ///   (chaque espèce, avec le nombre d'animaux déjà à l'écran s'il y en a
-    ///   plusieurs : un clic en ajoute un de plus), « Dire au revoir ▸ » (à
-    ///   tous, ou à un animal d'une espèce), « Faire jouer ensemble » ;
+    ///   (la galerie, puis chaque espèce, avec le nombre d'animaux déjà à
+    ///   l'écran s'il y en a plusieurs : un clic en ajoute un de plus ; rangées
+    ///   par famille quand il y en a plusieurs, avec « Un de chaque »),
+    ///   « Ajouter dix animaux au hasard », « Dire au revoir ▸ » (à tous, ou à
+    ///   un animal d'une espèce), « Faire jouer ensemble » ;
     /// - « Mettre en pause » (ou « Reprendre »), « Sons » ;
     /// - « Réglages… » (⌘,), qui ouvre la fenêtre des réglages ;
     /// - « À propos », « Quitter » (⌘Q).
+    ///
+    /// Sur Mac, AppKit montre lui-même le menu de l'icône : on peut appuyer
+    /// sur l'icône, glisser jusqu'à un article et relâcher dessus.
     pub struct TrayMenu {
+        #[cfg(target_os = "macos")]
+        _status: Option<mouflon_platform::StatusItem>,
+        #[cfg(target_os = "windows")]
         _tray: TrayIcon,
         add_favorite: MenuItem,
         gallery: MenuId,
         add: Vec<(MenuItem, usize)>,
+        random: MenuItem,
+        /// « Un de chaque » de chaque famille (son rang dans [`groups`]).
+        each: Vec<(MenuItem, usize)>,
         goodbye_all: MenuItem,
         goodbye: Vec<(MenuItem, usize)>,
         names: Vec<String>,
@@ -219,6 +306,7 @@ mod native {
         settings: MenuId,
         about: MenuId,
         quit: MenuId,
+        quit_item: MenuItem,
     }
 
     impl std::fmt::Debug for TrayMenu {
@@ -245,13 +333,46 @@ mod native {
             let gallery = MenuItem::new(&t.gallery, true, None);
             add_menu.append(&gallery)?;
             add_menu.append(&PredefinedMenuItem::separator())?;
+            let categories: Vec<&str> = library
+                .pets
+                .iter()
+                .map(|entry| entry.def.meta.category())
+                .collect();
+            let groups = groups(&categories);
             let mut add = Vec::new();
-            for (i, name) in names.iter().enumerate() {
-                let item = MenuItem::new(name, true, None);
-                add_menu.append(&item)?;
-                add.push((item, i));
+            let mut each = Vec::new();
+            if groups.len() <= 1 {
+                // Une seule famille : ses espèces tout de suite, puis un de chaque.
+                for (i, name) in names.iter().enumerate() {
+                    let item = MenuItem::new(name, true, None);
+                    add_menu.append(&item)?;
+                    add.push((item, i));
+                }
+                if names.len() > 1 {
+                    add_menu.append(&PredefinedMenuItem::separator())?;
+                    let item = MenuItem::new(&t.one_of_each, true, None);
+                    add_menu.append(&item)?;
+                    each.push((item, 0));
+                }
+            } else {
+                // Une famille par sous-menu : un de chaque, puis ses espèces.
+                for (g, (category, pets)) in groups.iter().enumerate() {
+                    let family = Submenu::new(category_name(t, category), true);
+                    let item = MenuItem::new(&t.one_of_each, pets.len() > 1, None);
+                    family.append(&item)?;
+                    each.push((item, g));
+                    family.append(&PredefinedMenuItem::separator())?;
+                    for &i in pets {
+                        let item = MenuItem::new(&names[i], true, None);
+                        family.append(&item)?;
+                        add.push((item, i));
+                    }
+                    add_menu.append(&family)?;
+                }
             }
             menu.append(&add_menu)?;
+            let random = MenuItem::new(&t.add_random, !names.is_empty(), None);
+            menu.append(&random)?;
             let goodbye_menu = Submenu::new(&t.goodbye, true);
             let goodbye_all = MenuItem::new(&t.goodbye_all, false, None);
             goodbye_menu.append(&goodbye_all)?;
@@ -285,22 +406,33 @@ mod native {
             menu.append(&quit)?;
 
             let size = 36;
-            let icon = Icon::from_rgba(crate::icon::tray_icon(size), size, size)?;
-            let builder = TrayIconBuilder::new()
-                .with_menu(Box::new(menu))
-                .with_tooltip("Mouflon");
-            // Image « modèle » : macOS la teinte selon le thème de la barre des menus.
+            // Sur Mac, une icône « modèle » que macOS teinte selon la barre
+            // des menus, et dont AppKit montre lui-même le menu.
             #[cfg(target_os = "macos")]
-            let builder = builder.with_icon_templated(icon);
-            #[cfg(not(target_os = "macos"))]
-            let builder = builder.with_icon(icon);
-            let tray = builder.build()?;
+            let status = mouflon_platform::StatusItem::new(
+                &crate::icon::tray_icon(size),
+                size,
+                18.0,
+                "Mouflon",
+                &menu,
+            );
+            #[cfg(target_os = "windows")]
+            let tray = TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_tooltip("Mouflon")
+                .with_icon(Icon::from_rgba(crate::icon::tray_icon(size), size, size)?)
+                .build()?;
 
             Ok(Self {
+                #[cfg(target_os = "macos")]
+                _status: status,
+                #[cfg(target_os = "windows")]
                 _tray: tray,
                 add_favorite,
                 gallery: gallery.id().clone(),
                 add,
+                random,
+                each,
                 goodbye_all,
                 goodbye,
                 names,
@@ -311,6 +443,7 @@ mod native {
                 settings: settings.id().clone(),
                 about: about.id().clone(),
                 quit: quit.id().clone(),
+                quit_item: quit,
             })
         }
 
@@ -343,8 +476,13 @@ mod native {
             if let Some((_, i)) = self.goodbye.iter().find(|(item, _)| item.id() == id) {
                 return Some(Action::RemoveOne(*i));
             }
+            if let Some((_, g)) = self.each.iter().find(|(item, _)| item.id() == id) {
+                return Some(Action::AddEach(*g));
+            }
             if id == self.add_favorite.id() {
                 Some(Action::AddDefault)
+            } else if id == self.random.id() {
+                Some(Action::AddRandom)
             } else if id == &self.gallery {
                 Some(Action::OpenGallery)
             } else if id == self.goodbye_all.id() {
@@ -378,6 +516,28 @@ mod native {
         pub fn set_sounds(&self, value: bool) {
             self.sounds.set_checked(value);
         }
+
+        /// Les articles qui ont un raccourci dans toutes les apps le
+        /// montrent (`on`), ou plus ; « Quitter » montre alors ⌃⌥⌘Q, sinon ⌘Q.
+        pub fn show_shortcuts(&self, on: bool) {
+            use crate::keys::Shortcut;
+            let shown = |s: Shortcut| if on { global(s) } else { None };
+            let results = [
+                self.add_favorite.set_accelerator(shown(Shortcut::Add)),
+                self.random.set_accelerator(shown(Shortcut::AddRandom)),
+                self.goodbye_all
+                    .set_accelerator(shown(Shortcut::GoodbyeAll)),
+                self.pause.set_accelerator(shown(Shortcut::Pause)),
+                self.sounds.set_accelerator(shown(Shortcut::Sounds)),
+                self.quit_item
+                    .set_accelerator(shown(Shortcut::Quit).or_else(|| shortcut(Code::KeyQ))),
+            ];
+            for result in results {
+                if let Err(e) = result {
+                    log::warn!("raccourci du menu : {e}");
+                }
+            }
+        }
     }
 }
 
@@ -392,6 +552,28 @@ mod tests {
 
     fn texts() -> Texts {
         toml::from_str(include_str!("../locales/fr.toml")).unwrap()
+    }
+
+    #[test]
+    fn species_are_grouped_by_family_known_ones_first() {
+        let groups = groups(&["others", "sheep", "cats", "sheep", "poissons", "dragons"]);
+        let order: Vec<(&str, &[usize])> = groups
+            .iter()
+            .map(|(c, pets)| (c.as_str(), pets.as_slice()))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("sheep", &[1, 3][..]),
+                ("cats", &[2][..]),
+                ("others", &[0][..]),
+                ("dragons", &[5][..]),
+                ("poissons", &[4][..]),
+            ]
+        );
+        let t = texts();
+        assert_eq!(category_name(&t, "sheep"), "Moutons");
+        assert_eq!(category_name(&t, "poissons"), "Poissons");
     }
 
     #[test]

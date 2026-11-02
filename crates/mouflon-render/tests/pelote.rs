@@ -111,10 +111,7 @@ fn pelote_is_redrawn_only_when_its_image_changes() {
     // Une ombre à 600 points sous l'animal ne se voit pas : qu'elle s'éloigne
     // ou se rapproche d'un point ne change rien ; à 100 points, si.
     let mut shadow_at = |distance: f32| {
-        view.shadow = Some(Shadow {
-            y: view.ground.y + distance,
-            distance,
-        });
+        view.shadow = Some(Shadow::on(view.ground.y + distance, distance));
         key(&view)
     };
     assert_eq!(shadow_at(600.0), shadow_at(601.0));

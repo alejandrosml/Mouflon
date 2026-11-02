@@ -16,8 +16,8 @@ use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send,
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSApplication, NSBackingStoreType, NSBitmapImageFileType, NSBox, NSBoxType, NSButton, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSMenu, NSMenuItem, NSResponder,
-    NSSlider, NSTextField, NSTitlePosition, NSView, NSWindow, NSWindowStyleMask,
+    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSMenu, NSMenuItem, NSPopUpButton,
+    NSResponder, NSSlider, NSTextField, NSTitlePosition, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString, ns_string};
 
@@ -104,6 +104,12 @@ enum RowViews {
     Text {
         text: Retained<NSTextField>,
         button: Option<Retained<NSButton>>,
+    },
+    Choice {
+        id: u32,
+        label: Retained<NSTextField>,
+        popup: Retained<NSPopUpButton>,
+        help: Option<Retained<NSTextField>>,
     },
 }
 
@@ -296,6 +302,42 @@ fn build_row(row: &FormRow, root: &NSView, target: &AnyObject, mtm: MainThreadMa
             });
             RowViews::Text { text, button }
         }
+        FormRow::Choice {
+            id,
+            label: text,
+            choices,
+            help,
+        } => {
+            let title = label(text, mtm);
+            root.addSubview(&title);
+            let popup = NSPopUpButton::initWithFrame_pullsDown(
+                NSPopUpButton::alloc(mtm),
+                rect(0.0, 0.0, 160.0, 24.0),
+                false,
+            );
+            for choice in choices {
+                popup.addItemWithTitle(&NSString::from_str(choice));
+            }
+            popup.setTag(*id as isize);
+            // SAFETY: `pick:` est une action d'`Actions` (la cible), qui vit
+            // jusqu'à la fin du processus.
+            unsafe {
+                popup.setTarget(Some(target));
+                popup.setAction(Some(sel!(pick:)));
+            }
+            root.addSubview(&popup);
+            let help = help.as_ref().map(|text| {
+                let field = wrapping(text, true, mtm);
+                root.addSubview(&field);
+                field
+            });
+            RowViews::Choice {
+                id: *id,
+                label: title,
+                popup,
+                help,
+            }
+        }
     }
 }
 
@@ -366,6 +408,11 @@ fn build(form: &Form, mtm: MainThreadMarker) -> Built {
         .flat_map(|section| &section.rows)
         .filter_map(|row| match row {
             RowViews::Check { check, .. } => Some(check.intrinsicContentSize().width),
+            RowViews::Choice { label, popup, .. } => Some(
+                label.intrinsicContentSize().width
+                    + BUTTON_GAP
+                    + popup.intrinsicContentSize().width,
+            ),
             _ => None,
         })
         .fold(0.0, f64::max);
@@ -501,6 +548,36 @@ fn layout_row(row: &RowViews, x: f64, top: f64, width: f64) -> f64 {
             }
             height
         }
+        RowViews::Choice {
+            label, popup, help, ..
+        } => {
+            let l = label.intrinsicContentSize();
+            let p = popup.intrinsicContentSize();
+            let popup_w = p.width.min(width * 0.6);
+            let height = l.height.max(p.height);
+            place(
+                label,
+                x,
+                top + (height - l.height) / 2.0,
+                (width - popup_w - BUTTON_GAP).max(0.0),
+                l.height,
+            );
+            place(
+                popup,
+                x + width - popup_w,
+                top + (height - p.height) / 2.0,
+                popup_w,
+                p.height,
+            );
+            let mut y = top + height;
+            if let Some(help) = help {
+                let h = wrapped_height(help, width);
+                y += HELP_GAP;
+                place(help, x, y, width, h);
+                y += h;
+            }
+            y - top
+        }
     }
 }
 
@@ -562,6 +639,11 @@ fn apply(built: &mut Built, values: &[FormValue]) -> bool {
                     if *id == wanted =>
                 {
                     slider.setIntegerValue(step as isize);
+                }
+                (RowViews::Choice { id, popup, .. }, FormValue::Step(wanted, index))
+                    if *id == wanted =>
+                {
+                    popup.selectItemAtIndex(index as isize);
                 }
                 (
                     RowViews::Check {
@@ -657,6 +739,8 @@ pub fn show_form(form: &Form, values: &[FormValue]) -> bool {
         // Devant même si macOS n'a pas encore fait passer Mouflon au
         // premier plan (l'activation est une demande, depuis macOS 14).
         built.window.orderFrontRegardless();
+        // Devant les animaux, même s'ils couvrent tout l'écran.
+        super::front::bring_forward(mtm);
         true
     })
 }
