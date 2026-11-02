@@ -428,8 +428,8 @@ pub struct Tracker {
     world: World,
     /// Vitesse des dos des animaux (les fenêtres ont la leur, les sols aucune).
     backs: crate::world::IdMap<Vec2>,
-    /// La vitesse de chaque surface du monde lissé, par rang.
-    ranked: Vec<Vec2>,
+    /// La vitesse et le saut de chaque surface du monde lissé, par rang.
+    ranked: Vec<(Vec2, Vec2)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -592,20 +592,24 @@ impl Tracker {
                 .find(|t| t.id == id)
                 .map(|t| t.shown - t.known)
         });
-        // La vitesse de chaque surface, par rang : celle de sa fenêtre, ou
-        // aucune pour un sol ; puis les dos, avec la leur.
+        // La vitesse et le saut de chaque surface, par rang : ceux de sa
+        // fenêtre, ou rien pour un sol ; puis les dos, avec leur vitesse.
         self.ranked.clear();
         for s in self.world.surfaces() {
             self.ranked.push(match s.kind {
-                SurfaceKind::Window => self.window_velocity(s.id >> 8),
-                _ => Vec2::ZERO,
+                SurfaceKind::Window => self
+                    .windows
+                    .iter()
+                    .find(|t| t.id == s.id >> 8)
+                    .map_or((Vec2::ZERO, Vec2::ZERO), |t| (t.vel, t.jumped)),
+                _ => (Vec2::ZERO, Vec2::ZERO),
             });
         }
         self.backs.clear();
         for back in backs {
             self.world.push_surface(back.surface);
             self.backs.insert(back.surface.id, back.vel);
-            self.ranked.push(back.vel);
+            self.ranked.push((back.vel, Vec2::ZERO));
         }
         // Une seule fois pour toutes les fenêtres et tous les dos.
         self.world.reindex();
@@ -616,7 +620,16 @@ impl Tracker {
     /// qui passe en revue les surfaces de ses colonnes.
     #[must_use]
     pub(crate) fn velocity_at(&self, rank: usize) -> Vec2 {
-        self.ranked.get(rank).copied().unwrap_or(Vec2::ZERO)
+        self.ranked.get(rank).map_or(Vec2::ZERO, |&(vel, _)| vel)
+    }
+
+    /// Déplacement d'un coup de la surface de ce rang (voir
+    /// [`Tracker::jumped`]).
+    #[must_use]
+    pub(crate) fn jumped_at(&self, rank: usize) -> Vec2 {
+        self.ranked
+            .get(rank)
+            .map_or(Vec2::ZERO, |&(_, jumped)| jumped)
     }
 }
 

@@ -126,18 +126,21 @@ impl Pet {
             Support::Air if self.free_fall || !scripted => {
                 self.step_air_real(dt, tracker, input, scripted);
             }
-            Support::Ground { surface } if self.drops_away(dt, tracker, surface) => {
-                self.fall_off(dt);
-            }
-            Support::Ground { surface } if !scripted => {
-                self.step_ground_real(dt, tracker, input, surface);
-            }
-            // Animation image par image (Lainou, Pelote, desktopPet) : ses
-            // pas l'avancent sur la surface, et la plateforme l'emporte par
-            // ses pattes, comme les autres.
+            // Sa surface est cherchée une fois (son rang dans le monde
+            // lissé) : le reste du pas la lit sans chercher.
             Support::Ground { surface } => {
-                self.carry_on(dt, tracker, surface);
-                self.step_script(dt, world, input);
+                let rank = world.rank_of(surface);
+                if self.drops_away(dt, tracker, rank) {
+                    self.fall_off(dt);
+                } else if !scripted {
+                    self.step_ground_real(dt, tracker, input, rank);
+                } else {
+                    // Animation image par image (Lainou, Pelote, desktopPet) :
+                    // ses pas l'avancent sur la surface, et la plateforme
+                    // l'emporte par ses pattes, comme les autres.
+                    self.carry_on(dt, tracker, rank);
+                    self.step_script(dt, world, input);
+                }
             }
             // En l'air, son animation le mène (une escalade, un saut).
             _ => self.step_script(dt, world, input),
@@ -151,13 +154,17 @@ impl Pet {
     /// La plateforme qui le porte se dérobe-t-elle ? Elle descend plus vite
     /// que la pesanteur ne le ferait tomber, ou, montée vite puis arrêtée net,
     /// elle le laisse filer vers le haut.
-    fn drops_away(&self, dt: f32, tracker: &Tracker, surface: SurfaceId) -> bool {
-        let Some(s) = tracker.world().surface(surface) else {
+    /// `rank` : le rang de sa surface dans le monde lissé (`None` : elle
+    /// n'y est plus).
+    fn drops_away(&self, dt: f32, tracker: &Tracker, rank: Option<usize>) -> bool {
+        let Some((rank, s)) =
+            rank.and_then(|rank| Some((rank, tracker.world().surfaces().get(rank)?)))
+        else {
             return false;
         };
         let fall = self.carry.y + self.def.physics.gravity * dt;
         let gap = s.y - (self.pos.y + fall * dt);
-        gap > SEPARATION && (tracker.velocity(surface).y - fall).abs() > SEPARATION_SPEED
+        gap > SEPARATION && (tracker.velocity_at(rank).y - fall).abs() > SEPARATION_SPEED
     }
 
     /// Plus rien sous ses pattes : il part avec l'élan qu'il avait, et garde
@@ -193,10 +200,10 @@ impl Pet {
         }
     }
 
-    fn step_ground_real(&mut self, dt: f32, tracker: &Tracker, input: &Input, id: SurfaceId) {
+    fn step_ground_real(&mut self, dt: f32, tracker: &Tracker, input: &Input, rank: Option<usize>) {
         let world = tracker.world();
         self.slide = 0.0;
-        let Some(surface) = self.carry_on(dt, tracker, id) else {
+        let Some(surface) = self.carry_on(dt, tracker, rank) else {
             self.lift_off(world, input);
             return;
         };
@@ -209,11 +216,12 @@ impl Pet {
     /// glisse. Elle lui donne aussi sa vitesse verticale, qu'il garde si
     /// elle se dérobe ([`Self::drops_away`]). Renvoie la surface, si elle
     /// est toujours là.
-    fn carry_on(&mut self, dt: f32, tracker: &Tracker, id: SurfaceId) -> Option<Surface> {
-        let surface = tracker.world().surface(id).copied()?;
+    fn carry_on(&mut self, dt: f32, tracker: &Tracker, rank: Option<usize>) -> Option<Surface> {
+        let rank = rank?;
+        let surface = *tracker.world().surfaces().get(rank)?;
         // Déplacée d'un coup : il la suit tel quel.
-        self.pos.x += tracker.jumped(id).x;
-        let platform = tracker.velocity(id);
+        self.pos.x += tracker.jumped_at(rank).x;
+        let platform = tracker.velocity_at(rank);
         self.carry.y = platform.y;
         self.carry.x = approach(
             self.carry.x,

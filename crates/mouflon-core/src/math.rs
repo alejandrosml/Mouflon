@@ -203,6 +203,20 @@ pub fn damp(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
     lerp(current, target, 1.0 - (-rate * dt).exp())
 }
 
+/// `x.rem_euclid(period)`, sans division dans le cas d'une phase qui vient
+/// de dépasser sa période (elle avance d'un peu à chaque pas) : `x - period`
+/// y est exact (lemme de Sterbenz), donc le même résultat au bit près.
+#[must_use]
+pub fn wrap_phase(x: f32, period: f32) -> f32 {
+    if (0.0..period).contains(&x) {
+        x
+    } else if x >= period && x < 2.0 * period {
+        x - period
+    } else {
+        x.rem_euclid(period)
+    }
+}
+
 #[must_use]
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -335,6 +349,29 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une phase qui avance, recule ou saute loin revient dans sa période
+    /// exactement comme avec le reste de la division.
+    #[test]
+    fn wrapped_phases_match_the_remainder_bit_for_bit() {
+        let mut rng = Rng::new(7);
+        for period in [std::f32::consts::TAU, std::f32::consts::TAU * 8.0, 3600.0] {
+            let mut phase = 0.0f32;
+            for _ in 0..200_000 {
+                phase += rng.range(0.0, period * 0.05);
+                let wrapped = wrap_phase(phase, period);
+                assert_eq!(wrapped.to_bits(), phase.rem_euclid(period).to_bits());
+                phase = wrapped;
+            }
+            for x in [-1.0, -period * 3.5, period * 7.25, f32::MAX, 0.0, period] {
+                assert_eq!(
+                    wrap_phase(x, period).to_bits(),
+                    x.rem_euclid(period).to_bits(),
+                    "{x}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn spring_settles_on_target() {

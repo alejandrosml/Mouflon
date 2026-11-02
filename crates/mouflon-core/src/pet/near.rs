@@ -133,13 +133,26 @@ impl Sweep {
             self.order.clear();
             self.order.extend(0..facts.len() as u32);
         }
-        // Tri adaptatif : presque rien à faire quand l'ordre est déjà bon.
-        self.order.sort_by(|&a, &b| {
+        // Par bord gauche, puis par rang : un ordre total, le même quel que
+        // soit le tri. D'un pas à l'autre, quelques voisins seulement ont
+        // échangé leur place : un tri par insertion ne coûte alors qu'un
+        // passage. Trop de désordre (au premier pas, après un grand saut) :
+        // un tri complet.
+        let before = |a: u32, b: u32| {
             span(&facts[a as usize])
                 .x0
                 .total_cmp(&span(&facts[b as usize]).x0)
                 .then(a.cmp(&b))
-        });
+                .is_lt()
+        };
+        if !insertion_sort(&mut self.order, before) {
+            self.order.sort_by(|&a, &b| {
+                span(&facts[a as usize])
+                    .x0
+                    .total_cmp(&span(&facts[b as usize]).x0)
+                    .then(a.cmp(&b))
+            });
+        }
         self.sorted.clear();
         self.sorted.extend(self.order.iter().filter_map(|&i| {
             let f = &facts[i as usize];
@@ -185,6 +198,28 @@ impl Sweep {
         }
         kept.flush(&mut self.pairs);
     }
+}
+
+/// Trie `order` par insertion, tant que cela reste bon marché : `false` (et
+/// un ordre à finir de trier, mêmes éléments) si les déplacements dépassent
+/// quelques passages.
+fn insertion_sort(order: &mut [u32], before: impl Fn(u32, u32) -> bool) -> bool {
+    let limit = order.len() * 4 + 64;
+    let mut moves = 0usize;
+    for k in 1..order.len() {
+        let item = order[k];
+        let mut m = k;
+        while m > 0 && before(item, order[m - 1]) {
+            order[m] = order[m - 1];
+            m -= 1;
+            moves += 1;
+        }
+        order[m] = item;
+        if moves > limit {
+            return false;
+        }
+    }
+    true
 }
 
 /// Les paires gardées, par paquets : sans branchement pour en garder une

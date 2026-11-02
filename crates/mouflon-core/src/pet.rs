@@ -12,7 +12,7 @@ use crate::def::{
     Transition,
 };
 use crate::expr::Expr;
-use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep};
+use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep, wrap_phase};
 use crate::physics::{Back, Tracker};
 use crate::world::{Surface, SurfaceId, SurfaceKind, World};
 
@@ -2050,7 +2050,7 @@ impl Pet {
         let speed = if grounded { vel.x.abs() } else { 0.0 };
         // Au galop, la foulée s'allonge (des bonds plutôt que des pas pressés).
         let stride = self.def.stride() * (1.0 + RUN_STRIDE * a.run);
-        a.gait_phase = (a.gait_phase + speed / stride * TAU * dt).rem_euclid(TAU);
+        a.gait_phase = wrap_phase(a.gait_phase + speed / stride * TAU * dt, TAU);
         a.walk = damp(
             a.walk,
             if grounded {
@@ -2081,7 +2081,7 @@ impl Pet {
         if a.graze > 0.02 {
             // Deux coups de dents par seconde, un peu irréguliers.
             let rate = TAU * (1.9 + 0.5 * (a.nibble_phase * 0.37).sin());
-            a.nibble_phase = (a.nibble_phase + rate * dt).rem_euclid(TAU * 8.0);
+            a.nibble_phase = wrap_phase(a.nibble_phase + rate * dt, TAU * 8.0);
         }
         let rise = if pose == Pose::Air {
             (-vel.y / (0.3 * p.terminal_velocity)).clamp(-1.0, 1.0)
@@ -2152,7 +2152,7 @@ impl Pet {
             }
         }
 
-        a.tail_phase = (a.tail_phase + dt * (1.6 + a.walk * 5.0 + a.run * 4.0)).rem_euclid(TAU);
+        a.tail_phase = wrap_phase(a.tail_phase + dt * (1.6 + a.walk * 5.0 + a.run * 4.0), TAU);
 
         // Clignements, parfois doubles ; yeux clos pendant le sommeil.
         if a.sleep > 0.5 {
@@ -2181,8 +2181,8 @@ impl Pet {
         }
 
         let period = lerp(3.6, 5.4, a.sleep);
-        a.breath_phase = (a.breath_phase + TAU * dt / period).rem_euclid(TAU);
-        a.clock = (a.clock + dt).rem_euclid(CLOCK_LOOP);
+        a.breath_phase = wrap_phase(a.breath_phase + TAU * dt / period, TAU);
+        a.clock = wrap_phase(a.clock + dt, CLOCK_LOOP);
 
         // Regard : le curseur s'il est proche, sinon des coups d'œil.
         let head = *pos + Vec2::new(*facing * p.width * 0.32, -p.height * 0.72);

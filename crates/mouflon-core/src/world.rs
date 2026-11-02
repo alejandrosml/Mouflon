@@ -510,6 +510,16 @@ impl World {
         self.highest_near(p.x - margin, p.x + margin, keep)
     }
 
+    /// Le rang (dans [`World::surfaces`]) de la surface `id`, la première
+    /// s'il y en a plusieurs (comme [`World::surface`]).
+    #[must_use]
+    pub(crate) fn rank_of(&self, id: SurfaceId) -> Option<usize> {
+        match self.index() {
+            Some(index) => index.by_id.get(&id).map(|&i| i as usize),
+            None => self.surfaces.iter().position(|s| s.id == id),
+        }
+    }
+
     /// Les rangs (dans [`World::surfaces`]) des surfaces qui peuvent couvrir
     /// les abscisses de `x0` à `x1` : celles de leurs colonnes si l'index
     /// est à jour (une surface sur plusieurs colonnes revient pour chacune),
