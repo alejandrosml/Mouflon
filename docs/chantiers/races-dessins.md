@@ -11,6 +11,33 @@ nouvelles : `neck`, `leg-*-lower`, `lip`, `sway-*`…), `tools/races/README.md`
 `docs/animation-animale.md`, et la fiche de chaque race de ton lot dans
 `docs/races/<id>.md`.
 
+## État au 3 novembre 2026, au soir : la suite passe à Codex
+
+- **Faites** (dans `pets/`) : `thones-et-marthod`, `lacaune`.
+- **Commencées** (seulement dans `tools/races/<id>/`, pas encore dans
+  `pets/`) : `suffolk` (le dessin est complet ; reste la dernière passe et la
+  relecture contre les photos) et `swaledale` (reste une passe de
+  corrections : la toison, les pattes, les poils qui se fondent dans le
+  front). Le détail est dans le message du commit 7d13df4. Reprends ces
+  générateurs, ne recommence pas.
+- **À dessiner, avec leur fiche** : lot 1 `scottish-blackface`,
+  `manech-tete-rousse`, `landes-de-bretagne`, `herdwick` ; lot 2
+  `badger-face-welsh`, `texel`, `zwartbles`, `heidschnucke`, `skudde`,
+  `gotland`, `islandais` ; lot 3 `romanov`, `racka`, `karakul`, `awassi`,
+  `dorper`.
+- **Plus tard**, quand leur fiche sera écrite
+  (`docs/chantiers/races-fiches-consigne.md`) : `hebridean`,
+  `manx-loaghtan`, `soay`, `shetland`, `wensleydale`, `barbados-blackbelly`,
+  `navajo-churro`, `mouflon-canadien`, `argali`, `mouflon-de-dall`.
+
+Avec Codex : une tâche par race, et une PR par race vers `fenetres-dock`,
+qui ne touche que les fichiers de sa race (voir plus bas). Personne ne
+relira tes planches à ta place : avant la PR, relis chacune comme un
+relecteur qui ne l'a pas dessinée, à côté de trois à cinq photos de la race
+(silhouette, proportions, tête, oreilles, cornes, couleurs et marques,
+toison, pattes, sabots), corrige, recommence tant que ce n'est pas juste, et
+dis dans la PR ce qui reste imparfait.
+
 ## Ce qu'on attend pour chaque race
 
 Le niveau des quatre premières races au moins (regarde leurs planches dans
