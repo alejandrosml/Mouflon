@@ -632,6 +632,61 @@ mod tests {
     }
 
     #[test]
+    fn a_skeleton_names_its_neck_lower_legs_lip_and_locks() {
+        let text = r#"
+            size = [100, 100]
+            ground = [50, 95]
+            muzzle = [90, 70]
+            [[bone]]
+            name = "racine"
+            at = [50, 95]
+            [[bone]]
+            name = "corps"
+            parent = "racine"
+            at = [50, 50]
+            role = "body"
+            [[bone]]
+            name = "encolure"
+            parent = "corps"
+            at = [70, 45]
+            role = "neck"
+            [[bone]]
+            name = "levre"
+            parent = "encolure"
+            at = [85, 60]
+            role = "lip"
+            [[bone]]
+            name = "meche"
+            parent = "corps"
+            at = [50, 70]
+            role = "sway"
+            [[bone]]
+            name = "patte"
+            parent = "corps"
+            at = [70, 65]
+            role = "leg-front-far"
+            [[bone]]
+            name = "patte-bas"
+            parent = "patte"
+            at = [70, 80]
+            role = "leg-front-far-lower"
+        "#;
+        let skeleton = parse_skeleton(text, |_| Err("pas d'image".into())).unwrap();
+        let roles: Vec<Option<BoneRole>> = skeleton.bones.iter().map(|b| b.role).collect();
+        assert_eq!(roles[2], Some(BoneRole::Neck));
+        assert_eq!(roles[3], Some(BoneRole::Lip));
+        assert_eq!(roles[4], Some(BoneRole::Sway));
+        assert_eq!(
+            roles[6],
+            Some(BoneRole::LegLower {
+                front: true,
+                near: false
+            })
+        );
+        assert_eq!(skeleton.muzzle, Some(Vec2::new(90.0, 70.0)));
+    }
+
+    #[test]
     fn reads_bones_pieces_clips_and_motions() {
         let s = parse_skeleton(SKELETON, read).unwrap();
         assert_eq!(s.bones.len(), 2);

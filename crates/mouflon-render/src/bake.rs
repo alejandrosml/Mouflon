@@ -12,8 +12,6 @@
 //! est cuit avec lui, dans les deux sens de l'animal : le reflet passe de
 //! l'autre côté quand il se retourne.
 
-use std::collections::HashMap;
-
 use peniko::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
 use peniko::{Color, Extend, Fill};
 use tiny_skia::{
@@ -40,10 +38,12 @@ pub struct Piece {
     pub placement: Affine,
 }
 
-/// Les morceaux d'un rig, chacun repéré par le premier élément de sa suite.
+/// Les morceaux d'un rig, chacun repéré par le premier élément de sa suite
+/// (rangés par élément : le dessin les lit à chaque image, sans chercher).
 #[derive(Clone, Debug, Default)]
 pub struct BakedRig {
-    pieces: HashMap<usize, Piece>,
+    pieces: Vec<Option<Piece>>,
+    count: usize,
 }
 
 impl BakedRig {
@@ -66,7 +66,7 @@ impl BakedRig {
         if !(scale.is_finite() && scale > 0.0) {
             return None;
         }
-        let mut pieces = HashMap::new();
+        let mut pieces: Vec<Option<Piece>> = vec![None; rig.items.len()];
         let mut parts: Vec<Part> = Vec::new();
         let mut run: Vec<usize> = Vec::new();
         let mut flush = |run: &mut Vec<usize>, parts: &[Part]| -> Option<()> {
@@ -75,7 +75,7 @@ impl BakedRig {
                 let lit = parts.last().is_some_and(|p| p.is_fleece());
                 let light = (lit && lighting > 0.0).then_some(lighting);
                 if let Some(piece) = bake_piece(rig, run, scale, light)? {
-                    pieces.insert(first, piece);
+                    pieces[first] = Some(piece);
                 }
                 run.clear();
             }
@@ -96,25 +96,26 @@ impl BakedRig {
             }
         }
         flush(&mut run, &parts)?;
-        Some(Self { pieces })
+        let count = pieces.iter().filter(|p| p.is_some()).count();
+        Some(Self { pieces, count })
     }
 
     /// Le morceau qui commence à l'élément `item` (les suivants de sa suite
     /// sont dedans).
     #[must_use]
     pub fn piece(&self, item: usize) -> Option<&Piece> {
-        self.pieces.get(&item)
+        self.pieces.get(item).and_then(Option::as_ref)
     }
 
     /// Nombre de morceaux.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.pieces.len()
+        self.count
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+        self.count == 0
     }
 }
 

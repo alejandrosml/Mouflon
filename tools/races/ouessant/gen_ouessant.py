@@ -1095,10 +1095,11 @@ text = articulations.articulate_breed(
     neck=dict(
         source="body",
         area=articulations.shoulder((122.0, 48.6), (162.0, 86.0), bulge=6.0, far=230.0, top=0.0),
-        pivot=(134.0, 70.0),
+        pivot=(128.0, 92.0),
         poll=(146.0, 44.0),
         muzzle=(183.0, 66.5),
         margin=6.0,
+        filler=(1.0, 12.0),
     ),
 )
 with open(OUT, "w") as fh:

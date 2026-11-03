@@ -995,6 +995,7 @@ def articule(svg):
             poll=(119.0, 113.0),
             muzzle=(144.5, 135.0),
             margin=6.0,
+            filler=(1.0, 9.0),
         ),
     )
 

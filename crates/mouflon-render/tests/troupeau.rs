@@ -1,7 +1,8 @@
 //! Test de bout en bout de tous les animaux du dépôt (`pets/`) : chacun se
 //! charge, vit un moment (actif, pour qu'il joue aussi) et se dessine. Les
-//! moutons dessinés en vecteurs ont toutes leurs parties, se cuisent en
-//! images, et leurs sabots touchent le sol.
+//! moutons dessinés en vecteurs ont toutes leurs parties (l'encolure et les
+//! pattes en deux segments comprises), se cuisent en images, leurs sabots
+//! touchent le sol, et ils broutent le museau dans l'herbe.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -98,6 +99,7 @@ fn every_drawn_sheep_has_its_parts_bakes_and_stands_on_its_hooves() {
         );
         for part in [
             Part::Body,
+            Part::Neck,
             Part::Head,
             Part::Eyes,
             Part::Pupils,
@@ -105,9 +107,44 @@ fn every_drawn_sheep_has_its_parts_bakes_and_stands_on_its_hooves() {
             Part::LegFrontFar,
             Part::LegBackNear,
             Part::LegBackFar,
+            Part::LegFrontNearLower,
+            Part::LegFrontFarLower,
+            Part::LegBackNearLower,
+            Part::LegBackFarLower,
         ] {
             assert!(rig.has_part(part), "{name} : pas de « {} »", part.name());
         }
+        // Il broute le museau dans l'herbe (à 2 % de sa hauteur près), devant
+        // ses antérieurs.
+        let muzzle = rig
+            .muzzle
+            .unwrap_or_else(|| panic!("{name} : pas de « pivot-muzzle »"));
+        let grazing = pose(
+            rig,
+            &mouflon_core::PoseSignals {
+                graze: 1.0,
+                ..Default::default()
+            },
+            1.0,
+            0.0,
+        );
+        let mut head = grazing.part(Part::Head);
+        let mut up = rig.parent(Part::Head);
+        while let Some(parent) = up {
+            head = grazing.part(parent) * head;
+            up = rig.parent(parent);
+        }
+        let m = grazing.root * head * muzzle;
+        let h = rig.bounds.height();
+        assert!(
+            (m.y - rig.ground.y).abs() < 0.02 * h,
+            "{name} : museau à {:.1} du sol",
+            rig.ground.y - m.y
+        );
+        assert!(
+            m.x > rig.pivot(Part::LegFrontNearLower).x,
+            "{name} : museau derrière les antérieurs"
+        );
         // Debout, le bas de chaque patte est sur la ligne du sol (à 1 % de
         // sa hauteur près).
         let h = rig.bounds.height();

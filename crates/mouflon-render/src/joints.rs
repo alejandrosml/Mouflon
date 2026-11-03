@@ -44,12 +44,39 @@ pub(crate) fn stretch_along(p: Point, dir: f64, s: f64) -> Affine {
 
 /// Une chaîne de deux segments au repos : la racine (épaule, hanche, base
 /// de l'encolure), l'articulation (carpe, jarret, nuque) et le bout (sabot,
-/// museau).
+/// museau). Ses longueurs et ses angles au repos sont calculés une fois.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Chain {
     pub root: Point,
     pub joint: Point,
     pub tip: Point,
+    /// Longueurs des deux segments, de la racine au bout au repos.
+    l1: f64,
+    l2: f64,
+    rest_len: f64,
+    /// Direction du premier segment, pli au repos, direction de la racine au
+    /// bout (son cosinus et son sinus).
+    first_rest: f64,
+    bend_rest: f64,
+    axis: (f64, f64),
+}
+
+impl Chain {
+    pub(crate) fn new(root: Point, joint: Point, tip: Point) -> Self {
+        let first_rest = angle(joint - root);
+        let axis = angle(tip - root);
+        Self {
+            root,
+            joint,
+            tip,
+            l1: (joint - root).hypot().max(1e-6),
+            l2: (tip - joint).hypot().max(1e-6),
+            rest_len: (tip - root).hypot().max(1e-6),
+            first_rest,
+            bend_rest: wrap(angle(tip - joint) - first_rest),
+            axis: (axis.cos(), axis.sin()),
+        }
+    }
 }
 
 /// La solution : de combien tourne le premier segment (autour de la
@@ -73,16 +100,9 @@ impl Bend {
 }
 
 impl Chain {
-    fn lengths(&self) -> (f64, f64) {
-        (
-            (self.joint - self.root).hypot().max(1e-6),
-            (self.tip - self.joint).hypot().max(1e-6),
-        )
-    }
-
     /// Le pli au repos (le second segment par rapport au premier).
     fn rest_bend(&self) -> f64 {
-        wrap(angle(self.tip - self.joint) - angle(self.joint - self.root))
+        self.bend_rest
     }
 
     /// Le côté où l'articulation se plie : celui du dessin s'il est plié,
@@ -115,11 +135,11 @@ impl Chain {
         max_stretch: f64,
         give: f64,
     ) -> Bend {
-        let (l1, l2) = self.lengths();
+        let (l1, l2) = (self.l1, self.l2);
         let to = target - root;
         let d = to.hypot();
         let straight = l1 + l2;
-        let rest = (self.tip - self.root).hypot().max(1e-6);
+        let rest = self.rest_len;
         let stretch = if d > straight {
             (d / straight).min(max_stretch.max(1.0))
         } else if d < rest {
@@ -128,14 +148,48 @@ impl Chain {
             1.0
         };
         let d = (d / stretch).clamp((l1 - l2).abs() + 1e-6, straight);
+        self.solve(to, d, l1, l2, natural, fold, stretch)
+    }
+
+    /// Comme [`Self::reach`], mais seul le premier segment s'étire (une
+    /// encolure qui s'allonge sous une tête qui reste d'une pièce).
+    pub(crate) fn reach_first(
+        &self,
+        root: Point,
+        target: Point,
+        natural: f64,
+        max_stretch: f64,
+    ) -> Bend {
+        let (l1, l2) = (self.l1, self.l2);
+        let to = target - root;
+        let d = to.hypot();
+        let stretch = ((d - l2) / l1).clamp(1.0, max_stretch.max(1.0));
+        let l1 = l1 * stretch;
+        let d = d.clamp((l1 - l2).abs() + 1e-6, l1 + l2);
+        self.solve(to, d, l1, l2, natural, 0.0, stretch)
+    }
+
+    /// Les angles qui posent le bout à la distance `d` dans la direction `to`,
+    /// les segments mesurant `l1` et `l2`.
+    #[allow(clippy::too_many_arguments)]
+    fn solve(
+        &self,
+        to: Vec2,
+        d: f64,
+        l1: f64,
+        l2: f64,
+        natural: f64,
+        fold: f64,
+        stretch: f64,
+    ) -> Bend {
         let c = ((d * d - l1 * l1 - l2 * l2) / (2.0 * l1 * l2)).clamp(-1.0, 1.0);
         let side = self.side(natural);
         let bend = side * (c.acos() + fold).clamp(0.0, PI - 0.05);
         let offset = (l2 * bend.sin()).atan2(l1 + l2 * bend.cos());
         let first_dir = angle(to) - offset;
         Bend {
-            first: wrap(first_dir - angle(self.joint - self.root)),
-            second: wrap(bend - self.rest_bend()),
+            first: wrap(first_dir - self.first_rest),
+            second: wrap(bend - self.bend_rest),
             stretch,
         }
     }
@@ -152,10 +206,22 @@ impl Chain {
 /// Le premier segment posé : déplacé jusqu'à `root`, tourné autour de sa
 /// racine, étiré le long de lui-même.
 pub(crate) fn first_segment(chain: &Chain, root: Point, bend: Bend) -> Affine {
-    let dir = angle(chain.tip - chain.root);
-    Affine::translate(root - chain.root)
-        * rotate_about(chain.root, bend.first)
-        * stretch_along(chain.root, dir, bend.stretch)
+    let turn = Affine::translate(root - chain.root) * rotate_about(chain.root, bend.first);
+    if (bend.stretch - 1.0).abs() < 1e-12 {
+        return turn;
+    }
+    // Étiré le long de l'axe de la chaîne (de la racine au bout, au repos).
+    let (c, s) = chain.axis;
+    let k = bend.stretch - 1.0;
+    let m = Affine::new([
+        1.0 + k * c * c,
+        k * c * s,
+        k * c * s,
+        1.0 + k * s * s,
+        0.0,
+        0.0,
+    ]);
+    turn * about(chain.root, m)
 }
 
 /// Le second segment, dans le repère du premier : il tourne autour de
@@ -207,6 +273,8 @@ const NECK_DOZE: f64 = 0.14;
 /// (de la nuque au museau) devant les sabots des antérieurs, et la tête
 /// mordille.
 pub(crate) const GRAZE_REACH: f64 = 0.85;
+/// Jusqu'où l'encolure s'étire pour poser le museau au sol.
+const NECK_STRETCH: f64 = 1.12;
 /// Endormi la tête au sol : l'encolure s'allonge vers l'avant, la tête
 /// presque à plat.
 const SLEEP_STRETCH: f64 = 1.08;
@@ -239,11 +307,7 @@ pub(crate) struct NeckDrive {
 
 impl NeckRest {
     fn chain(&self) -> Chain {
-        Chain {
-            root: self.base,
-            joint: self.poll,
-            tip: self.muzzle,
-        }
+        Chain::new(self.base, self.poll, self.muzzle)
     }
 
     /// Le pose de l'encolure et de la tête.
@@ -270,7 +334,14 @@ impl NeckRest {
             let chain = self.chain();
             let mut target = d.graze_at + Vec2::new(GRAZE_REACH * self.head_length(), 0.0);
             target.y -= 0.6 * d.u * d.nibble.max(0.0);
-            let mut ik = chain.reach(d.base, target, 1.0, 0.0, 1.12, 0.0);
+            // Une encolure trop courte pour aller si loin : le museau se pose
+            // plus près des antérieurs, mais il touche l'herbe.
+            let reach = 0.99 * (NECK_STRETCH * chain.l1 + chain.l2);
+            let dy = target.y - d.base.y;
+            if dy < reach {
+                target.x = target.x.min(d.base.x + (reach * reach - dy * dy).sqrt());
+            }
+            let mut ik = chain.reach_first(d.base, target, 1.0, NECK_STRETCH);
             ik.second += 0.05 * d.nibble;
             bend = bend.lerp(ik, d.graze);
         }
@@ -405,11 +476,16 @@ impl LegDrive {
             0.15 * self.air * self.loose + 0.55 * self.tuck - 0.12 * self.reach
         };
         turn += self.dangle * (if front { -0.1 } else { 0.12 } + self.swing * 0.4);
-        turn += if front { -self.splay } else { self.splay };
+        // À l'atterrissage, les sabots s'écartent un peu en glissant sur le
+        // sol ; ce sont surtout les genoux qui plient.
+        let splay = leg_len * (0.4 * self.splay).sin();
+        target.x += if front { splay } else { -splay };
         let slot = leg_slot(front, near);
         let (gesture_angle, gesture_lift) = self.act.legs[slot];
         turn += gesture_angle;
-        target = hip + rotate(target - hip, turn);
+        if turn != 0.0 {
+            target = hip + rotate(target - hip, turn);
+        }
         target.y -= gesture_lift * u;
         // Tenue ou tendue vers le sol, la patte pend de tout son long.
         let hang = 1.0 + 0.07 * self.dangle + 0.04 * self.air;
@@ -444,14 +520,14 @@ impl LegDrive {
     /// La patte repliée sous l'animal couché.
     fn lying(&self, leg: &LegRest, hip: Point) -> Bend {
         let chain = &leg.chain;
-        let (l1, _) = chain.lengths();
+        let l1 = chain.l1;
         // L'articulation se pose au sol (ou aussi bas que le segment le
         // permet) ; le canon s'allonge à plat, vers l'arrière (antérieur) ou
         // vers l'avant (postérieur).
         let knee_y = self.ground - leg.half_width;
         let drop = ((knee_y - hip.y) / l1).clamp(-1.0, 1.0);
         let from_down = drop.acos();
-        let rest_first = angle(chain.joint - chain.root);
+        let rest_first = chain.first_rest;
         let (first_dir, cannon_dir) = if leg.front {
             // Le bras vers l'avant et le bas, le canon replié dessous, vers l'arrière.
             (FRAC_PI_2 - from_down.min(1.25), PI - 0.08)
@@ -493,17 +569,17 @@ mod tests {
 
     fn leg(front: bool) -> Chain {
         if front {
-            Chain {
-                root: Point::new(100.0, 88.0),
-                joint: Point::new(101.0, 100.0),
-                tip: Point::new(100.5, 112.0),
-            }
+            Chain::new(
+                Point::new(100.0, 88.0),
+                Point::new(101.0, 100.0),
+                Point::new(100.5, 112.0),
+            )
         } else {
-            Chain {
-                root: Point::new(49.0, 88.0),
-                joint: Point::new(46.0, 100.0),
-                tip: Point::new(49.0, 112.0),
-            }
+            Chain::new(
+                Point::new(49.0, 88.0),
+                Point::new(46.0, 100.0),
+                Point::new(49.0, 112.0),
+            )
         }
     }
 

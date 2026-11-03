@@ -5552,6 +5552,46 @@ mod tests {
     }
 
     #[test]
+    fn the_fleece_trails_behind_a_running_sheep_and_hangs_still_at_rest() {
+        let world = world();
+        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "stand");
+        pet.behavior_length = 60.0;
+        run(&mut pet, &world, 2.0);
+        let rest = pet.view(1.0).pose.fleece;
+        assert!(rest.abs() < 0.02, "au repos : {rest}");
+        // Au galop, les mèches traînent (leur bout part vers l'arrière) ;
+        // celles du bout suivent les premières avec un temps de retard.
+        assert!(pet.force("run"));
+        let mut trailing = 0.0f32;
+        let mut lag = 0.0f32;
+        for _ in 0..(0.8 / TICK) as usize {
+            pet.step(TICK, &world, &Input::default());
+            if pet.behavior_name() != "run" {
+                pet.force("run");
+            }
+            let pose = pet.view(1.0).pose;
+            trailing = trailing.max(pose.fleece);
+            lag = lag.max(pose.fleece_tip.abs());
+        }
+        assert!(trailing > 0.12, "les mèches traînent : {trailing}");
+        assert!(lag > 0.005, "le bout suit avec retard : {lag}");
+    }
+
+    #[test]
+    fn a_flehmen_half_opens_the_mouth_under_the_curled_lip() {
+        let world = world();
+        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "stand");
+        run(&mut pet, &world, 0.5);
+        assert!(pet.force("flehmen"));
+        run(&mut pet, &world, 2.0);
+        let pose = pet.view(1.0).pose;
+        assert_eq!(pose.gesture, Some(Gesture::Flehmen));
+        assert!(pose.gesture_amount > 0.9);
+        assert!(pose.jaw > 0.08 && pose.jaw < 0.25, "{}", pose.jaw);
+        assert_eq!(Gesture::from_name("flehmen"), Some(Gesture::Flehmen));
+    }
+
+    #[test]
     fn a_drawn_sheep_crouches_before_it_leaps() {
         // L'anticipation : un mouton dessiné se ramasse, puis bondit.
         let world = world();

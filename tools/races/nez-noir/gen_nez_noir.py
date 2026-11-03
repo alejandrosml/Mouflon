@@ -1133,18 +1133,19 @@ def articule(svg):
     la pointe du jarret) ; l'encolure, l'avant du haut de la toison, devant
     la droite qui descend du garrot vers le poitrail, posée sous le corps ; la
     tête tourne à la nuque, derrière les cornes."""
-    withers, chest = S(87.0, 90.0), S(126.0, 52.0)
+    withers, chest = S(99.0, 90.0), S(127.0, 66.0)
     return articulations.articulate_breed(
         svg,
         carpus_y=S(0, 20.0)[1],
         hock_y=S(0, 22.0)[1],
         neck=dict(
             source="body",
-            area=articulations.shoulder(withers, chest, bulge=6.0),
-            pivot=S(95.0, 68.0),
+            area=articulations.shoulder(withers, chest, bulge=9.0),
+            pivot=S(92.0, 52.0),
             poll=S(105.0, 90.0),
             muzzle=S(127.0, 72.5),
             margin=6.0,
+            filler=(1.0, 10.0),
         ),
     )
 

@@ -688,14 +688,19 @@ def cut_under(root, paints, source, area, name, pivot, margin=2.0, skip_ids=()):
 
 
 def split_neck_under(root, paints, source, area, pivot, poll, head="head", muzzle=None,
-                     skip_ids=(), margin=2.0):
+                     skip_ids=(), margin=2.0, filler=None):
     """L'encolure sous le corps, comme une marionnette découpée : ce que le
     groupe `source` (le corps) dessine dans `area` (un polygone : ce qui
     dépasse devant l'épaule) devient l'encolure (voir `cut_under`). La tête
     reste à sa place dans le document (par-dessus le corps) : le moteur la
     fait suivre l'encolure. `pivot` : la base de l'encolure ; `poll` : la
-    nuque, le nouveau pivot de la tête ; `muzzle` : ce qui touche l'herbe."""
+    nuque, le nouveau pivot de la tête ; `muzzle` : ce qui touche l'herbe ;
+    `filler` : (longueur, rayon) d'une épaisseur de laine posée tout au fond
+    de l'encolure, de sa base vers la nuque (voir `_fill_neck`) ; elle est
+    ajoutée avant que la tête ne change de pivot."""
     neck = cut_under(root, paints, source, area, "neck", pivot, margin, skip_ids)
+    if filler:
+        _fill_neck(root, paints, source, neck, pivot, poll, filler)
     _, _, head_el = _find(root, head)
     for c in list(head_el):
         if c.get("id") == f"pivot-{head}":
@@ -723,6 +728,48 @@ def shoulder(withers, chest, bulge, n=16, far=170.0, top=-20.0):
         k = 4.0 * bulge * t * (1.0 - t)
         pts.append((ax + dx * t + nx * k, ay + dy * t + ny * k))
     return pts + [(far, by), (far, top), (ax, top)]
+
+
+def _fill_neck(root, paints, source, neck, pivot, poll, filler):
+    """Une épaisseur de laine au fond de l'encolure : une capsule de la
+    couleur de base de la toison (le premier remplissage opaque du corps),
+    de la base de l'encolure vers la nuque, sur `filler[0]` de cette
+    longueur, de rayon `filler[1]`, rognée à ce que le corps, l'encolure et
+    la tête recouvrent : cachée au repos, elle comble l'espace entre le corps
+    et la tête quand celle-ci descend."""
+    _, _, body = _find(root, source)
+    paint = None
+    for el, inh in _drawn(body, _inherit(body)):
+        style = _style(el, inh)
+        fill = style.get("fill", "black")
+        if fill != "none" and _opacity(el, inh) > 0.999 and not paints.translucent(fill):
+            paint = fill
+            break
+    if paint is None:
+        return
+    length, radius = filler
+    (ax, ay), (bx, by) = pivot, poll
+    end = (ax + (bx - ax) * length, ay + (by - ay) * length)
+    capsule = LineString([pivot, end]).buffer(radius, quad_segs=16)
+    # Rognée à ce que le corps, l'encolure et la tête recouvrent au repos :
+    # elle ne se voit que quand l'encolure bouge.
+    cover = []
+    for gid in (source, "neck", "head"):
+        try:
+            _, _, group = _find(root, gid)
+        except KeyError:
+            continue
+        for el, inh in _drawn(group, _inherit(group)):
+            if _has_fill(el, inh):
+                shape = _fill_shape(el)
+                if not shape.is_empty:
+                    cover.append(shape)
+    if cover:
+        capsule = capsule.intersection(unary_union(cover).buffer(-0.3))
+    if capsule.is_empty:
+        return
+    el = ET.Element(Q + "path", {"d": _poly_d(capsule.simplify(SIMPLIFY)), "fill": paint})
+    neck.insert(0, el)
 
 
 def cut_reach(svg_text, source, pivot, forward):

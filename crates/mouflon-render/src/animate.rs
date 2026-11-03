@@ -332,9 +332,7 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     // aussi d'avant en arrière.
     // Des pattes en deux segments amortissent l'atterrissage : le corps
     // descend, les genoux plient.
-    let segmented = Part::LEGS
-        .iter()
-        .any(|leg| leg.lower().is_some_and(|lower| rig.has_part(lower)));
+    let segmented = rig.joints.segmented;
     let bob = gait.bob(phase, u) + act.body_shift.y * u + absorb(segmented, landing, h);
     let rock = gait.pitch(phase, u, 2.0 * half_length);
 
@@ -510,8 +508,7 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     // --- Les articulations (encolure, bas des pattes, lèvre, mèches de la
     // toison) : un dessin qui n'en a pas bouge exactement comme avant.
     let body_t = parts[Part::Body.index()];
-    if rig.has_part(Part::Neck) && rig.has_part(Part::Head) {
-        let rest = neck_rest(rig);
+    if let Some(rest) = &rig.joints.neck {
         let drive = NeckDrive {
             base: body_t * rest.base,
             intent,
@@ -520,7 +517,7 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             doze: sleep * (1.0 - low),
             graze,
             nibble: f(s.nibble),
-            graze_at: Point::new(fore_hoof(rig).x, g.y - 0.3 * u),
+            graze_at: Point::new(rig.joints.fore_hoof.x, g.y - 0.3 * u),
             sleep_low: low,
             ground: g.y,
             u,
@@ -554,9 +551,9 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
         act,
         untilt: untilt(s, g, h),
     };
-    for leg in Part::LEGS {
-        if let Some(rest) = leg_rest(rig, leg) {
-            let (upper, lower) = legs.pose(&rest, body_t * rest.chain.root);
+    for (leg, rest) in Part::LEGS.into_iter().zip(&rig.joints.legs) {
+        if let Some(rest) = rest {
+            let (upper, lower) = legs.pose(rest, body_t * rest.chain.root);
             parts[leg.index()] = upper;
             if let Some(part) = leg.lower() {
                 parts[part.index()] = lower;
@@ -615,7 +612,7 @@ pub(crate) fn absorb(segmented: bool, landing: f64, h: f64) -> f64 {
 
 /// À l'atterrissage le plus rude, le corps descend de tant de fois la
 /// hauteur de l'animal.
-const ABSORB: f64 = 0.05;
+const ABSORB: f64 = 0.06;
 
 /// De combien la lèvre supérieure se retrousse (radians) : le flehmen.
 pub(crate) const LIP_CURL: f64 = 0.95;
@@ -631,6 +628,31 @@ pub(crate) fn sway(s: &PoseSignals, act: &Gesturing, facing: f32, k: usize) -> f
     let tip = f(s.fleece) + f(s.fleece_tip) + act.fleece_tip;
     let hang = -0.7 * f(s.local_swing(facing));
     ((1.0 - w) * first + w * tip) * (1.0 + 0.3 * w) + hang
+}
+
+/// Les articulations d'un rig, préparées une fois au chargement.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RigJoints {
+    /// L'encolure (et la tête qu'elle porte), s'il y en a une.
+    pub neck: Option<NeckRest>,
+    /// Les pattes en deux segments, dans l'ordre de [`Part::LEGS`].
+    pub legs: [Option<LegRest>; 4],
+    /// Le sabot de l'antérieur qu'on voit, au repos.
+    pub fore_hoof: Point,
+    /// Au moins une patte en deux segments.
+    pub segmented: bool,
+}
+
+impl RigJoints {
+    pub(crate) fn of(rig: &Rig) -> Self {
+        let legs = Part::LEGS.map(|leg| leg_rest(rig, leg));
+        Self {
+            neck: (rig.has_part(Part::Neck) && rig.has_part(Part::Head)).then(|| neck_rest(rig)),
+            segmented: legs.iter().any(Option::is_some),
+            legs,
+            fore_hoof: fore_hoof(rig),
+        }
+    }
 }
 
 /// L'encolure au repos : sa base, la nuque, ce qui touche l'herbe.
@@ -676,11 +698,11 @@ fn leg_rest(rig: &Rig, leg: Part) -> Option<LegRest> {
     }
     let b = rig.part_bounds(lower);
     Some(LegRest {
-        chain: Chain {
-            root: rig.pivot(leg),
-            joint: rig.pivot(lower),
-            tip: Point::new(b.center().x, b.max_y()),
-        },
+        chain: Chain::new(
+            rig.pivot(leg),
+            rig.pivot(lower),
+            Point::new(b.center().x, b.max_y()),
+        ),
         front: matches!(leg, Part::LegFrontNear | Part::LegFrontFar),
         near: matches!(leg, Part::LegFrontNear | Part::LegBackNear),
         half_width: b.width() * 0.4,
@@ -688,8 +710,8 @@ fn leg_rest(rig: &Rig, leg: Part) -> Option<LegRest> {
 }
 
 /// Les transformations sont calculées pour les parties rangées comme le dit
-/// le contrat ([`Part::contract_parent`]) ; celles du dessin sont rangées
-/// autrement : chacune est ramenée à la partie qui la contient vraiment.
+/// le contrat ([`Part::contract_parent`]) ; celles du dessin rangées
+/// autrement sont ramenées à la partie qui les contient vraiment.
 fn to_document_nesting(rig: &Rig, parts: &mut [Affine; Part::ALL.len()]) {
     let neck = rig.has_part(Part::Neck);
     let mut free = [None; Part::ALL.len()];
@@ -709,18 +731,17 @@ fn to_document_nesting(rig: &Rig, parts: &mut [Affine; Part::ALL.len()]) {
         free[part.index()] = Some(t);
         t
     }
-    let all: Vec<Affine> = Part::ALL
-        .into_iter()
-        .map(|p| free_of(p, neck, parts, &mut free))
-        .collect();
-    for part in Part::ALL {
-        if !rig.has_part(part) {
-            continue;
-        }
-        let parent = rig
-            .parent(part)
-            .map_or(Affine::IDENTITY, |p| all[p.index()]);
-        parts[part.index()] = parent.inverse() * all[part.index()];
+    let mut moved = [(Part::Body, Affine::IDENTITY); Part::ALL.len()];
+    for (slot, &part) in moved.iter_mut().zip(&rig.unusual) {
+        let own = free_of(part, neck, parts, &mut free);
+        let local = match rig.parent(part) {
+            Some(p) => free_of(p, neck, parts, &mut free).inverse() * own,
+            None => own,
+        };
+        *slot = (part, local);
+    }
+    for &(part, local) in &moved[..rig.unusual.len()] {
+        parts[part.index()] = local;
     }
 }
 

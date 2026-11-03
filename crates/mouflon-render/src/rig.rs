@@ -240,11 +240,19 @@ pub struct Rig {
     pub bounds: Rect,
     /// Point d'appui au sol, dans le repère du document.
     pub ground: Point,
-    pivots: HashMap<Part, Point>,
-    part_bounds: HashMap<Part, Rect>,
+    /// Le pivot de chaque partie (donné, ou deviné d'après sa forme) et sa
+    /// boîte, rangés par [`Part::index`] : le moteur les lit à chaque image.
+    pivots: [Point; Part::ALL.len()],
+    part_bounds: [Option<Rect>; Part::ALL.len()],
     /// La partie qui contient chaque partie dans le document (`None` : à
-    /// la racine).
-    parents: HashMap<Part, Option<Part>>,
+    /// la racine), pour les parties du dessin.
+    parents: [Option<Part>; Part::ALL.len()],
+    /// Les parties rangées autrement que le dit le contrat (voir
+    /// [`Part::contract_parent`]) : le moteur les ramène à leur vrai parent.
+    pub(crate) unusual: Vec<Part>,
+    /// Les articulations, préparées une fois : l'encolure, les pattes en
+    /// deux segments.
+    pub(crate) joints: crate::animate::RigJoints,
     /// Ce qui touche l'herbe quand il broute (`pivot-muzzle`), s'il est donné.
     pub muzzle: Option<Point>,
     /// Silhouette du corps, pour l'éclairage dynamique.
@@ -272,56 +280,70 @@ impl Rig {
             .get("ground")
             .copied()
             .unwrap_or_else(|| Point::new(bounds.center().x, bounds.max_y()));
-        let mut pivots = HashMap::new();
-        for part in Part::ALL {
-            if let Some(p) = builder.named_pivots.get(part.name()) {
-                pivots.insert(part, *p);
-            }
-        }
         let size = tree.size();
         let muzzle = builder.named_pivots.get("muzzle").copied();
-        Ok(Self {
+        let mut part_bounds = [None; Part::ALL.len()];
+        let mut parents = [None; Part::ALL.len()];
+        for part in Part::ALL {
+            part_bounds[part.index()] = builder.part_bounds.get(&part).copied();
+            parents[part.index()] = builder.parents.get(&part).copied().flatten();
+        }
+        let mut rig = Self {
             size: (f64::from(size.width()), f64::from(size.height())),
             bounds,
             ground,
-            pivots,
-            part_bounds: builder.part_bounds,
-            parents: builder.parents,
+            pivots: [Point::ZERO; Part::ALL.len()],
+            part_bounds,
+            parents,
+            unusual: Vec::new(),
+            joints: crate::animate::RigJoints::default(),
             muzzle,
             body_silhouette: builder.body_silhouette,
             items: builder.items,
-        })
+        };
+        for part in Part::ALL {
+            rig.pivots[part.index()] = builder
+                .named_pivots
+                .get(part.name())
+                .copied()
+                .unwrap_or_else(|| rig.guess_pivot(part));
+        }
+        let neck = rig.has_part(Part::Neck);
+        rig.unusual = Part::ALL
+            .into_iter()
+            .filter(|&p| rig.has_part(p) && rig.parent(p) != p.contract_parent(neck))
+            .collect();
+        rig.joints = crate::animate::RigJoints::of(&rig);
+        Ok(rig)
     }
 
     #[must_use]
     pub fn has_part(&self, part: Part) -> bool {
-        self.part_bounds.contains_key(&part)
+        self.part_bounds[part.index()].is_some()
     }
 
     /// La partie qui contient `part` dans le document (`None` : à la racine).
     #[must_use]
     pub fn parent(&self, part: Part) -> Option<Part> {
-        self.parents.get(&part).copied().flatten()
+        self.parents[part.index()]
     }
 
     /// Les parties sont rangées comme le dit le contrat (voir
     /// [`Part::contract_parent`]).
     #[must_use]
     pub fn follows_contract(&self) -> bool {
-        let neck = self.has_part(Part::Neck);
-        self.parents
-            .iter()
-            .all(|(part, parent)| *parent == part.contract_parent(neck))
+        self.unusual.is_empty()
     }
 
     /// Pivot d'une partie : celui fourni par l'artiste, sinon une valeur
     /// raisonnable déduite de la forme (haut des pattes, base de la tête…).
     #[must_use]
     pub fn pivot(&self, part: Part) -> Point {
-        if let Some(p) = self.pivots.get(&part) {
-            return *p;
-        }
-        let b = self.part_bounds.get(&part).copied().unwrap_or(self.bounds);
+        self.pivots[part.index()]
+    }
+
+    fn guess_pivot(&self, part: Part) -> Point {
+        let b = self.part_bounds(part);
         match part {
             p if p.is_leg() => Point::new(b.center().x, b.min_y() + b.height() * 0.15),
             Part::Head => Point::new(b.min_x() + b.width() * 0.3, b.max_y() - b.height() * 0.2),
@@ -347,7 +369,7 @@ impl Rig {
     /// Boîte d'une partie (ou du dessin entier si elle est absente).
     #[must_use]
     pub fn part_bounds(&self, part: Part) -> Rect {
-        self.part_bounds.get(&part).copied().unwrap_or(self.bounds)
+        self.part_bounds[part.index()].unwrap_or(self.bounds)
     }
 }
 

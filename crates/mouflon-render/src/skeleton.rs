@@ -316,11 +316,7 @@ impl SkeletonArt {
                 upper,
                 i,
                 LegRest {
-                    chain: Chain {
-                        root: at(upper),
-                        joint: at(i),
-                        tip,
-                    },
+                    chain: Chain::new(at(upper), at(i), tip),
                     front,
                     near,
                     half_width: rect.width() * 0.4,
