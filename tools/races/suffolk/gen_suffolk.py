@@ -1188,7 +1188,9 @@ def articule(svg):
 
 def main(path):
     region = near_wool_shapes()
-    cracks = T.Cracks(region, random.Random(1859), flow, depth_of, spacing=1.85, length=(3.0, 8.0))
+    # Une repousse courte : les ouvertures restent de petits sillons souples,
+    # noyés dans le grain, et non de grandes plaques de laine (photos P5, P17).
+    cracks = T.Cracks(region, random.Random(1859), flow, depth_of, spacing=1.65, length=(2.5, 5.5))
     far_region = union(*(shape(dense(o[0] + o[1], True, 3)) for o in
                          (foreleg_outline(X_FF), hindleg_outline(X_HF))))
     far_cracks = T.Cracks(far_region, random.Random(1797), lambda x, h: 0.0, lambda x, h: 0.6, spacing=2.4)
@@ -1202,7 +1204,9 @@ def main(path):
     tail(cracks)
     head(cracks)
     D.pivot("ground", (X_HN + X_FN) / 2 + 2.0, 0.0)
-    W, H = 150, 110
+    # Le nez dépasse X = 154 : garder le museau entier aussi dans un lecteur
+    # SVG qui découpe au viewBox, et pas seulement dans le moteur de rigs.
+    W, H = 160, 110
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">\n'
            "<!--\n"
            "  Suffolk : un bélier britannique de trois ans, en octobre, quatre mois et\n"

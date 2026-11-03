@@ -37,6 +37,10 @@ T_HIGH = "#F4EFE4"       # le haut des cellules, au soleil
 # La lumière vient d'en haut à gauche (comme pour les autres races).
 LIGHT = (-0.6, 0.8)
 
+# Les petites zones plus fermées alternent avec les ouvertures du flanc,
+# avec les mêmes valeurs sur toutes les pièces : pas de couture au repos.
+RELIEF = Noise2D(1886, [(13.0, 0.26), (4.5, 0.12)])
+
 
 # ------------------------------------------------------------------ le réseau de crevasses
 
@@ -216,26 +220,28 @@ def draw_cracks(doc, piece, cracks, light, dim=0.0, seed=0, scale=1.0):
                 mx = sum(p[0] for p in chunk) / len(chunk)
                 mh = sum(p[1] for p in chunk) / len(chunk)
                 lt = q(clamp(light(mx, mh) - dim), 4)
-                dep = clamp(dep0 * rng.uniform(0.55, 1.35))
+                dep = clamp(dep0 * rng.uniform(0.55, 1.35) * (0.8 + RELIEF(mx, mh)))
                 col = mix(T_HOLLOW_DEEP, T_HOLLOW, lt)
                 sw = q((0.06 + 0.11 * dep) * scale, 40)
-                op = q(clamp(0.18 + 0.4 * dep - 0.08 * lt + 0.2 * dim), 10)
+                op = q(clamp(0.12 + 0.26 * dep - 0.06 * lt + 0.16 * dim), 20)
                 m.add(col, sw, op, doc_line(chunk))
                 # le bourrelet : la paroi à l'ombre, large et douce, et la lèvre
                 # éclairée de l'autre côté, plus large encore
                 sh = _offset(chunk, side * (0.3 + 0.08 * dep) * scale)
-                m.add(T_SHADE_DEEP, q((0.55 + 0.15 * dep) * scale, 10), q(clamp(0.035 + 0.05 * dep + 0.05 * dim), 40),
+                m.add(T_SHADE_DEEP, q((0.4 + 0.12 * dep) * scale, 10), q(clamp(0.025 + 0.035 * dep + 0.05 * dim), 40),
                       doc_line(sh))
                 if lt > 0.15:
                     hi = _offset(chunk, -side * (0.42 + 0.08 * dep) * scale)
-                    m.add(T_HIGH, q(0.7 * scale, 10), q(clamp((0.035 + 0.13 * lt) * (0.55 + 0.45 * dep)), 40),
+                    m.add(T_HIGH, q(0.5 * scale, 10), q(clamp((0.035 + 0.1 * lt) * (0.55 + 0.45 * dep)), 40),
                           doc_line(hi))
     m.emit(doc)
 
 
 def doc_line(pts):
-    from outils import poly
-    return poly(pts, closed=False, nd=1)
+    # Les pointes de mèches ondulent : une courbe douce évite les angles de
+    # polygone qui faisaient lire une terre craquelée plutôt qu'une toison.
+    from outils import cr
+    return cr(pts, closed=False, nd=2, t=0.7)
 
 
 def arc_d(cx, ch, r, a0, a1):
@@ -261,7 +267,7 @@ def quad_d(p0, c, p1):
     return f"M{nums((x0, y0), 1)}q{nums(rel, 1)}"
 
 
-def draw_grain(doc, piece, light, seed, density=1.0, dim=0.0, scale=1.0, flow=None):
+def draw_grain(doc, piece, light, seed, density=1.5, dim=0.0, scale=1.0, flow=None):
     """Le grain serré de la surface : le haut bombé des petites mèches (de
     courts arcs clairs) et les pointes frisées (de petites virgules
     sombres), fins et peu contrastés."""
@@ -283,7 +289,7 @@ def draw_grain(doc, piece, light, seed, density=1.0, dim=0.0, scale=1.0, flow=No
             mid = math.pi / 2 + 0.45 + a0 + rng.uniform(-0.6, 0.5)
             span = rng.uniform(1.4, 2.4)
             if lt > 0.15:
-                m.add(T_HIGH, round(0.09 * scale, 2), q(clamp(0.08 + 0.32 * lt), 10),
+                m.add(T_HIGH, round(0.11 * scale, 2), q(clamp(0.12 + 0.38 * lt), 10),
                       arc_d(x, h, r, mid - span / 2, mid + span / 2))
         else:
             # une pointe frisée : une petite virgule sombre, plutôt verticale
