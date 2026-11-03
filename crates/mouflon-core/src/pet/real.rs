@@ -316,21 +316,30 @@ impl Pet {
         // marchant, puis heurté) y est ramené d'un coup, mais son dessin y
         // glisse (voir `Pet::smooth`).
         let ex = body.extent_x();
-        for (side, edge) in [(1.0, arena.left()), (-1.0, arena.right())] {
-            if (body.center.x - edge) * side < ex {
-                let n = Vec2::new(side, 0.0);
-                let point = body.support(-n);
-                collide_static(
-                    &mut rigid,
-                    point - body.center,
-                    n,
-                    Vec2::ZERO,
-                    WALL_RESTITUTION,
-                    WALL_FRICTION,
-                );
-                let x = edge + side * ex;
-                self.smooth.x -= x - body.center.x;
-                body.center.x = x;
+        if ex * 2.0 >= arena.w {
+            // Un corps plus large que l'écran ne peut rebondir contre les
+            // deux bords à la fois : son centre reste au milieu.
+            let x = arena.center().x;
+            self.smooth.x -= x - body.center.x;
+            body.center.x = x;
+            rigid.vel.x = 0.0;
+        } else {
+            for (side, edge) in [(1.0, arena.left()), (-1.0, arena.right())] {
+                if (body.center.x - edge) * side < ex {
+                    let n = Vec2::new(side, 0.0);
+                    let point = body.support(-n);
+                    collide_static(
+                        &mut rigid,
+                        point - body.center,
+                        n,
+                        Vec2::ZERO,
+                        WALL_RESTITUTION,
+                        WALL_FRICTION,
+                    );
+                    let x = edge + side * ex;
+                    self.smooth.x -= x - body.center.x;
+                    body.center.x = x;
+                }
             }
         }
         let ey = body.extent_y();

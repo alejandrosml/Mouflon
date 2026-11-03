@@ -1,3 +1,4 @@
+add_lamb = "Add her lamb"
 # English: Mouflon's interface, and the language used when macOS asks for one
 # Mouflon does not speak yet. Menu items and buttons follow the macOS style
 # (Title Case); checkboxes and explanations use sentence case.

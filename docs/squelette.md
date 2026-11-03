@@ -299,3 +299,21 @@ couché, endormi, en broutant) ; `gestes` et `allures` (les allures phase
 par phase, le coucher, le saut) montrent les articulations, `toison` les
 mèches. `video` à la place de `poses` donne une
 scène de 18 secondes, image par image.
+
+## La tétée et l'appel maternel
+
+La rencontre familiale du moteur n'exige pas de nouvelle partie dessinée.
+Le rendu fournit au cœur deux repères normalisés par la hauteur : la région
+mammaire implicite sous le flanc près des postérieurs, et le museau dans la
+pose de tétée. Le jeune rejoint sa place en marchant, puis `nurse` plie
+l'encolure et relève la tête vers la cible, tandis que ses quatre sabots
+restent fixes. La queue frétille ; `maternal_call` garde la bouche de la
+mère fermée. Ces gestes viennent de l'état familial, qui s'interrompt si
+les partenaires perdent leur support ou sont pris.
+
+Le repère mammaire est une convention graphique pour les dessins actuels,
+pas une mesure vétérinaire ni une mamelle ajoutée au dessin. La frange de
+laine peut descendre sous ce repère. Un dessin sans encolure conserve un
+simple geste de tête ; ses autres poses et ses images cuites restent
+inchangées. L'aperçu `famille` montre la vraie simulation à deux âges et
+dans les deux sens, accompagné de sa légende `famille.md`.

@@ -21,6 +21,8 @@ pub enum Action {
     AddDefault,
     /// Ajoute cet animal de la bibliothèque (un de plus), qui devient le préféré.
     Add(usize),
+    /// Ajoute un agneau lié à cette brebis.
+    AddLamb(u32),
     /// Ajoute [`RANDOM_COUNT`] animaux, chacun d'une espèce tirée au hasard.
     AddRandom,
     /// Ajoute un animal de chaque espèce de cette famille (son rang dans
@@ -135,6 +137,7 @@ pub enum PetChoice {
     Goodbye,
     /// Un animal de plus de la même espèce.
     AddSame,
+    AddLamb,
     Size(usize),
     Sounds(bool),
     Pause(bool),
@@ -149,6 +152,7 @@ impl PetChoice {
             Self::Goodbye => 1,
             Self::AddSame => 2,
             Self::Settings => 3,
+            Self::AddLamb => 4,
             Self::Sounds(on) => 10 + u32::from(on),
             Self::Pause(on) => 20 + u32::from(on),
             Self::Size(i) => Self::SIZES + i as u32,
@@ -161,6 +165,7 @@ impl PetChoice {
             1 => Self::Goodbye,
             2 => Self::AddSame,
             3 => Self::Settings,
+            4 => Self::AddLamb,
             10 | 11 => Self::Sounds(id == 11),
             20 | 21 => Self::Pause(id == 21),
             id if (Self::SIZES..Self::SIZES + 100).contains(&id) => {
@@ -177,6 +182,7 @@ impl PetChoice {
         Some(match self {
             Self::Goodbye => Action::Goodbye(pet),
             Self::AddSame => Action::Add(species?),
+            Self::AddLamb => Action::AddLamb(pet),
             Self::Size(i) => Action::SetPetSize(pet, i),
             Self::Sounds(on) => Action::SetSounds(on),
             Self::Pause(on) => Action::SetPaused(on),
@@ -188,6 +194,9 @@ impl PetChoice {
 /// Ce que le menu d'un animal montre de lui et de l'état de l'app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PetMenuState {
+    /// Vraie brebis adulte native, qui peut avoir un agneau.
+    pub is_ewe: bool,
+    pub can_have_lamb: bool,
     pub paused: bool,
     pub sounds: bool,
     /// Rang de sa taille à lui dans [`crate::settings::SIZES`].
@@ -211,7 +220,7 @@ pub fn pet_menu(name: &str, state: PetMenuState, t: &Texts) -> Vec<PopupItem> {
         .map(|(i, label)| item(PetChoice::Size(i), label, i == state.size))
         .collect();
     let pause = if state.paused { &t.resume } else { &t.pause };
-    vec![
+    let mut items = vec![
         PopupItem::Header(name.to_owned()),
         item(
             PetChoice::Goodbye,
@@ -232,7 +241,19 @@ pub fn pet_menu(name: &str, state: PetMenuState, t: &Texts) -> Vec<PopupItem> {
         item(PetChoice::Pause(!state.paused), pause, false),
         PopupItem::Separator,
         item(PetChoice::Settings, &t.settings, false),
-    ]
+    ];
+    if state.is_ewe {
+        items.insert(
+            3,
+            PopupItem::Item {
+                id: PetChoice::AddLamb.id(),
+                label: t.add_lamb.clone(),
+                checked: false,
+                enabled: state.can_have_lamb,
+            },
+        );
+    }
+    items
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -589,6 +610,7 @@ mod tests {
         let choices = [
             PetChoice::Goodbye,
             PetChoice::AddSame,
+            PetChoice::AddLamb,
             PetChoice::Settings,
             PetChoice::Sounds(false),
             PetChoice::Sounds(true),
@@ -613,6 +635,8 @@ mod tests {
             for sounds in [false, true] {
                 for size in 0..4 {
                     let state = PetMenuState {
+                        is_ewe: false,
+                        can_have_lamb: false,
                         paused,
                         sounds,
                         size,
@@ -661,6 +685,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn only_an_adult_ewe_offers_to_add_her_lamb() {
+        for is_ewe in [false, true] {
+            let items = pet_menu(
+                "Mannequin",
+                PetMenuState {
+                    is_ewe,
+                    can_have_lamb: is_ewe,
+                    paused: false,
+                    sounds: true,
+                    size: 1,
+                },
+                &texts(),
+            );
+            let offered = items.iter().any(|item| matches!(item, PopupItem::Item { id, label, enabled: true, .. } if *id == PetChoice::AddLamb.id() && label == "Ajouter son agneau"));
+            assert_eq!(offered, is_ewe);
+        }
+        let waiting = pet_menu(
+            "Brebis",
+            PetMenuState {
+                is_ewe: true,
+                can_have_lamb: false,
+                paused: false,
+                sounds: true,
+                size: 1,
+            },
+            &texts(),
+        );
+        assert!(waiting.iter().any(|item| matches!(item, PopupItem::Item { id, enabled: false, .. } if *id == PetChoice::AddLamb.id())));
+        assert_eq!(
+            PetChoice::AddLamb.action(42, None),
+            Some(Action::AddLamb(42))
+        );
     }
 
     #[test]

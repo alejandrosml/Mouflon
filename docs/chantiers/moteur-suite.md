@@ -79,3 +79,6 @@ races sont une autre tâche aussi (`docs/chantiers/moutons-existants.md`).
 
 Une PR vers `fenetres-dock`, décrite en français : ce qui est fait, étape
 par étape, les planches regardées, les bancs avant et après, ce qui reste.
+
+Le [bilan de réalisation](moteur-suite-bilan.md) détaille les résultats,
+les vérifications et les limites conservées.

@@ -419,6 +419,10 @@ HIND_NEAR, HIND_FAR = 18.5, 29.5
 # colonne, sous l'ourlet, balance (trois mèches, `sway-1` à l'avant), de x0 à
 # x1 (monde) ; le haut de ces mèches reste à sa place (voir `articule`).
 FRINGE = [(68.0, 84.0), (52.0, 68.0), (36.0, 52.0)]
+# Trois petites touffes du cou (x0, x1, hauteur de coupe). Leur racine
+# déborde sous la laine courte : le moteur suit ce point d'attache, mais
+# garde les fibres pendantes quand l'encolure descend.
+NECK_FRINGE = [(108.0, 113.0, 82.0), (113.0, 118.0, 80.0), (118.0, 122.0, 76.0)]
 
 
 def fringe_group(x):
@@ -515,6 +519,10 @@ def body():
         lock(d["x"], d["h"], d["L"], d["w"], d["ang"], c,
              turn=rng.uniform(2.8, 4.2) if d["last"] else rng.uniform(1.4, 3.2),
              step=1.45 if d["last"] else 2.05)
+        for k, (x0, x1, _) in enumerate(NECK_FRINGE, 1):
+            if x0 <= d["x"] < x1:
+                for i in range(start, len(OUT)):
+                    OUT[i] = OUT[i].replace("<path ", f'<path class="neck-fringe-{k}" ', 1)
         # Les mèches de la frange, marquées pour `articule`.
         k = fringe_group(d["x"]) if d["last"] else None
         if k:
@@ -536,8 +544,14 @@ def body():
                          wool_color(ex, eh, rng.uniform(-0.05, 0.05))))
     edge.sort(key=lambda e: e[0])
     for (_, x0, h0, L, w, ang, c) in edge:
+        start = len(OUT)
         lock(x0, h0, L, w, ang, c, turn=rng.uniform(2.4, 3.8), step=1.1, waves=rng.uniform(0.6, 1.0), amp=0.35,
              clen=1.7)
+        if x0 > 118 and h0 > 62:
+            # Les pointes du bord du cou pendent aussi : sans elles,
+            # une frange se coucherait encore devant les antérieurs.
+            for i in range(start, len(OUT)):
+                OUT[i] = OUT[i].replace("<path ", '<path class="neck-fringe-3" ', 1)
     close_group()
 
     # Frisure du dessus de la toison.
@@ -1176,7 +1190,8 @@ def articule(svg):
     tête tourne à la nuque, derrière les cornes ; la lèvre supérieure,
     détachée de la tête, avec la gencive qu'elle cache ; le bout des
     mèches de la frange du ventre, coupé au bas du fond de la toison, en
-    trois mèches qui balancent."""
+    trois mèches qui balancent ; trois touffes d'encolure dont la racine
+    suit le cou et dont le bout reste pendant."""
     withers, chest = S(99.0, 90.0), S(127.0, 66.0)
 
     def lip(root, paints):
@@ -1184,6 +1199,15 @@ def articule(svg):
             return [S(*HL(*p)) for p in pts]
         articulations.lift_part(root, paints, "head", w(LIP), "lip", S(*HL(*LIP_PIVOT)),
                                 under=articulations.gum(w(GUM), w(GUM_RIDGE), GUM_FILL, GUM_CREASE, 0.3))
+        neck = next(el for el in root.iter() if el.get("id") == "neck")
+        for k, (x0, x1, h) in enumerate(NECK_FRINGE, 1):
+            cut = S((x0 + x1) / 2, h)
+            articulations.hang_strands(
+                neck, paints, f"neck-fringe-{k}", cut[1], f"neck-sway-{k}", cut, margin=3.0)
+        # Les marques des mèches restées dans le corps ne servent plus.
+        for el in root.iter():
+            if el.get("class", "").startswith("neck-fringe-"):
+                el.attrib.pop("class")
         for k in range(1, len(FRINGE) + 1):
             cut = S(*fringe_cut(k))
             articulations.hang_strands(root, paints, f"frange-{k}", cut[1], f"sway-{k}", cut)

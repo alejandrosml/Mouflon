@@ -63,9 +63,9 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::def::{
-    Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Gesture, Inbetweens,
-    Motion, PetDef, PetMeta, Physics, PngData, Reflexes, Script, Sound, SoundCue, SpriteClip,
-    SpritePage, SpriteSheet, Transition, png_size,
+    Age, Appearance, Behavior, Condition, DefError, Drawn, Duration, Facings, Gesture, Inbetweens,
+    Motion, PetDef, PetMeta, Physics, PngData, Reflexes, Script, Sex, SexRatio, Sound, SoundCue,
+    SpriteClip, SpritePage, SpriteSheet, Transition, png_size,
 };
 use crate::expr::Expr;
 use crate::math::Vec2;
@@ -183,6 +183,8 @@ enum FrameSource {
 /// Analyse un `pet.toml`. `resolve` lit une ressource nommée dans le fichier.
 pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, LoadError> {
     let file: PetFile = toml::from_str(text)?;
+    let sex_ratio = file.pet.sex_ratio()?;
+    let age = file.pet.age()?;
     let meta = PetMeta {
         id: file.pet.id.clone(),
         name: file.pet.name.clone(),
@@ -194,7 +196,10 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
     };
 
     if let Some(desktoppet) = &file.desktoppet {
-        return parse_desktoppet_sidecar(&file, desktoppet, meta, &resolve);
+        let mut def = parse_desktoppet_sidecar(&file, desktoppet, meta, &resolve)?;
+        def.sex_ratio = sex_ratio;
+        def.age = age;
+        return Ok(def);
     }
 
     let Some(appearance_toml) = &file.appearance else {
@@ -337,6 +342,8 @@ pub fn parse_pet_toml(text: &str, resolve: impl Resources) -> Result<PetDef, Loa
     };
 
     let mut def = PetDef::new(meta, appearance, physics, behaviors, reflexes)?;
+    def.sex_ratio = sex_ratio;
+    def.age = age;
     def.set_sounds(sounds)?;
     Ok(def)
 }
@@ -897,6 +904,10 @@ fn parse_condition(s: &str) -> Result<Condition, LoadError> {
         "rowdy" => Condition::Temper(Temper::Rowdy),
         "even" => Condition::Temper(Temper::Even),
         "into_wind" => Condition::IntoWind,
+        "male" => Condition::Sex(Sex::Male),
+        "female" => Condition::Sex(Sex::Female),
+        "adult" => Condition::Adult,
+        "lamb" => Condition::Lamb,
         other => return Err(format_error(format!("condition inconnue « {other} »"))),
     })
 }
@@ -934,6 +945,57 @@ struct MetaToml {
     license: Option<String>,
     /// Sa famille (`sheep`, `cats`… : voir [`crate::def::CATEGORIES`]).
     category: Option<String>,
+    sex: Option<SexToml>,
+    age: Option<String>,
+    age_weeks: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SexToml {
+    Fixed(String),
+    Ratio(SexRatioToml),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SexRatioToml {
+    male: f32,
+}
+
+impl MetaToml {
+    fn sex_ratio(&self) -> Result<SexRatio, LoadError> {
+        match &self.sex {
+            None => Ok(SexRatio::default()),
+            Some(SexToml::Fixed(sex)) => match sex.as_str() {
+                "male" => Ok(SexRatio::MALE),
+                "female" => Ok(SexRatio::FEMALE),
+                other => Err(format_error(format!(
+                    "sexe inconnu « {other} » (male, female ou {{ male = proportion }})"
+                ))),
+            },
+            Some(SexToml::Ratio(ratio)) => Ok(SexRatio::new(ratio.male)?),
+        }
+    }
+
+    fn age(&self) -> Result<Age, LoadError> {
+        match self.age.as_deref().unwrap_or("adult") {
+            "adult" if self.age_weeks.is_none() => Ok(Age::Adult),
+            "adult" => Err(format_error("age_weeks demande age = \"lamb\"")),
+            "lamb" => {
+                let weeks = self.age_weeks.unwrap_or(2.0);
+                if !(weeks > 0.0 && weeks <= 52.0) {
+                    return Err(format_error(
+                        "l'âge de l'agneau doit être fini, strictement positif et au plus 52 semaines",
+                    ));
+                }
+                Ok(Age::Lamb { weeks })
+            }
+            other => Err(format_error(format!(
+                "âge inconnu « {other} » (adult ou lamb)"
+            ))),
+        }
+    }
 }
 
 #[derive(Deserialize)]

@@ -27,6 +27,8 @@ pub struct Entry {
     pub size: f32,
     /// L'animal à la taille prévue par son fichier.
     base: Arc<PetDef>,
+    /// Base adulte dont ce jeune est issu, pour partager son dessin entre frères.
+    lamb_source: Option<Arc<PetDef>>,
     /// Dessin préparé à la première apparition : décoder des centaines
     /// d'images prend un moment, et elles n'occupent la mémoire que si
     /// l'animal sert.
@@ -61,6 +63,7 @@ impl Entry {
             def: Arc::new(base.scaled(size)),
             size,
             base,
+            lamb_source: None,
             art: Arc::default(),
             images,
         }
@@ -75,14 +78,36 @@ impl Entry {
 
     /// La même espèce à une autre taille, avec son propre dessin (préparé à
     /// la demande).
-    fn at_size(&self, size: f32) -> Self {
+    pub(crate) fn at_size(&self, size: f32) -> Self {
         Self {
             def: Arc::new(self.base.scaled(size)),
             size,
             base: Arc::clone(&self.base),
+            lamb_source: self.lamb_source.clone(),
             art: Arc::default(),
             images: self.images.clone(),
         }
+    }
+
+    /// Un jeune de cette espèce, à la taille d'affichage de sa mère. La
+    /// réduction anatomique est dans sa base : les changements de taille ne
+    /// la réappliquent pas et ne lui font pas perdre son âge.
+    pub(crate) fn as_lamb(&self, weeks: f32) -> Option<Self> {
+        let mut young = Self::new(self.base.as_lamb(weeks)?, self.size, self.images.clone());
+        young.lamb_source = Some(Arc::clone(&self.base));
+        Some(young)
+    }
+
+    pub(crate) fn is_lamb_of(&self, parent: &Self, weeks: f32) -> bool {
+        self.lamb_source
+            .as_ref()
+            .is_some_and(|base| Arc::ptr_eq(base, &parent.base))
+            && self.def.age == mouflon_core::Age::Lamb { weeks }
+            && (self.size - parent.size).abs() < 1e-3
+    }
+
+    pub(crate) fn same_base_at_size(&self, other: &Self, size: f32) -> bool {
+        Arc::ptr_eq(&self.base, &other.base) && (self.size - size).abs() < 1e-3
     }
 
     /// Est-ce l'entrée de cette espèce à cette taille ?
@@ -645,6 +670,43 @@ mod tests {
         library.set_size(1.0);
         assert!((height(&library) - normal).abs() < 0.01);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_lamb_entry_keeps_its_age_and_relative_size_across_resizes() {
+        let mother = Entry::new(builtin_mannequin().unwrap(), 2.0, None);
+        let young = mother.as_lamb(2.0).unwrap();
+        let adult_height = mother.base.physics.height;
+        assert!(young.is_lamb_of(&mother, 2.0));
+        assert!(!young.is_lamb_of(&mother, 7.0));
+        assert!(young.same_base_at_size(&young.clone(), 2.0));
+        assert!(!young.same_base_at_size(&mother, 2.0));
+        assert_eq!(young.def.age, mouflon_core::Age::Lamb { weeks: 2.0 });
+        for size in [0.5, 1.0, 3.0, 2.0] {
+            let resized = young.at_size(size);
+            assert_eq!(resized.def.age, young.def.age);
+            assert!((resized.def.physics.height - adult_height * 0.55 * size).abs() < 0.01);
+            assert!(
+                !resized.art_ready(),
+                "le dessin se prépare seulement à la demande"
+            );
+        }
+        assert_eq!(mother.def.age, mouflon_core::Age::Adult);
+    }
+
+    #[test]
+    fn a_live_mothers_source_keeps_her_personal_size_after_a_library_reload() {
+        let mut library = Library::load(None, None, 1.0);
+        let preserved = library.at_size(0, 3.0).unwrap();
+        let adult_height = preserved.base.physics.height;
+        library.reload();
+        assert!(library.entry_of(&preserved.def).is_none());
+        let young = preserved.as_lamb(2.0).unwrap();
+        assert_eq!(young.size, 3.0);
+        assert!((young.def.physics.height - adult_height * 3.0 * 0.55).abs() < 0.01);
+        let resized = young.at_size(2.0);
+        assert!((resized.def.physics.height - adult_height * 2.0 * 0.55).abs() < 0.01);
+        assert_eq!(resized.def.age, mouflon_core::Age::Lamb { weeks: 2.0 });
     }
 
     #[test]

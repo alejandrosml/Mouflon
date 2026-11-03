@@ -4,6 +4,8 @@
 # sa mâchoire est un morceau à part, qui s'ouvre pour mâcher, bêler, bâiller.
 
 [pet]
+# Sexe du dessin adulte actuel ; les variantes anatomiques restent à dessiner.
+sex = "female"
 id = "aquarelle"
 name = "Aquarelle"
 author = "Alejandro San Martin Lamas"

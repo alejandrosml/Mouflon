@@ -6,6 +6,8 @@
 # docs/animation-animale.md).
 
 [pet]
+# Sexe du dessin adulte actuel ; les variantes anatomiques restent à dessiner.
+sex = "male"
 id = "ouessant"
 name = "Ouessant"
 author = "Alejandro San Martin Lamas"

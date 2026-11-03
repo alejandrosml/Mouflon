@@ -5,6 +5,8 @@
 # et renifle plus volontiers, s'alarme et charge moins.
 
 [pet]
+# Sexe du dessin adulte actuel ; les variantes anatomiques restent à dessiner.
+sex = "female"
 id = "nez-noir"
 name = "Nez noir du Valais"
 author = "Alejandro San Martin Lamas"

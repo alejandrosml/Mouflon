@@ -25,8 +25,8 @@ pub mod temper;
 pub mod world;
 
 pub use def::{
-    Appearance, CATEGORIES, Drawn, Facings, Gesture, Inbetweens, PetDef, PetMeta, PngData, Pose,
-    Rules, Sound, SoundCue, SpritePage, SpriteSheet,
+    Age, Appearance, CATEGORIES, Drawn, Facings, Gesture, Inbetweens, PetDef, PetMeta, PngData,
+    Pose, Rules, Sex, SexRatio, Sound, SoundCue, SpritePage, SpriteSheet,
 };
 pub use format::{LoadError, Resources, load_pet, parse_pet_toml};
 pub use math::{Rect, Vec2};

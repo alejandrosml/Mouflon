@@ -34,6 +34,38 @@ tiles = [16, 11]              # colonnes, lignes
 key_color = "#ff00ff"         # couleur rendue transparente
 ```
 
+### Sexe et âge
+
+Dans `[pet]`, `sex = "male"` ou `sex = "female"` fixe le sexe. Pour un
+troupeau mixte, `sex = { male = 0.3 }` donne à chaque animal 30 % de chances
+d'être mâle à l'apparition ; la valeur doit être finie, entre 0 et 1.
+Sans clé, les deux sexes ont la même probabilité. Le tirage est déterministe
+et indépendant des tirages de mouvement : modifier cette proportion ne
+décale pas les pas, regards ou
+clignements d'un animal qui ne joue pas de comportement sexué.
+
+`age = "adult"` est la valeur par défaut. `age = "lamb"` déclare un
+agneau ; `age_weeks = 2.0` donne son âge en semaines (2 par défaut, fini,
+strictement positif et au plus 52). `age_weeks` n'est accepté qu'avec
+`age = "lamb"`.
+Cet âge est fixe : le temps passé sur le bureau ne fait pas vieillir l'animal.
+Ces clés ne redessinent ni ne redimensionnent à elles seules son apparence.
+
+```toml
+[pet]
+id = "agneau"
+name = "Agneau"
+category = "sheep"
+sex = { male = 0.5 }
+age = "lamb"
+age_weeks = 2.0
+```
+
+Les conditions `male`, `female`, `adult` et `lamb` permettent de réserver
+une transition au sexe ou à l'âge voulu. Les deux conditions de sexe
+s'appliquent aussi aux agneaux ; utiliser `when = ["male", "adult"]` pour
+un mâle adulte.
+
 ## Physique (facultatif)
 
 Toutes les valeurs sont en points et en secondes.
@@ -118,6 +150,10 @@ dans les animaux du dépôt, 7 à 19 s en moyenne chez de jeunes béliers,
 parfois une minute ou deux).
 `pets/mannequin/pet.toml` les montre tous.
 
+La rencontre mère–agneau pilote en plus `nurse` (tête levée et queue
+frétillante) et `maternal_call` (appel maternel), sans demander de nouveaux
+comportements au fichier ; voir [Mères et agneaux](#mères-et-agneaux).
+
 D'autres clés d'un comportement :
 
 ```toml
@@ -177,7 +213,8 @@ Conditions (`when`, une seule ou une liste) : `on_window`, `on_floor`,
 `cursor_near:220`, `cursor_far:220` (rayon en points), `typing` (l'utilisateur
 tape au clavier : une touche il y a moins de 3 s), `away` (personne au clavier,
 à la souris ni au trackpad depuis 3 minutes), `present` (le contraire),
-`into_wind` (un coup de vent lui souffle dans le museau), et le tempérament
+`into_wind` (un coup de vent lui souffle dans le museau), `male`, `female`,
+`adult`, `lamb` (sexe et âge ; voir plus haut), et le tempérament
 de l'animal, réglé dans les réglages : `calm`, `lively` (actif), `rowdy`
 (énervé), `even` (tel que son auteur l'a fait).
 
@@ -279,6 +316,29 @@ speed = 110.0
 duration = 0.8
 on_meet = "play_butt"         # … et se cognent
 ```
+
+### Mères et agneaux
+
+Le menu d'une brebis native (rig ou squelette, famille `sheep`) permet
+« Ajouter son agneau » quand elle est libre et posée. Sa définition doit
+prévoir les mouvements `stand` et `walk`, ce dernier à vitesse positive ;
+les noms des comportements restent libres. Le menu prépare en arrière-plan
+une définition âgée de deux semaines et lie le jeune à cette mère.
+Le lien repose sur les identifiants des individus, pas sur leur rang
+ni sur le voisin le plus proche. Retirer la mère libère le jeune.
+
+Le jeune suit sa mère sur leur support commun ; lors d'une tétée, elle
+attend et l'appelle bouche fermée, il marche sous son flanc et se tourne à
+l'inverse d'elle. Les durées et intervalles viennent des moyennes de Gordon
+& Siegmann 1991 (voir [animation-animale.md](animation-animale.md#la-mère-et-son-agneau)).
+L'âge ne change pas pendant la session. L'ajout fournit encore un dessin
+adulte réduit, pas une variante anatomique de jeune. Les fichiers en
+images et desktopPet gardent leurs propres scènes.
+
+Pour les outils, `PetDef::as_lamb(weeks)` prépare la définition ;
+`Flock::spawn_lamb_with` ajoute le jeune avec cette définition préparée,
+`Flock::bind_mother` peut lier deux individus existants compatibles.
+Déclarer `age = "lamb"` dans un fichier ne choisit pas une mère au hasard.
 
 ### Invitations à jouer
 

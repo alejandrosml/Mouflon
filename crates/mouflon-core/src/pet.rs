@@ -8,8 +8,8 @@ use std::f32::consts::TAU;
 use std::sync::Arc;
 
 use crate::def::{
-    Appearance, Condition, Duration, Gesture, Motion, PetDef, Pose, Rules, SpawnPoint, SpriteClip,
-    Transition,
+    Appearance, Condition, Duration, Gesture, Motion, PetDef, Pose, Rules, Sex, SpawnPoint,
+    SpriteClip, Transition,
 };
 use crate::expr::Expr;
 use crate::math::{Rect, Rng, Spring, Vec2, approach, damp, lerp, smoothstep, wrap_phase};
@@ -17,9 +17,11 @@ use crate::physics::{Back, Tracker};
 use crate::temper::{Mood, Temper};
 use crate::world::{Surface, SurfaceId, SurfaceKind, World};
 
+mod family;
 mod near;
 mod real;
 mod script;
+mod social;
 
 /// Pas de simulation fixe : 120 Hz, la fréquence des écrans ProMotion.
 pub const TICK: f32 = 1.0 / 120.0;
@@ -178,6 +180,8 @@ pub enum PetEvent {
     Woken,
     /// Lancé, il a percuté une soucoupe volante.
     HitSaucer,
+    /// Appel grave de la brebis à son agneau : sa bouche reste fermée.
+    MaternalCall,
 }
 
 /// Pause entre deux collisions d'un même animal (secondes) : le temps de se
@@ -337,6 +341,9 @@ pub struct PoseSignals {
     pub gesture: Option<Gesture>,
     pub gesture_amount: f32,
     pub gesture_time: f32,
+    /// Cible du museau en tétée : fractions de hauteur depuis le point
+    /// d'appui, x vers la tête, y vers le bas.
+    pub nursing_target: Option<Vec2>,
     /// Oreilles : > 0 couchées en arrière (énervé, il fonce), < 0 dressées
     /// vers l'avant (aux aguets).
     pub ears_back: f32,
@@ -666,10 +673,18 @@ fn step_mouth(a: &mut Anim, chewing: bool, rng: &mut Rng, dt: f32) {
         }
         // Le flehmen : la bouche entrouverte, sous la lèvre retroussée.
         Some(Gesture::Flehmen) => a.gesture_amount * 0.14 * smoothstep(0.2, 0.7, a.gesture_time),
+        Some(Gesture::MaternalCall) => 0.0,
+        Some(Gesture::Nurse) => {
+            a.gesture_amount * 0.035 * (0.5 + 0.5 * (a.gesture_time * TAU * 2.0).sin())
+        }
         _ => 0.0,
     };
     let target = chew.max(voice).max(gesture);
-    a.jaw = damp(a.jaw, target, 22.0, dt);
+    a.jaw = if a.gesture == Some(Gesture::MaternalCall) {
+        0.0
+    } else {
+        damp(a.jaw, target, 22.0, dt)
+    };
 }
 
 /// La paupière au fil d'un clignement (`t` de 0 à 1) : fermée en 0,08 s,
@@ -686,8 +701,14 @@ fn lid(t: f32) -> f32 {
 
 #[derive(Clone, Debug)]
 pub struct Pet {
+    family: family::FamilyState,
     id: u32,
     def: Arc<PetDef>,
+    sex: Sex,
+    /// Famille calculée une fois, sans allouer à chaque choix de comportement.
+    sheep: bool,
+    /// Mémoire consommable d'une brebis flairée pendant une rencontre.
+    sniffed_ewe_for: f32,
     rng: Rng,
     /// Tirages des sons, à part : ajouter (ou couper) des sons ne change
     /// rien à ce que fait l'animal.
@@ -1052,6 +1073,15 @@ impl Pet {
         let plays = def.behavior_index("play_invite").is_some();
         let def_back_top = def.physics.height * BACK_HEIGHT;
         let voice = rng.fork(0x534F_554E_4453);
+        let sex = if rng
+            .fork(0x5345_585F_5241_5449)
+            .chance(def.sex_ratio.male_probability())
+        {
+            Sex::Male
+        } else {
+            Sex::Female
+        };
+        let sheep = def.meta.category() == "sheep";
         let facing = if rng.chance(0.5) { 1.0 } else { -1.0 };
         let anim = Anim::new(facing, &mut rng);
         let rand_s = (10 + rng.next_u32() % 80) as f32;
@@ -1062,6 +1092,10 @@ impl Pet {
         Self {
             id,
             def,
+            family: family::FamilyState::default(),
+            sex,
+            sheep,
+            sniffed_ewe_for: 0.0,
             rng,
             voice,
             pos,
@@ -1283,6 +1317,7 @@ impl Pet {
         if self.is_child() || self.leaving.is_some() {
             return;
         }
+        self.family.stop();
         // Pris en main, il est dessiné sous le curseur : plus de retard.
         self.clear_smooth();
         self.ghost = false;
@@ -1374,14 +1409,15 @@ impl Pet {
     }
 
     /// Impose un comportement par son nom (outils, tests, menu de débogage).
-    /// Renvoie `false` si le nom est inconnu.
+    /// Renvoie `false` si le nom est inconnu ou si son contexte biologique
+    /// manque (le flehmen demande un bélier qui vient de flairer une brebis).
     pub fn force(&mut self, name: &str) -> bool {
         match self.def.behavior_index(name) {
-            Some(index) => {
+            Some(index) if self.behavior_allowed(index) => {
                 self.enter(index);
                 true
             }
-            None => false,
+            _ => false,
         }
     }
 
@@ -1389,7 +1425,7 @@ impl Pet {
     /// définition à une autre échelle (voir [`PetDef::scaled`]) et `ratio`
     /// le rapport de la nouvelle taille à l'ancienne ; ses pattes restent
     /// où elles sont. Renvoie `false` (et ne change rien) si `def` n'a pas
-    /// les mêmes comportements.
+    /// les mêmes comportements ou si le rapport n'est pas positif et fini.
     pub fn rescale(&mut self, def: Arc<PetDef>, ratio: f32) -> bool {
         let same = def.behaviors.len() == self.def.behaviors.len()
             && def
@@ -1397,9 +1433,10 @@ impl Pet {
                 .iter()
                 .zip(&self.def.behaviors)
                 .all(|(a, b)| a.name == b.name);
-        if !same || ratio.is_nan() || ratio <= 0.0 {
+        if !same || !ratio.is_finite() || ratio <= 0.0 {
             return false;
         }
+        self.family.stop();
         self.def = def;
         self.vel *= ratio;
         self.script = [self.script[0] * ratio, self.script[1] * ratio];
@@ -1745,7 +1782,13 @@ impl Pet {
     /// Il imite son voisin, s'il le peut. Renvoie `true` s'il l'a fait.
     fn follow(&mut self, echo: Echo) -> bool {
         // En route vers sa place dans le troupeau, il n'imite personne.
-        if !self.can_react() || self.is_asleep() || self.hold.is_some() || self.goal.is_some() {
+        if !self.can_react()
+            || self.is_asleep()
+            || self.hold.is_some()
+            || self.goal.is_some()
+            || !self.behavior_allowed(echo.behavior)
+            || self.family.action.active()
+        {
             return false;
         }
         self.echo_cooldown = ECHO_COOLDOWN;
@@ -1956,6 +1999,7 @@ impl Pet {
             self.enter_realistic();
         }
         self.realistic = tracker.is_some();
+        self.family.step(dt);
         self.prev_pos = self.pos;
         self.prev_lift = self.tilt_lift();
         self.ground_lift = self.prev_lift;
@@ -1963,6 +2007,7 @@ impl Pet {
         self.follow_back_top(dt);
         self.bump_cooldown = (self.bump_cooldown - dt).max(0.0);
         self.meet_cooldown = (self.meet_cooldown - dt).max(0.0);
+        self.step_social(dt);
         self.startle_cooldown = (self.startle_cooldown - dt).max(0.0);
         self.step_moods(dt, world, input);
         self.step_echo(dt);
@@ -2048,17 +2093,22 @@ impl Pet {
     /// la surface.
     fn walk_on(&mut self, dt: f32, world: &World, input: &Input, surface: &Surface) {
         let p = self.def.physics;
+        let arena = world.arena();
+        let too_wide = p.width >= arena.w;
         let surface = *surface;
         let motion = &self.def.behaviors[self.behavior].motion;
         let grazing = *motion == Motion::Graze;
         // À reculons, l'arrière va devant.
         let backing = matches!(motion, Motion::Back { .. });
         let ahead = if backing { -self.facing } else { self.facing };
-        let desired = if grazing {
+        let desired = if too_wide {
+            0.0
+        } else if grazing {
             self.graze_step() * self.facing
         } else {
             motion.speed().map_or(0.0, |speed| speed * ahead)
         };
+        let desired = self.family_speed(desired, dt);
         let accel = if desired == 0.0 {
             p.ground_friction
         } else {
@@ -2075,7 +2125,7 @@ impl Pet {
             self.enter(next);
             return;
         }
-        self.pos.x += self.vel.x * dt;
+        self.family_step(dt);
 
         // Bords de la surface : le museau prévient avant que les pattes n'y arrivent,
         // pour que l'animal se retourne sans déborder sur une fenêtre voisine.
@@ -2106,9 +2156,13 @@ impl Pet {
         }
 
         // Bords de l'écran.
-        let arena = world.arena();
         let half = p.width * 0.5;
-        if self.pos.x - half < arena.left() {
+        if too_wide {
+            // Trop large pour tenir entre les deux bords : un seul appui
+            // au milieu, sans alterner entre deux corrections incompatibles.
+            self.snap_x(arena.center().x);
+            self.vel.x = 0.0;
+        } else if self.pos.x - half < arena.left() {
             self.snap_x(arena.left() + half);
             if self.vel.x < 0.0 {
                 self.vel.x = 0.0;
@@ -2153,7 +2207,10 @@ impl Pet {
 
         let arena = world.arena();
         let half = p.width * 0.5;
-        if to.x - half < arena.left() {
+        if p.width >= arena.w {
+            to.x = arena.center().x;
+            self.vel.x = 0.0;
+        } else if to.x - half < arena.left() {
             to.x = arena.left() + half;
             self.vel.x = self.vel.x.abs() * 0.45;
         } else if to.x + half > arena.right() {
@@ -2339,6 +2396,9 @@ impl Pet {
     }
 
     fn step_behavior(&mut self, dt: f32, world: &World, input: &Input) {
+        if self.family.action.active() && matches!(self.support, Support::Ground { .. }) {
+            return;
+        }
         self.behavior_time += dt;
         let def = Arc::clone(&self.def);
         let behavior = &def.behaviors[self.behavior];
@@ -2467,6 +2527,13 @@ impl Pet {
     fn enter(&mut self, index: usize) {
         let def = Arc::clone(&self.def);
         let mut index = index.min(def.behaviors.len() - 1);
+        if !self.behavior_allowed(index) {
+            index = def.default_ground();
+        }
+        // Un flairage ne vaut que pour la suite immédiate, et une seule
+        // fois. Une rencontre qui commence Sniff remplira ensuite la mémoire.
+        self.family.stop();
+        self.sniffed_ewe_for = 0.0;
         let grounded = matches!(self.support, Support::Ground { .. });
         if grounded && def.behaviors[index].motion == Motion::Fall {
             index = def.default_ground();
@@ -2605,18 +2672,33 @@ impl Pet {
     }
 
     fn choose(&mut self, list: &[Transition], world: &World, input: &Input) -> Option<usize> {
+        self.choose_with_partner(list, world, input, None)
+    }
+
+    fn choose_with_partner(
+        &mut self,
+        list: &[Transition],
+        world: &World,
+        input: &Input,
+        partner: Option<&Pet>,
+    ) -> Option<usize> {
         let candidates: Vec<&Transition> = list
             .iter()
-            .filter(|t| t.when.iter().all(|c| self.condition(*c, world, input)))
+            .filter(|t| self.transition_allowed(t, world, input))
             .collect();
         // Son tempérament penche vers certaines allures (voir `temper`).
         let temper = self.temper;
         let def = &self.def;
-        let i = self.rng.pick_weighted(
-            candidates
-                .iter()
-                .map(|t| t.weight * temper.appetite(def.energy(t.to))),
-        )?;
+        // Calcule les poids avant d'emprunter le générateur : aucune
+        // allocation de famille ni aucun tirage additionnel.
+        let social = self.contest_appetite(partner);
+        let i = self.rng.pick_weighted(candidates.iter().map(|t| {
+            let contest = matches!(
+                def.behaviors[t.to].motion,
+                Motion::Back { .. } | Motion::Charge { .. } | Motion::Gesture(Gesture::Rear)
+            );
+            t.weight * temper.appetite(def.energy(t.to)) * if contest { social } else { 1.0 }
+        }))?;
         Some(candidates[i].to)
     }
 
@@ -2641,6 +2723,9 @@ impl Pet {
             Condition::Present => !input.away(),
             Condition::Morning => (6.0..11.0).contains(&input.local_hour),
             Condition::Evening => (18.0..22.0).contains(&input.local_hour),
+            Condition::Sex(sex) => self.sex == sex,
+            Condition::Adult => !self.is_lamb(),
+            Condition::Lamb => self.is_lamb(),
             Condition::Temper(temper) => self.temper == temper,
             // Le vent souffle contre son museau (signes opposés).
             Condition::IntoWind => self.wind * self.facing < -0.1 * crate::surprise::GUST_PEAK,
@@ -2670,8 +2755,14 @@ impl Pet {
             Motion::Gesture(gesture) if grounded => Some(gesture),
             _ => None,
         };
-        let since = self.behavior_time;
-        let left = self.behavior_length - self.behavior_time;
+        let family_gesture = grounded.then(|| self.family.action.gesture()).flatten();
+        let doing = family_gesture.map(|(g, _)| g).or(doing);
+        let since = family_gesture.map_or(self.behavior_time, |(_, t)| t);
+        let left = if family_gesture.is_some() {
+            f32::INFINITY
+        } else {
+            self.behavior_length - self.behavior_time
+        };
         let chewing = behavior.chew && grounded;
         let charging = matches!(behavior.motion, Motion::Charge { .. }) && grounded;
         let pronking = matches!(behavior.motion, Motion::Pronk { .. }) && pose == Pose::Air;
@@ -2698,6 +2789,7 @@ impl Pet {
         let wind = self.wind;
         let Self {
             anim: a,
+            family,
             rng,
             vel,
             facing,
@@ -2826,6 +2918,7 @@ impl Pet {
         }
         if !sprites {
             step_gesture(a, doing, since, left, dt);
+            family.clear_finished_nursing(grounded, a.gesture, a.gesture_amount);
             step_mouth(a, chewing, rng, dt);
             // Posture, d'après ce que disent les oreilles d'un mouton (voir
             // `docs/animation-animale.md`) : dressées, la colère (un
@@ -3253,7 +3346,7 @@ impl Pet {
                 ),
             },
             facing: a.flip,
-            pose: PoseSignals {
+            pose: self.family_pose(PoseSignals {
                 gait_phase: a.gait_phase,
                 walk: a.walk,
                 run: a.run,
@@ -3282,6 +3375,7 @@ impl Pet {
                 gesture: a.gesture,
                 gesture_amount: a.gesture_amount,
                 gesture_time: a.gesture_time,
+                nursing_target: None,
                 ears_back: a.ears_back,
                 head_low: a.head_low,
                 stiff: a.stiff,
@@ -3292,7 +3386,7 @@ impl Pet {
                 twitch: a.twitch,
                 fleece: a.fleece.value,
                 fleece_tip: a.fleece_tip.value - a.fleece.value,
-            },
+            }),
             shadow: self.shadow,
             sprite_frame,
             sprite_offset_y,
@@ -3316,6 +3410,7 @@ struct Invite {
 /// Le troupeau : tous les animaux, avancés ensemble à pas fixe.
 #[derive(Clone, Debug, Default)]
 pub struct Flock {
+    families: family::Families,
     pets: Vec<Pet>,
     accumulator: f32,
     next_id: u32,
@@ -3370,6 +3465,9 @@ fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 /// Élans donnés à deux animaux qui se rentrent dedans, ou rien.
 fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
+    if family::family_pair(a, b) {
+        return None;
+    }
     if !a.can_bump() || !b.can_bump() {
         return None;
     }
@@ -3405,6 +3503,9 @@ fn bump(a: &Pet, b: &Pet) -> Option<(Vec2, Vec2)> {
 /// personnage secondaire, en partance ou tout juste arrivé, ni porté par
 /// l'autre.
 fn physical_pair(a: &Pet, b: &Pet, axes_a: [Vec2; 2], axes_b: [Vec2; 2]) -> bool {
+    if family::family_pair(a, b) {
+        return false;
+    }
     let flying = |p: &Pet| p.support == Support::Air;
     let free = |p: &Pet| !p.is_child() && p.leaving.is_none() && !p.finished && !p.ghost;
     let carried = |p: &Pet, by: &Pet| {
@@ -3544,6 +3645,9 @@ fn bodies_hit(
 
 /// `a` vient-il, en marchant, de toucher `b` posé au même niveau ?
 fn meeting(a: &Pet, b: &Pet) -> bool {
+    if family::family_pair(a, b) {
+        return false;
+    }
     if !a.can_meet() || !b.can_meet() || (a.pos.y - b.pos.y).abs() > 2.0 {
         return false;
     }
@@ -3587,6 +3691,9 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
     let mut common = Vec::new();
     let mut mimic = None;
     for t in list_a {
+        if !a.transition_allowed(t, world, input) {
+            continue;
+        }
         if name_a(t) == current_b {
             mimic = Some(t.to);
         }
@@ -3597,9 +3704,11 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
             continue;
         }
         if t.weight > 0.0
-            && list_b
-                .iter()
-                .any(|u| u.weight > 0.0 && def_b.behaviors[u.to].name == name_a(t))
+            && list_b.iter().any(|u| {
+                u.weight > 0.0
+                    && def_b.behaviors[u.to].name == name_a(t)
+                    && b.transition_allowed(u, world, input)
+            })
         {
             common.push(t.clone());
         }
@@ -3608,7 +3717,7 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
     let mut a_reacts = false;
     let mut b_reacts = false;
     if !common.is_empty() {
-        if let Some(next) = a.choose(&common, world, input) {
+        if let Some(next) = a.choose_with_partner(&common, world, input, Some(b)) {
             a.enter(next);
             a_reacts = true;
             if let Some(next_b) = def_b.behavior_index(&def_a.behaviors[next].name) {
@@ -3620,11 +3729,12 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
         a.enter(next);
         a_reacts = true;
     } else {
-        if let Some(next) = a.choose(list_a, world, input) {
+        if let Some(next) = a.choose_with_partner(list_a, world, input, Some(b)) {
             a.enter(next);
             a_reacts = true;
         }
-        if !same_direction && let Some(next) = b.choose(list_b, world, input) {
+        if !same_direction && let Some(next) = b.choose_with_partner(list_b, world, input, Some(a))
+        {
             b.enter(next);
             b_reacts = true;
         }
@@ -3645,6 +3755,12 @@ fn encounter(a: &mut Pet, b: &mut Pet, world: &World, input: &Input) {
         }
     }
     if a_reacts || b_reacts {
+        if a_reacts {
+            a.remember_sniff(b);
+        }
+        if b_reacts {
+            b.remember_sniff(a);
+        }
         a.meet_cooldown = MEET_COOLDOWN;
         b.meet_cooldown = MEET_COOLDOWN;
         a.events.push(PetEvent::Met { other: b.id });
@@ -3686,6 +3802,7 @@ impl Flock {
     }
 
     pub fn remove(&mut self, id: u32) {
+        self.forget_family(id);
         let before = self.pets.len();
         self.pets.retain(|p| p.id() != id);
         if self.pets.len() != before {
@@ -3694,6 +3811,7 @@ impl Flock {
     }
 
     pub fn clear(&mut self) {
+        self.families = family::Families::default();
         self.pets.clear();
         self.generation += 1;
     }
@@ -3765,13 +3883,20 @@ impl Flock {
     }
 
     /// Avance la simulation du temps écoulé et renvoie le facteur
-    /// d'interpolation à passer à [`Pet::view`].
+    /// d'interpolation à passer à [`Pet::view`]. Un temps négatif ou non
+    /// fini n'avance pas l'horloge.
     pub fn advance(&mut self, elapsed: f32, world: &World, input: &Input) -> f32 {
+        let elapsed = if elapsed.is_finite() {
+            elapsed.max(0.0)
+        } else {
+            0.0
+        };
         self.react(elapsed, world, input);
         // Au-delà d'un dixième de seconde (Mac réveillé, débogueur…), on ne
         // rattrape pas : l'animal reprend où il était au lieu de bondir.
         self.accumulator += elapsed.clamp(0.0, 0.1);
         while self.accumulator >= TICK {
+            self.step_families(TICK, world);
             self.step_surprises(world, input);
             if self.realistic {
                 self.step_realistic(world, input);
@@ -4152,6 +4277,7 @@ impl Flock {
             && pet.regroup.is_none()
             && pet.goal.is_none()
             && pet.invite.is_none()
+            && !pet.family.action.active()
             && !self.is_still(index)
             && matches!(
                 pet.def.energy(pet.behavior),
@@ -4191,12 +4317,13 @@ impl Flock {
             {
                 continue;
             }
-            let accept = match b.temper {
+            let accept = (match b.temper {
                 Temper::Lively => 0.85,
                 Temper::Rowdy => 0.6,
                 Temper::Even => 0.5,
                 Temper::Calm => 0.2,
-            };
+            } * b.contest_appetite(Some(a)))
+            .min(1.0);
             let (Some(lunge_a), Some(lunge_b)) = (
                 a.def.behavior_index("play_lunge"),
                 b.def.behavior_index("play_lunge"),
@@ -4224,12 +4351,13 @@ impl Flock {
                 continue;
             }
             pet.invite_in = pet.rng.range(INVITE_EVERY.0, INVITE_EVERY.1);
-            let wants = match pet.temper {
+            let wants = (match pet.temper {
                 Temper::Lively => 1.0,
                 Temper::Even => 0.3,
                 Temper::Rowdy => 0.15,
                 Temper::Calm => 0.0,
-            };
+            } * pet.contest_appetite(None))
+            .min(1.0);
             if !pet.rng.chance(wants) || !self.free_to_play(i) {
                 continue;
             }
@@ -4323,6 +4451,7 @@ impl Flock {
                 || pet.hold.is_some()
                 || pet.regroup.is_some()
                 || pet.goal.is_some()
+                || pet.family.action.active()
                 || self.still == Some(pet.id)
             {
                 continue;
@@ -5260,6 +5389,12 @@ mod tests {
         Arc::new(crate::format::load_pet(&path).unwrap())
     }
 
+    fn bundled_lamb(name: &str) -> Arc<PetDef> {
+        let mut def = (*bundled(name)).clone();
+        def.age = crate::Age::Lamb { weeks: 2.0 };
+        Arc::new(def)
+    }
+
     #[test]
     fn every_sheep_knows_what_to_do_with_the_wind_and_its_temper() {
         // Le vent dans le museau : tous les moutons lui tournent le dos.
@@ -5286,7 +5421,10 @@ mod tests {
         // le tempérament ; leurs comportements contagieux sont bien lus.
         for name in ["mannequin", "aquarelle"] {
             let def = bundled(name);
-            for gesture in Gesture::ALL {
+            for gesture in Gesture::ALL
+                .into_iter()
+                .filter(|g| !matches!(g, Gesture::Nurse | Gesture::MaternalCall))
+            {
                 assert!(
                     def.behaviors
                         .iter()
@@ -5621,7 +5759,12 @@ mod tests {
     #[test]
     fn a_flehmen_half_opens_the_mouth_under_the_curled_lip() {
         let world = world();
-        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "stand");
+        let mut def = (*bundled("mannequin")).clone();
+        def.sex_ratio = crate::SexRatio::MALE;
+        let mut pet = standing(Arc::new(def.clone()), &world, 600.0, 1.0, "sniff");
+        def.sex_ratio = crate::SexRatio::FEMALE;
+        let ewe = standing(Arc::new(def), &world, 660.0, -1.0, "stand");
+        pet.remember_sniff(&ewe);
         run(&mut pet, &world, 0.5);
         assert!(pet.force("flehmen"));
         run(&mut pet, &world, 2.0);
@@ -5697,7 +5840,7 @@ mod tests {
     fn playing_lambs_twist_and_spin_in_the_air() {
         let world = world();
         // Saut tordu : le corps se tord en l'air, sans les pattes raides.
-        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "gambol");
+        let mut pet = standing(bundled_lamb("mannequin"), &world, 600.0, 1.0, "gambol");
         let (mut twist, mut stiff) = (0.0f32, 0.0f32);
         for _ in 0..(0.6 / TICK) as usize {
             pet.step(TICK, &world, &Input::default());
@@ -5707,7 +5850,7 @@ mod tests {
         assert!(twist > 0.8, "{twist}");
         assert!(stiff < 0.1, "{stiff}");
         // Un saut d'agneau ordinaire garde les pattes raides, sans se tordre.
-        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "pronk");
+        let mut pet = standing(bundled_lamb("mannequin"), &world, 600.0, 1.0, "pronk");
         let (mut twist, mut stiff) = (0.0f32, 0.0f32);
         for _ in 0..(0.6 / TICK) as usize {
             pet.step(TICK, &world, &Input::default());
@@ -5717,7 +5860,7 @@ mod tests {
         assert!(twist < 0.01 && stiff > 0.8, "{twist} {stiff}");
         // Demi-tour en l'air : il quitte le sol tourné d'un côté et retombe
         // tourné de l'autre, sur place.
-        let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "pivot");
+        let mut pet = standing(bundled_lamb("mannequin"), &world, 600.0, 1.0, "pivot");
         run(&mut pet, &world, 0.1);
         assert_eq!(pet.facing, 1.0, "il se ramasse d'abord");
         run(&mut pet, &world, 0.15);
@@ -5732,7 +5875,7 @@ mod tests {
         // les arrête là où leurs dessins se touchent, et les tasse tous deux.
         let world = world();
         let mut flock = Flock::new();
-        let mannequin = bundled("mannequin");
+        let mannequin = bundled_lamb("mannequin");
         let a = flock.spawn(Arc::clone(&mannequin), 1, &world, None);
         let b = flock.spawn(Arc::clone(&mannequin), 2, &world, None);
         put(&mut flock, &world, a, 600.0, 1.0, "play_back");
@@ -5764,7 +5907,7 @@ mod tests {
         // Deux agneaux actifs, à deux longueurs : l'un invite l'autre, tête
         // basse ; l'autre accepte le plus souvent, et ils s'élancent l'un
         // vers l'autre jusqu'au coup de front.
-        let mannequin = bundled("mannequin");
+        let mannequin = bundled_lamb("mannequin");
         let (mut invited, mut butted) = (0, 0);
         for round in 0..10u64 {
             let world = world();

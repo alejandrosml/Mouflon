@@ -7,7 +7,7 @@
 
 use std::f64::consts::PI;
 
-use mouflon_core::{PoseSignals, RUN_STRIDE};
+use mouflon_core::{Gesture, PoseSignals, RUN_STRIDE};
 
 use crate::gesture::{Gesturing, ears_turn, gesturing, leg_slot, rearing, with_posture};
 use crate::joints::{Chain, HeadIntent, LegDrive, LegRest, NeckDrive, NeckRest};
@@ -88,6 +88,13 @@ pub(crate) struct Gait {
 
 impl Gait {
     pub(crate) fn of(s: &PoseSignals) -> Self {
+        if s.gesture == Some(Gesture::Nurse) {
+            return Self {
+                walk: 0.0,
+                trot: 0.0,
+                run: 0.0,
+            };
+        }
         let run = f64::from(s.run);
         Self {
             walk: f64::from(s.walk),
@@ -306,6 +313,12 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     let landing = f(s.squash).clamp(-0.15, 0.16);
     let hold = Point::new(rig.pivot(Part::Body).x, rig.bounds.min_y() + h * 0.12);
     let root = root_transform(s, facing, g, h, hold);
+    let nursing = s.gesture == Some(Gesture::Nurse);
+    let nursing_unroot = if nursing {
+        root_transform(s, 1.0, g, h, hold).inverse()
+    } else {
+        Affine::IDENTITY
+    };
 
     // --- Corps couché : l'avant se plie d'abord (il s'agenouille), puis
     // l'arrière ; il se relève dans l'ordre inverse, l'arrière d'abord.
@@ -519,6 +532,12 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             nibble: f(s.nibble),
             graze_at: Point::new(rig.joints.fore_hoof.x, g.y - 0.3 * u),
             sleep_low: low,
+            nursing: s.nursing_target.filter(|_| nursing).map(|target| {
+                (
+                    nursing_unroot * (g + Vec2::new(f(target.x), f(target.y)) * h),
+                    f(s.gesture_amount),
+                )
+            }),
             ground: g.y,
             u,
             squash: act.head_squash,
@@ -532,31 +551,39 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
                 level_pupils(s, facing, neck.head_angle),
             );
     }
-    let legs = LegDrive {
-        gait,
-        phase,
-        duty,
-        stride,
-        u,
-        ground: g.y,
-        air,
-        tuck,
-        reach,
-        loose,
-        dangle,
-        swing: f(s.swing),
-        splay,
-        front_down,
-        back_down,
-        act,
-        untilt: untilt(s, g, h),
-    };
-    for (leg, rest) in Part::LEGS.into_iter().zip(&rig.joints.legs) {
-        if let Some(rest) = rest {
-            let (upper, lower) = legs.pose(rest, body_t * rest.chain.root);
-            parts[leg.index()] = upper;
-            if let Some(part) = leg.lower() {
-                parts[part.index()] = lower;
+    // Sans pattes articulées, ni cinématique inverse ni compensation des
+    // appuis à préparer : les quatre transformations ci-dessus suffisent.
+    if segmented {
+        let legs = LegDrive {
+            gait,
+            phase,
+            duty,
+            stride,
+            u,
+            ground: g.y,
+            air,
+            tuck,
+            reach,
+            loose,
+            dangle,
+            swing: f(s.swing),
+            splay,
+            front_down,
+            back_down,
+            act,
+            untilt: if nursing {
+                nursing_unroot
+            } else {
+                untilt(s, g, h)
+            },
+        };
+        for (leg, rest) in Part::LEGS.into_iter().zip(&rig.joints.legs) {
+            if let Some(rest) = rest {
+                let (upper, lower) = legs.pose(rest, body_t * rest.chain.root);
+                parts[leg.index()] = upper;
+                if let Some(part) = leg.lower() {
+                    parts[part.index()] = lower;
+                }
             }
         }
     }
@@ -566,6 +593,24 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     for (k, part) in Part::SWAYS.into_iter().enumerate() {
         if rig.has_part(part) {
             parts[part.index()] = sway_shear(rig.pivot(part), sway(s, &act, facing, k));
+        }
+    }
+
+    // Les touffes d'encolure ont une petite racine recouverte de laine :
+    // ce point suit le cou, mais leurs fibres pendent dans le repère du
+    // corps. Une ligne entière maintenue fixe les aplatirait quand le cou
+    // passe à l'horizontale en broutant.
+    for (k, part) in Part::NECK_SWAYS.into_iter().enumerate() {
+        if rig.has_part(part) {
+            let parent = if rig.has_part(Part::Neck) {
+                parts[Part::Neck.index()]
+            } else {
+                body_t
+            };
+            let pivot = rig.pivot(part);
+            let hanging = Affine::translate(parent * pivot - pivot)
+                * sway_shear(pivot, sway(s, &act, facing, k));
+            parts[part.index()] = parent.inverse() * hanging;
         }
     }
 

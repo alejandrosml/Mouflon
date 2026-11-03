@@ -297,6 +297,9 @@ pub(crate) struct NeckDrive {
     pub graze_at: Point,
     /// Endormi la tête au sol (0 à 1).
     pub sleep_low: f64,
+    /// La mamelle dans le repère du dessin et l'ampleur du geste de tétée.
+    /// Sans cible, le geste seul relève la tête.
+    pub nursing: Option<(Point, f64)>,
     /// La hauteur du sol, un centième de la hauteur de l'animal.
     pub ground: f64,
     pub u: f64,
@@ -364,6 +367,35 @@ impl NeckRest {
             };
             bend = bend.lerp(low, d.sleep_low);
         }
+        if let Some((target, amount)) = d.nursing {
+            let chain = self.chain();
+            let to = target - d.base;
+            let stretch = ((to.hypot() - chain.l2) / chain.l1).clamp(1.0, NECK_STRETCH);
+            let l1 = chain.l1 * stretch;
+            let distance = to
+                .hypot()
+                .clamp((l1 - chain.l2).abs() + 1e-6, l1 + chain.l2);
+            // L'autre branche du pli : le cou descend sous le ventre et
+            // la tête se relève, contrairement au broutage. La tête prend
+            // le chemin court pendant l'entrée, jamais un tour complet.
+            let c = ((distance * distance - l1 * l1 - chain.l2 * chain.l2) / (2.0 * l1 * chain.l2))
+                .clamp(-1.0, 1.0);
+            let fold = -c.acos().min(PI - 0.05);
+            let first = wrap(
+                angle(to)
+                    - (chain.l2 * fold.sin()).atan2(l1 + chain.l2 * fold.cos())
+                    - chain.first_rest,
+            );
+            let head = wrap(first + fold - chain.bend_rest);
+            bend = bend.lerp(
+                Bend {
+                    first,
+                    second: head - first,
+                    stretch,
+                },
+                amount.clamp(0.0, 1.0),
+            );
+        }
         head = bend.first + bend.second;
         let neck = Affine::translate(d.base - self.base)
             * rotate_about(self.base, bend.first)
@@ -383,6 +415,39 @@ impl NeckRest {
     pub(crate) fn head_length(&self) -> f64 {
         (self.muzzle - self.poll).hypot()
     }
+
+    /// Portée de tétée : le cou se déploie vers la mère et l'axe du museau
+    /// vise vers le haut. Placer le jeune d'après sa tête au repos obligerait
+    /// certaines longues encolures à se rabattre près du sol pour toucher.
+    /// L'angle est un choix de pose, pas une limite anatomique mesurée.
+    pub(crate) fn nursing_muzzle(&self) -> Point {
+        let neck = (self.poll - self.base).hypot();
+        let head = self.head_length();
+        let up: f64 = 0.55;
+        let drop = (head * up.sin()).min(neck * 0.8);
+        let forward = (neck * neck - drop * drop).max(0.0).sqrt();
+        Point::new(self.base.x + forward + head * up.cos(), self.base.y)
+    }
+}
+
+/// Repère mammaire implicite sous l'arrière du flanc. Une toison longue
+/// cache le ventre : son bord n'est pas l'emplacement de la mamelle.
+/// Sans variante anatomique d'agneau, la base de l'encolure permet de
+/// retrouver une hauteur abdominale sous cette laine : le jeune à 60 %
+/// de taille y porte la tête sans rabattre le cou vers le sol. Ce choix
+/// de dessin n'est pas une mesure zoologique.
+pub(crate) fn udder_point(
+    body: Rect,
+    hip_x: f64,
+    ground: Point,
+    height: f64,
+    neck: Option<NeckRest>,
+) -> Point {
+    let mut y = body.max_y() + 0.02 * height;
+    if let Some(neck) = neck {
+        y = y.min(ground.y + 0.60 * (neck.base.y - ground.y));
+    }
+    Point::new(hip_x + body.width() * 0.08, y)
 }
 
 // --------------------------------------------------------------- pattes

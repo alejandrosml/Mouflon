@@ -114,6 +114,12 @@ pub enum Command {
         def: Arc<PetDef>,
         art: Arc<PetArt>,
     },
+    /// Un jeune dont le dessin a été préparé hors de l’affichage.
+    SpawnLamb {
+        mother: u32,
+        def: Arc<PetDef>,
+        art: Arc<PetArt>,
+    },
     /// Les premières images se préparent, puis la scène se montre après
     /// une courte mise en route (`settle`) : les animaux arrivent.
     Start {
@@ -177,6 +183,7 @@ pub enum Command {
 #[derive(Clone, Debug)]
 pub struct PetSummary {
     pub id: u32,
+    pub is_ewe: bool,
     pub def: Arc<PetDef>,
     /// Personnage secondaire ou animal qui part : pas compté dans le menu.
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -197,7 +204,11 @@ pub enum Report {
     /// d'un animal, ou pendant qu'on en tient un) ou la laissent passer.
     Hittest(Vec<(u64, bool)>),
     /// Le menu de cet animal (sous le curseur) est à ouvrir.
-    PetMenu { id: u32, def: Arc<PetDef> },
+    PetMenu {
+        id: u32,
+        def: Arc<PetDef>,
+        can_have_lamb: bool,
+    },
     /// L'autorisation d'Accessibilité, telle que le relevé la voit.
     Trusted(bool),
     /// L'horloge de l'écran ne bat plus (ou les écrans ont changé) : en
@@ -361,6 +372,8 @@ pub struct Display<C: Clock> {
     trial_end: Option<Instant>,
     snapshots: Option<(std::path::PathBuf, Vec<Instant>)>,
     sounds_window: (Instant, u32),
+    /// Appel grave original, déjà en mémoire avant le premier pas.
+    maternal_call: Arc<[u8]>,
     reports: Reports,
     quit: bool,
 }
@@ -447,6 +460,7 @@ impl<C: Clock> Display<C> {
             trial_end: None,
             snapshots: None,
             sounds_window: (now, 0),
+            maternal_call: Arc::from(include_bytes!("../assets/appel-maternel.wav").as_slice()),
             reports: init.reports,
             quit: false,
         };
@@ -587,6 +601,7 @@ impl<C: Clock> Display<C> {
             }
             Command::Survey(snapshot) => self.apply_snapshot(snapshot, Instant::now()),
             Command::Spawn { def, art } => self.spawn(def, art),
+            Command::SpawnLamb { mother, def, art } => self.spawn_lamb(mother, def, art),
             Command::Start { settle } => self.start(settle),
             Command::RemoveUnderCursor => {
                 if let Some(id) = self.pet_under_cursor() {
@@ -752,6 +767,25 @@ impl<C: Clock> Display<C> {
         self.fit_pet(id, art);
     }
 
+    /// Le lien est validé ici aussi : la mère peut être partie pendant que
+    /// le fil de travail préparait le dessin. Aucun chargement sur ce fil.
+    fn spawn_lamb(&mut self, mother: u32, def: Arc<PetDef>, art: Arc<PetArt>) {
+        // Même refusée, la demande doit être acquittée : le fil principal
+        // libère alors son entrée préparée et son attente d’arrivée.
+        self.reported_generation = None;
+        self.seed = self
+            .seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        if let Some(id) =
+            self.flock
+                .spawn_lamb_with(mother, Arc::clone(&def), self.seed, &self.world)
+        {
+            self.remember_art(&def, &art);
+            self.fit_pet(id, art);
+        }
+    }
+
     /// Le dessin d'une définition (pour les personnages secondaires qui la
     /// partagent).
     fn remember_art(&mut self, def: &Arc<PetDef>, art: &Arc<PetArt>) {
@@ -767,6 +801,9 @@ impl<C: Clock> Display<C> {
             // Les collisions partent quand les dessins se touchent.
             if let Some((front, back)) = art.reach() {
                 pet.set_reach(front, back);
+            }
+            if let Some((udder, muzzle)) = art.nursing_points() {
+                pet.set_nursing_points(udder, muzzle);
             }
             // Un autre se pose sur ce qu'on voit de lui, même couché.
             if let Some(tops) = art.tops() {
@@ -830,12 +867,17 @@ impl<C: Clock> Display<C> {
             return;
         }
         let def = Arc::clone(pet.def());
+        let can_have_lamb = pet.can_have_lamb();
         // Le clic n'est pas un « coucou », ni le début d'un glisser.
         self.pointer.pressed = None;
         self.note(format_args!("menu de n° {id}"));
         self.flock.hold_still(Some(id));
         self.menu_pet = Some(id);
-        self.report(Report::PetMenu { id, def });
+        self.report(Report::PetMenu {
+            id,
+            def,
+            can_have_lamb,
+        });
     }
 
     /// Bouton relâché : on lâche l'animal tenu, ou un simple clic le touche.
@@ -1246,14 +1288,20 @@ impl<C: Clock> Display<C> {
                 }
                 // Pas plus de quelques sons à la fois : une foule ne fait
                 // qu'un brouhaha (et chaque son coûte).
-                if let PetEvent::Sound { sound, clip } = event
-                    && audible
-                    && self.sounds_window.1 < SOUNDS_PER_WINDOW
-                    && let Some(sound) = pet.def().sounds.get(sound)
-                    && let Some(data) = sound.clips.get(clip)
-                {
-                    self.sounds_window.1 += 1;
-                    platform::play_sound(data, sound.volume * VOLUME);
+                if audible && self.sounds_window.1 < SOUNDS_PER_WINDOW {
+                    let sound = match event {
+                        PetEvent::Sound { sound, clip } => {
+                            pet.def().sounds.get(sound).and_then(|sound| {
+                                sound.clips.get(clip).map(|data| (data, sound.volume))
+                            })
+                        }
+                        PetEvent::MaternalCall => Some((&self.maternal_call, 0.65)),
+                        _ => None,
+                    };
+                    if let Some((data, volume)) = sound {
+                        self.sounds_window.1 += 1;
+                        platform::play_sound(data, volume * VOLUME);
+                    }
                 }
             }
         }
@@ -1482,6 +1530,7 @@ impl<C: Clock> Display<C> {
             .iter()
             .map(|p| PetSummary {
                 id: p.id(),
+                is_ewe: p.is_ewe(),
                 def: Arc::clone(p.def()),
                 extra: p.is_child() || p.is_leaving(),
             })
@@ -1738,6 +1787,7 @@ fn describe(event: &PetEvent, pet: &mouflon_core::Pet) -> String {
         PetEvent::Napping => "s'endort (utilisateur parti)".to_owned(),
         PetEvent::Woken => "se réveille (utilisateur revenu)".to_owned(),
         PetEvent::HitSaucer => "percute une soucoupe".to_owned(),
+        PetEvent::MaternalCall => "appelle son agneau, bouche fermée".to_owned(),
         PetEvent::Sound { sound, clip } => format!(
             "son {} ({})",
             pet.def()
@@ -2057,6 +2107,91 @@ mod tests {
                 .surfaces()
                 .iter()
                 .any(|s| s.kind == mouflon_core::SurfaceKind::Window && s.y == 200.0)
+        );
+    }
+
+    #[test]
+    fn a_prepared_lamb_joins_its_mother_and_keeps_its_age_when_resized() {
+        let (mut display, receiver) = display();
+        display.command(screens());
+        let mut mother = crate::library::builtin_mannequin().unwrap();
+        mother.sex_ratio = mouflon_core::SexRatio::FEMALE;
+        let mother = Arc::new(mother);
+        let mother_art = Arc::new(PetArt::load(&mother).unwrap());
+        display.command(Command::Spawn {
+            def: Arc::clone(&mother),
+            art: mother_art,
+        });
+        let mother_id = display.flock.pets()[0].id();
+        for _ in 0..600 {
+            display
+                .flock
+                .advance(mouflon_core::TICK, &display.world, &Input::default());
+        }
+        display.flock.get_mut(mother_id).unwrap().force("stand");
+        let young = Arc::new(mother.as_lamb(2.0).unwrap());
+        let young_art = Arc::new(PetArt::load(&young).unwrap());
+        display.command(Command::SpawnLamb {
+            mother: mother_id,
+            def: Arc::clone(&young),
+            art: young_art,
+        });
+        let lamb = display.flock.pets().iter().find(|p| p.is_lamb()).unwrap();
+        let id = lamb.id();
+        assert_eq!(lamb.mother(), Some(mother_id));
+        let age = lamb.age();
+        let larger = Arc::new(young.scaled(1.5));
+        display.command(Command::RedrawPet {
+            id,
+            def: Arc::clone(&larger),
+            art: Arc::new(PetArt::load(&larger).unwrap()),
+            factor: 1.5,
+        });
+        let lamb = display.flock.get_mut(id).unwrap();
+        assert_eq!(lamb.age(), age);
+        assert_eq!(lamb.mother(), Some(mother_id));
+        assert!((display.arts[&id].height - larger.physics.height).abs() < 0.01);
+        display.command(Command::Start {
+            settle: Duration::ZERO,
+        });
+        display.frame(None, 0);
+        let (_, pets) = last_flock(&reports(&receiver)).unwrap();
+        assert!(pets.iter().find(|p| p.id == mother_id).unwrap().is_ewe);
+        assert!(!pets.iter().find(|p| p.id == id).unwrap().is_ewe);
+    }
+
+    #[test]
+    fn a_lamb_prepared_after_its_mother_disappears_is_not_spawned() {
+        let (mut display, receiver) = display();
+        display.command(screens());
+        let mut mother = crate::library::builtin_mannequin().unwrap();
+        mother.sex_ratio = mouflon_core::SexRatio::FEMALE;
+        let mother = Arc::new(mother);
+        display.command(Command::Spawn {
+            def: Arc::clone(&mother),
+            art: Arc::new(PetArt::load(&mother).unwrap()),
+        });
+        let id = display.flock.pets()[0].id();
+        let young = Arc::new(mother.as_lamb(2.0).unwrap());
+        display.flock.remove(id);
+        display.sync_pets();
+        let _ = reports(&receiver);
+        display.command(Command::SpawnLamb {
+            mother: id,
+            def: Arc::clone(&young),
+            art: Arc::new(PetArt::load(&young).unwrap()),
+        });
+        assert!(display.flock.pets().is_empty());
+        display.sync_pets();
+        let (done, pets) =
+            last_flock(&reports(&receiver)).expect("la naissance refusée est aussi acquittée");
+        assert_eq!(done, 3);
+        assert!(pets.is_empty());
+        assert!(
+            !display
+                .def_arts
+                .iter()
+                .any(|(def, _)| Arc::ptr_eq(def, &young))
         );
     }
 
