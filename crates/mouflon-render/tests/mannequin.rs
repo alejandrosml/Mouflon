@@ -62,8 +62,9 @@ fn mannequin_loads_simulates_and_paints() {
     assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
 }
 
-/// Au pas, les sabots posés ne glissent presque pas : la patte balaie juste
-/// ce que le corps parcourt pendant l'appui.
+/// Au pas, au trot et au galop, les sabots posés ne glissent pas : la patte
+/// en deux segments pose son sabot là où il doit être, et le genou plie de
+/// lui-même. On suit le vrai sabot, au bout du bas de la patte.
 #[test]
 fn mannequin_hooves_stay_planted_while_walking() {
     use mouflon_render::animate::pose;
@@ -76,56 +77,70 @@ fn mannequin_hooves_stay_planted_while_walking() {
     let mouflon_render::Look::Rig(rig) = &art.look else {
         panic!("le mannequin est un dessin vectoriel")
     };
+    assert!(rig.has_part(Part::LegFrontNearLower) && rig.has_part(Part::LegBackNearLower));
     let world = World::new(vec![Screen {
-        frame: Rect::new(0.0, 0.0, 2000.0, 600.0),
-        usable: Rect::new(0.0, 0.0, 2000.0, 560.0),
+        frame: Rect::new(0.0, 0.0, 4000.0, 600.0),
+        usable: Rect::new(0.0, 0.0, 4000.0, 560.0),
         scale: 2.0,
     }]);
-    let mut pet = Pet::spawn(0, Arc::clone(&def), 3, &world, Some(1000.0));
-    let input = Input::default();
-    for _ in 0..(2.0 / TICK) as usize {
-        pet.step(TICK, &world, &input);
-    }
-    assert!(pet.force("walk"));
-    for _ in 0..(1.0 / TICK) as usize {
-        pet.step(TICK, &world, &input);
-    }
     let k = f64::from(art.height) / rig.bounds.height();
     let stride = f64::from(art.stride) / k;
-    let mut previous: Option<Point> = None;
-    let (mut planted, mut slide) = (0usize, 0.0f64);
-    for _ in 0..(2.0 / TICK) as usize {
-        pet.step(TICK, &world, &input);
-        if pet.behavior_name() != "walk" {
-            pet.force("walk");
+    for gait in ["walk", "trot", "run"] {
+        let mut pet = Pet::spawn(0, Arc::clone(&def), 3, &world, Some(800.0));
+        let input = Input::default();
+        for _ in 0..(2.0 / TICK) as usize {
+            pet.step(TICK, &world, &input);
         }
-        let view = pet.view(1.0);
-        let p = pose(rig, &view.pose, view.facing, stride);
-        let base = Affine::translate(KVec2::new(
-            f64::from(view.ground.x),
-            f64::from(view.ground.y),
-        )) * Affine::scale(k)
-            * Affine::translate(-rig.ground.to_vec2())
-            * p.root;
-        let b = rig.part_bounds(Part::LegFrontNear);
-        let foot = base * p.part(Part::LegFrontNear) * Point::new(b.center().x, b.max_y());
-        let ground = f64::from(view.ground.y);
-        if let Some(before) = previous
-            && foot.y > ground - 0.3
-            && before.y > ground - 0.3
-        {
-            planted += 1;
-            slide += (foot.x - before.x).abs() / f64::from(TICK);
+        assert!(pet.force(gait));
+        for _ in 0..(1.0 / TICK) as usize {
+            pet.step(TICK, &world, &input);
         }
-        previous = Some(foot);
+        for (leg, lower) in [
+            (Part::LegFrontNear, Part::LegFrontNearLower),
+            (Part::LegBackNear, Part::LegBackNearLower),
+        ] {
+            let b = rig.part_bounds(lower);
+            let hoof = Point::new(b.center().x, b.max_y());
+            let mut previous: Option<Point> = None;
+            let (mut planted, mut slide, mut speed) = (0usize, 0.0f64, 0.0f64);
+            let mut probe = pet.clone();
+            for _ in 0..(1.5 / TICK) as usize {
+                probe.step(TICK, &world, &input);
+                if probe.behavior_name() != gait {
+                    probe.force(gait);
+                }
+                let view = probe.view(1.0);
+                let p = pose(rig, &view.pose, view.facing, stride);
+                let base = Affine::translate(KVec2::new(
+                    f64::from(view.ground.x),
+                    f64::from(view.ground.y),
+                )) * Affine::scale(k)
+                    * Affine::translate(-rig.ground.to_vec2())
+                    * p.root;
+                let foot = base * p.part(leg) * p.part(lower) * hoof;
+                let ground = f64::from(view.ground.y);
+                // Posé : au sol, à un vingtième de point près.
+                if let Some(before) = previous
+                    && foot.y > ground - 0.05
+                    && before.y > ground - 0.05
+                {
+                    planted += 1;
+                    slide += (foot.x - before.x).abs() / f64::from(TICK);
+                    speed += f64::from(probe.velocity().x.abs());
+                }
+                previous = Some(foot);
+            }
+            assert!(
+                planted > 30,
+                "{gait} {leg:?} : sabot au sol pendant {planted} pas"
+            );
+            let (mean, speed) = (slide / planted as f64, speed / planted as f64);
+            assert!(
+                mean < 0.05 * speed,
+                "{gait} {leg:?} : glisse à {mean:.1} pt/s pour {speed:.0} pt/s"
+            );
+        }
     }
-    let speed = f64::from(pet.velocity().x.abs());
-    assert!(planted > 60, "sabot au sol pendant {planted} pas");
-    let mean = slide / planted as f64;
-    assert!(
-        mean < 0.15 * speed,
-        "glisse à {mean:.1} pt/s pour {speed:.0} pt/s"
-    );
 }
 
 /// Le mannequin broute : la tête descend en une seconde ou deux et grignote.
