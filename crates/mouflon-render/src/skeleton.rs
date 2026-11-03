@@ -479,8 +479,12 @@ impl SkeletonArt {
                 let rear = crate::gesture::rearing(engine.act.rear, at);
                 root *= rear;
                 let back = rear.inverse();
+                // Les pattes de derrière et tout ce qu'elles portent (leur bas,
+                // leurs sabots) : les parents viennent avant leurs enfants.
+                let mut carried = vec![false; count];
                 for (i, bone) in sk.bones.iter().enumerate() {
-                    if hind(bone.role) {
+                    carried[i] = hind(bone.role) || bone.parent.is_some_and(|p| carried[p]);
+                    if carried[i] {
                         bones[i] = back * bones[i];
                     }
                 }

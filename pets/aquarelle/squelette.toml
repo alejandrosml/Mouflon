@@ -8,6 +8,8 @@
 size = [1200, 900]
 # Le point d'appui : le milieu des sabots, au sol.
 ground = [560, 820]
+# Ce qui touche l'herbe quand elle broute : le bout du museau, sous la bouche.
+muzzle = [944, 538]
 
 # --- Les os, chaque parent avant ses enfants. `at` : l'articulation (le
 # point autour duquel l'os tourne) ; `role` : ce que le moteur en fait de
@@ -29,11 +31,19 @@ parent = "corps"
 at = [302, 552]
 role = "tail"
 
+# Chaque patte en deux segments : le haut tourne à l'épaule ou à la hanche,
+# le bas (le canon et le sabot) au carpe (devant) ou au jarret (derrière).
 [[bone]]
 name = "patte-arriere-loin"
 parent = "corps"
 at = [418, 650]
 role = "leg-back-far"
+
+[[bone]]
+name = "patte-arriere-loin-bas"
+parent = "patte-arriere-loin"
+at = [411, 738]
+role = "leg-back-far-lower"
 
 [[bone]]
 name = "patte-avant-loin"
@@ -42,10 +52,22 @@ at = [706, 655]
 role = "leg-front-far"
 
 [[bone]]
+name = "patte-avant-loin-bas"
+parent = "patte-avant-loin"
+at = [716, 744]
+role = "leg-front-far-lower"
+
+[[bone]]
 name = "patte-arriere-pres"
 parent = "corps"
 at = [452, 665]
 role = "leg-back-near"
+
+[[bone]]
+name = "patte-arriere-pres-bas"
+parent = "patte-arriere-pres"
+at = [456, 738]
+role = "leg-back-near-lower"
 
 [[bone]]
 name = "patte-avant-pres"
@@ -53,11 +75,39 @@ parent = "corps"
 at = [742, 668]
 role = "leg-front-near"
 
-# La tête tourne autour du cou, là où elle entre dans la toison.
+[[bone]]
+name = "patte-avant-pres-bas"
+parent = "patte-avant-pres"
+at = [750, 744]
+role = "leg-front-near-lower"
+
+# Deux mèches de la toison (des festons du ventre) : elles pendent de leur
+# attache et suivent le corps avec un ressort amorti.
+[[bone]]
+name = "meche-1"
+parent = "corps"
+at = [644, 686]
+role = "sway"
+
+[[bone]]
+name = "meche-2"
+parent = "corps"
+at = [515, 690]
+role = "sway"
+
+# L'encolure, l'avant de la toison : elle tourne autour de sa base, dans le
+# corps ; c'est surtout elle qui descend pour brouter.
+[[bone]]
+name = "encolure"
+parent = "corps"
+at = [690, 560]
+role = "neck"
+
+# La tête tourne à la nuque, derrière les oreilles.
 [[bone]]
 name = "tete"
-parent = "corps"
-at = [775, 505]
+parent = "encolure"
+at = [782, 470]
 role = "head"
 
 [[bone]]
@@ -94,12 +144,30 @@ parent = "tete"
 at = [865, 553]
 role = "jaw"
 
+# La lèvre supérieure se retrousse autour de son arrière, sous le naseau :
+# le flehmen.
+[[bone]]
+name = "levre"
+parent = "tete"
+at = [910, 522]
+role = "lip"
+
 # --- Les morceaux, de l'arrière vers l'avant. Chacun fait la taille de la
-# toile (exportés tels quels) : Mouflon les recadre et les réduit.
+# toile (exportés tels quels) : Mouflon les recadre et les réduit. Le bas de
+# chaque patte se pose sous son haut ; l'encolure et les mèches, sous le
+# corps (il s'y fond par un bord doux).
+
+[[piece]]
+bone = "patte-arriere-loin-bas"
+image = "morceaux/patte-arriere-loin-bas.png"
 
 [[piece]]
 bone = "patte-arriere-loin"
 image = "morceaux/patte-arriere-loin.png"
+
+[[piece]]
+bone = "patte-avant-loin-bas"
+image = "morceaux/patte-avant-loin-bas.png"
 
 [[piece]]
 bone = "patte-avant-loin"
@@ -110,12 +178,32 @@ bone = "queue"
 image = "morceaux/queue.png"
 
 [[piece]]
+bone = "patte-arriere-pres-bas"
+image = "morceaux/patte-arriere-pres-bas.png"
+
+[[piece]]
 bone = "patte-arriere-pres"
 image = "morceaux/patte-arriere-pres.png"
 
 [[piece]]
+bone = "patte-avant-pres-bas"
+image = "morceaux/patte-avant-pres-bas.png"
+
+[[piece]]
 bone = "patte-avant-pres"
 image = "morceaux/patte-avant-pres.png"
+
+[[piece]]
+bone = "encolure"
+image = "morceaux/encolure.png"
+
+[[piece]]
+bone = "meche-1"
+image = "morceaux/meche-1.png"
+
+[[piece]]
+bone = "meche-2"
+image = "morceaux/meche-2.png"
 
 [[piece]]
 bone = "corps"
@@ -134,6 +222,15 @@ image = "morceaux/machoire.png"
 [[piece]]
 bone = "tete"
 image = "morceaux/tete.png"
+
+# Sous la lèvre, la gencive, cachée tant qu'elle est baissée ; puis la lèvre.
+[[piece]]
+bone = "tete"
+image = "morceaux/gencive.png"
+
+[[piece]]
+bone = "levre"
+image = "morceaux/levre.png"
 
 [[piece]]
 bone = "oreille-pres"

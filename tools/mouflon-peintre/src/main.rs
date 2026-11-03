@@ -251,6 +251,37 @@ impl Layer {
     }
 }
 
+// ------------------------------------------------------------ articulations
+
+/// Coupe un morceau à une articulation (le carpe, le jarret) : le haut garde
+/// ce qui est au-dessus de `joint` et le disque de rayon `radius` autour de
+/// lui, et se pose par-dessus ; le bas garde le reste, et, sous le disque
+/// (caché au repos), ce qui y est opaque. En tournant autour de `joint`, le
+/// bas reste sous le disque du haut : rien ne s'ouvre au genou.
+fn split_joint(layer: &Layer, joint: (f32, f32), radius: f32) -> (Layer, Layer) {
+    let mut upper = vec![0.0; W * H];
+    let mut lower = vec![0.0; W * H];
+    for y in 0..H {
+        for x in 0..W {
+            let i = y * W + x;
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let d = ((px - joint.0).powi(2) + (py - joint.1).powi(2)).sqrt();
+            let disc = smoothstep(radius + 0.75, radius - 0.75, d);
+            let above = smoothstep(joint.1 + 0.75, joint.1 - 0.75, py);
+            let up = above.max(disc);
+            upper[i] = up;
+            // Sous le disque, un peu au-delà de son bord : pas de jointure.
+            let under = if layer.px[i][3] > 0.98 {
+                smoothstep(radius + 3.0, radius + 1.5, d)
+            } else {
+                0.0
+            };
+            lower[i] = (1.0 - up).max(under);
+        }
+    }
+    (layer.masked(&upper), layer.masked(&lower))
+}
+
 // ------------------------------------------------------------------- lavis
 
 /// Un lavis : une forme remplie de pigment.
@@ -624,16 +655,45 @@ fn body_circles() -> Vec<(f32, f32, f32)> {
     circles
 }
 
+/// Les boucles de la toison qui font l'encolure : celles de l'avant, en
+/// haut, où la tête entre dans la laine.
+fn is_neck_curl(&(x, y, _): &(f32, f32, f32)) -> bool {
+    x > 720.0 && y < 560.0
+}
+
+/// La toison du corps : toutes ses boucles, sauf celles de l'encolure.
 fn paint_body(p: &Palette) -> Layer {
     let mut circles = body_circles();
     circles.remove(0);
+    circles.retain(|c| !is_neck_curl(c));
+    paint_fleece(p, &circles, true)
+}
+
+/// L'encolure : les boucles de l'avant de la toison, peintes à part (sous
+/// le corps), et une de plus, cachée sous la tête, qui la prolonge quand
+/// elle s'avance.
+fn paint_neck(p: &Palette) -> Layer {
+    let mut circles: Vec<(f32, f32, f32)> = body_circles()
+        .into_iter()
+        .skip(1)
+        .filter(is_neck_curl)
+        .collect();
+    circles.push((800.0, 500.0, 46.0));
+    paint_fleece(p, &circles, false)
+}
+
+/// Une toison : des boucles (et, pour le corps, son cœur ovale), chacune
+/// éclairée en haut à gauche et dans l'ombre en bas à droite.
+fn paint_fleece(p: &Palette, circles: &[(f32, f32, f32)], core: bool) -> Layer {
     let mut pb = PathBuilder::new();
-    for &(x, y, r) in &circles {
+    for &(x, y, r) in circles {
         pb.push_circle(x, y, r);
     }
-    let rect =
-        tiny_skia::Rect::from_xywh(560.0 - 222.0, 560.0 - 120.0, 444.0, 252.0).expect("corps");
-    pb.push_oval(rect);
+    if core {
+        let rect =
+            tiny_skia::Rect::from_xywh(560.0 - 222.0, 560.0 - 120.0, 444.0, 252.0).expect("corps");
+        pb.push_oval(rect);
+    }
     let shape = pb.finish().expect("toison");
     let mask = mask_of(&shape);
     let mut layer = Layer::new();
@@ -647,7 +707,7 @@ fn paint_body(p: &Palette) -> Layer {
         .collect();
     // Chaque boucle de la toison est un petit nuage : éclairée en haut à
     // gauche, dans l'ombre en bas à droite.
-    for &(x, y, r) in &circles {
+    for &(x, y, r) in circles {
         let lit = blur(
             &mask_of(&ellipse(x - r * 0.25, y - r * 0.3, r * 0.55, r * 0.42)),
             10,
@@ -986,6 +1046,89 @@ fn paint_closed_eye() -> Layer {
     layer
 }
 
+/// La lèvre supérieure, sous le naseau, jusqu'à la bouche (dans la toile) :
+/// elle se retrousse autour de son arrière pour le flehmen.
+const LIP: [(f32, f32); 9] = [
+    (906.0, 518.0),
+    (924.0, 514.0),
+    (942.0, 513.0),
+    (952.0, 521.0),
+    (950.0, 533.0),
+    (938.0, 532.0),
+    (928.0, 541.0),
+    (913.0, 545.0),
+    (902.0, 532.0),
+];
+
+/// La lèvre : ce que la tête peint à cet endroit.
+fn paint_lip(head: &Layer) -> Layer {
+    head.masked(&mask_of(&polygon(&LIP)))
+}
+
+/// La gencive (le bourrelet du haut : le mouton n'a pas d'incisives en
+/// haut), cachée sous la lèvre tant qu'elle est baissée.
+fn paint_gum() -> Layer {
+    let head = mask_of(&smooth_closed(&shifted(&HEAD)));
+    let lip = blur(&mask_of(&polygon(&LIP)), 2);
+    let inside = inset(&head, 3);
+    let pad: Vec<f32> = lip.iter().zip(&inside).map(|(a, b)| a * b).collect();
+    let mut layer = Layer::new();
+    dab(&mut layer, &pad, None, hex(0xC97F8F), 0.95);
+    let ridge = stroke_mask(
+        &smooth_open(&[(912.0, 538.0), (928.0, 536.0), (944.0, 529.0)]),
+        3.0,
+    );
+    dab(&mut layer, &blur(&ridge, 1), Some(&pad), hex(0xA0566A), 0.7);
+    let shade = stroke_mask(
+        &smooth_open(&[(910.0, 521.0), (928.0, 518.0), (945.0, 518.0)]),
+        4.0,
+    );
+    dab(&mut layer, &blur(&shade, 2), Some(&pad), hex(0x8A4658), 0.6);
+    layer
+}
+
+/// Les mèches de la toison : deux festons du bas du ventre, de x0 à x1,
+/// sous la hauteur y (leur attache).
+const LOCKS: [(f32, f32, f32); 2] = [(598.0, 690.0, 686.0), (470.0, 560.0, 690.0)];
+
+/// Détache de la toison ce qu'elle peint dans le rectangle `area` (x0, x1,
+/// y : tout ce qui est plus bas) : une mèche, peinte sous le corps, qui
+/// déborde de `band` pixels sous lui ; le corps s'y fond sur `band` pixels.
+/// Au repos, rien ne change.
+fn split_lock(layer: &Layer, area: (f32, f32, f32), band: f32) -> (Layer, Layer) {
+    let (x0, x1, y0) = area;
+    let mut lock = vec![0.0; W * H];
+    let mut body = vec![0.0; W * H];
+    for y in 0..H {
+        for x in 0..W {
+            let i = y * W + x;
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            // La distance (signée) au bord de la zone : positive dedans.
+            let d = (py - y0).min(px - x0).min(x1 - px);
+            lock[i] = smoothstep(-2.0 * band, -band, d);
+            body[i] = 1.0 - smoothstep(-band, 0.0, d);
+        }
+    }
+    (layer.masked(&lock), layer.masked(&body))
+}
+
+/// Les articulations des pattes : le carpe (devant) et le jarret
+/// (derrière), et le rayon du disque qui les couvre.
+fn leg_joint(hip: (f32, f32), hoof_x: f32, front: bool) -> ((f32, f32), f32) {
+    let ground = GROUND.1;
+    let y = if front { ground - 76.0 } else { ground - 82.0 };
+    // Le milieu de la patte à cette hauteur (entre le genou et la cheville
+    // du tracé de `paint_leg`).
+    let ankle_y = ground - 34.0;
+    let knee = (
+        hip.0 + (hoof_x - hip.0) * 0.55 + 4.0,
+        hip.1 + (ankle_y - hip.1) * 0.55,
+    );
+    let t = ((y - knee.1) / (ankle_y - knee.1)).clamp(0.0, 1.0);
+    let x = knee.0 + (hoof_x - knee.0) * t;
+    ((x, y), 17.5)
+}
+
 fn main() {
     let out: PathBuf = std::env::args()
         .nth(1)
@@ -994,29 +1137,46 @@ fn main() {
     let p = palette();
     let hoof = hex(0x3B302E);
     let far_hoof = hex(0x2F2725);
+    // Les pattes, coupées au carpe et au jarret : le bas d'abord (sous le haut).
+    let leg = |i: usize, wash: &Wash, hoof: Rgb| {
+        let (hip, hoof_x) = LEGS[i];
+        let front = i % 2 == 1;
+        let (joint, radius) = leg_joint(hip, hoof_x, front);
+        // Les articulations, à recopier dans `squelette.toml`.
+        println!("articulation {i} : [{:.0}, {:.0}]", joint.0, joint.1);
+        split_joint(&paint_leg(hip, hoof_x, wash, hoof), joint, radius)
+    };
+    let (arriere_loin, arriere_loin_bas) = leg(0, &p.far_leg, far_hoof);
+    let (avant_loin, avant_loin_bas) = leg(1, &p.far_leg, far_hoof);
+    let (arriere_pres, arriere_pres_bas) = leg(2, &p.leg, hoof);
+    let (avant_pres, avant_pres_bas) = leg(3, &p.leg, hoof);
+    // L'encolure (les boucles de l'avant de la toison) et deux mèches (des
+    // festons du ventre), peintes sous le corps.
+    let encolure = paint_neck(&p);
+    let (meche_1, corps) = split_lock(&paint_body(&p), LOCKS[0], 8.0);
+    let (meche_2, corps) = split_lock(&corps, LOCKS[1], 8.0);
+    let tete = paint_head(&p);
+    let levre = paint_lip(&tete);
     // Dans l'ordre où ils se posent, de l'arrière vers l'avant.
     let parts: Vec<(&str, Layer)> = vec![
-        (
-            "patte-arriere-loin",
-            paint_leg(LEGS[0].0, LEGS[0].1, &p.far_leg, far_hoof),
-        ),
-        (
-            "patte-avant-loin",
-            paint_leg(LEGS[1].0, LEGS[1].1, &p.far_leg, far_hoof),
-        ),
+        ("patte-arriere-loin-bas", arriere_loin_bas),
+        ("patte-arriere-loin", arriere_loin),
+        ("patte-avant-loin-bas", avant_loin_bas),
+        ("patte-avant-loin", avant_loin),
         ("queue", paint_tail(&p)),
-        (
-            "patte-arriere-pres",
-            paint_leg(LEGS[2].0, LEGS[2].1, &p.leg, hoof),
-        ),
-        (
-            "patte-avant-pres",
-            paint_leg(LEGS[3].0, LEGS[3].1, &p.leg, hoof),
-        ),
-        ("corps", paint_body(&p)),
+        ("patte-arriere-pres-bas", arriere_pres_bas),
+        ("patte-arriere-pres", arriere_pres),
+        ("patte-avant-pres-bas", avant_pres_bas),
+        ("patte-avant-pres", avant_pres),
+        ("encolure", encolure),
+        ("meche-1", meche_1),
+        ("meche-2", meche_2),
+        ("corps", corps),
         ("oreille-loin", paint_ear(&p, EAR_FAR.0, EAR_FAR.1, true)),
         ("machoire", paint_jaw(&p)),
-        ("tete", paint_head(&p)),
+        ("tete", tete),
+        ("gencive", paint_gum()),
+        ("levre", levre),
         ("oreille-pres", paint_ear(&p, EAR_NEAR.0, EAR_NEAR.1, false)),
         ("toupet", paint_topknot(&p)),
         ("oeil", paint_eye()),
@@ -1027,7 +1187,7 @@ fn main() {
     let mut preview = Layer::new();
     for (name, layer) in &parts {
         layer.save(&out.join(format!("{name}.png")));
-        if *name != "oeil-ferme" {
+        if !matches!(*name, "oeil-ferme" | "gencive") {
             preview.stack(layer);
         }
         println!("{name}.png");
