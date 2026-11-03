@@ -137,7 +137,7 @@ Les rapports croates sont des moyennes de brebis mesurées à la toise. Les autr
 | Tour de poitrine | 139 | 97 | [SRC] S18 |
 | Largeur de poitrine | 31 | 21 | [SRC] S18 |
 | Tour du canon | 12,8 | 9 | [SRC] S18 |
-| Longueur de la tête (nuque → bout du nez) | 30 à 34, **retenir 32** | 22,5 | [SRC] S18 donne 29 ; [EST] 33 à 36 sur P10 et P15 |
+| Longueur de la tête (nuque → bout du nez) | 30 à 34, **retenir 33,5** | 23,5 | [SRC] S18 donne 29 ; [EST] 33 à 36 sur P10 et P15 (le dessin, calé sur P10 et P15 : 0,335) |
 | Hauteur de la tête à l'angle de la mâchoire | 15 à 16 | 11 | [EST] P15 |
 | Largeur de la tête | 19 | 13 | [SRC] S18 |
 | Oreille, longueur | 14 à 16 | 10–11 | [EST] P16 (0,6 à 0,65 de la largeur de la tête, de face, raccourcie par la perspective) |
@@ -146,7 +146,7 @@ Les rapports croates sont des moyennes de brebis mesurées à la toise. Les autr
 | Carpe (genou) au-dessus du sol | 23 à 25 | 17 | [EST] P2, P10 |
 | Jarret au-dessus du sol | 28 à 32 | 21 | [EST] P10 (0,27), P2 (plus haut, terrain en pente) |
 | Grasset (genou de la patte arrière) au-dessus du sol | 55 à 58 | 40 | [EST] P10 |
-| Queue naturelle | 40 à 45 | 30 | [STD] « lunga, discendente al di sotto del garretto » (S1) ; [EST] P10, P19 |
+| Queue naturelle | 55 à 60 | 38 à 42 | [STD] « lunga, discendente al di sotto del garretto » (S1) ; [EST] P10, P19 : de son attache, à 63 cm du sol, jusqu'au jarret (corrigé au dessin : 30 cm ne descendaient pas jusqu'au jarret) |
 | Mamelle, profondeur visible de profil | 22 à 27 | 15–19 | [SRC] S20 (184 mm) ; [EST] 0,27 sur P10 |
 | Mamelle, longueur visible de profil | 15 à 20 | 10–14 | [EST] P10 |
 | Bas de la mamelle au-dessus du sol | 28 à 35 | 20–25 | [EST] P10 (0,29), P9 (0,38) : à hauteur du jarret, un peu au-dessus |
@@ -170,10 +170,10 @@ Les rapports croates sont des moyennes de brebis mesurées à la toise. Les autr
 - [STD] « Collo arrotondato senza tettole » (S1) : cou arrondi, **sans pendeloques** (ces deux appendices de peau sous la gorge qu'on voit chez certaines chèvres et brebis).
 - [SRC] « Un port de tête altier » et « un délicat décolleté qui vient prolonger une robe de laine très courte » (S13).
 - **Longueur.** [EST] De 40 à 45 % de H le long de la crête, du garrot à la nuque (P10, P17). L'encolure est **longue et fine**, plus longue que celle des races à viande. En toison pleine, la laine du haut du cou la raccourcit à l'œil (P2).
-- **Port au repos.** [EST] La crête monte à 30° environ au-dessus de l'horizontale ; l'axe du cou (milieu de la base → arrière de la tête) monte à **35 à 45°** (P10 : 40°). La nuque est donc nettement au-dessus du garrot, d'environ 0,25 à 0,3 H.
+- **Port au repos.** [EST] La crête monte à 30° environ au-dessus de l'horizontale ; l'axe du cou (milieu de la base → arrière de la tête) monte à **35 à 45°** (P10 : 40°). La nuque est donc nettement au-dessus du garrot, d'environ 0,2 H (une crête de 0,40 à 0,45 H à 30° ne monte que de 0,20 à 0,23 H ; sur P10, tête haute, 0,18 à 0,2 H).
 - **Port de la tête au repos.** [EST] Le chanfrein descend de **35 à 55°** sous l'horizontale. Une brebis attentive le tient vers 35° (P15) ; une brebis tranquille, plus près de 50 à 55° (P10).
 - **En broutant.** [EST] L'axe du cou descend à **35 à 50° sous l'horizontale** (P9, P1 à gauche). La tête est presque verticale, le bout du nez un peu en arrière de la nuque, et touche l'herbe au niveau des sabots antérieurs. Les antérieurs restent droits : le cou est assez long pour que la brebis broute sans plier les genoux ni écarter les pattes.
-- **Pour le moteur à deux segments :** la base du cou pivote au garrot (environ −45° à +45°). L'articulation tête-cou (atlas) donne le reste : de 35° sous l'horizontale au repos jusqu'à 90° en broutant.
+- **Pour le moteur à deux segments :** la base du cou pivote dans l'épaule, sous le garrot (pas au garrot même : la crête doit pouvoir descendre sans faire de bosse ; environ −45° à +45°). L'articulation tête-cou (atlas) donne le reste : de 35° sous l'horizontale au repos jusqu'à 90° en broutant.
 
 ### 2.6 Les articulations des pattes
 
@@ -199,7 +199,7 @@ Toutes ces valeurs sont des estimations sur photos [EST] (P1, P2, P7, P10) et su
 - [STD] « Testa fine leggermente lunga » (S1) ; « longue, fine » (S2).
 - [SRC] 20 cm pour une brebis de 68 cm en Croatie (S18), soit 0,29 H.
 - [EST] Sur les profils, de la nuque au bout du nez, je mesure 0,33 à 0,36 H (P10, P15), et 0,38 H sur P2 (perspective incertaine).
-- **Retenir 0,32 H, soit 22 à 23 cm.** La tête est **longue pour sa largeur** (20 sur 13 cm, rapport 1,55, S18) et l'œil est haut, au premier quart de la tête (§ 5). Ne pas la raccourcir en tête de dessin animé.
+- **Retenir 0,32 à 0,335 H, soit 22,5 à 23,5 cm** (le dessin prend 0,335 H, mesuré sur P10 et P15). La tête est **longue pour sa largeur** (20 sur 13 cm, rapport 1,55, S18) et l'œil est haut, au premier quart de la tête (§ 5). Ne pas la raccourcir en tête de dessin animé.
 
 ### 2.8 La queue
 
@@ -437,7 +437,7 @@ Valeurs échantillonnées sur les photos (moyenne d'un petit carré ; « lumièr
 
 ### 9.1 Les dix détails qui font « Lacaune »
 
-1. **Grande et haute sur pattes :** 70 à 80 cm au garrot (S1, S2). Sous le ventre, on voit près de la moitié de la hauteur (« longs membres », S13).
+1. **Grande et haute sur pattes :** 70 à 80 cm au garrot (S1, S2). Sous le ventre, on voit de 0,36 à 0,41 de la hauteur chez une brebis en lactation (P10 ; près de la moitié chez une brebis tarie : « longs membres », S13).
 2. **Tête longue, fine, busquée, toute blanche**, au poil ras **à reflet argenté** (S1, S2). Le busqué est régulier, la bosse devant les yeux.
 3. **Longues oreilles portées à l'horizontale** (S1, S2), roses dedans, qui sortent comme deux ailes.
 4. **Pas de cornes**, ni brebis ni bélier (S1, S2).
