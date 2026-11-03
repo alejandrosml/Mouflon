@@ -518,10 +518,14 @@ pub enum Gesture {
     /// Invite un autre à jouer : tête et avant baissés, il le fixe en
     /// sautillant sur place.
     Invite,
+    /// Le flehmen du bélier : l'encolure tendue, la tête relevée, la lèvre
+    /// supérieure retroussée, il hume quelques secondes (après avoir flairé
+    /// une brebis).
+    Flehmen,
 }
 
 impl Gesture {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Shake,
         Self::Stretch,
         Self::Paw,
@@ -534,6 +538,7 @@ impl Gesture {
         Self::Scratch,
         Self::Rear,
         Self::Invite,
+        Self::Flehmen,
     ];
 
     /// Son nom dans un `pet.toml` (`motion = "shake"`…).
@@ -552,6 +557,7 @@ impl Gesture {
             Self::Scratch => "scratch",
             Self::Rear => "rear",
             Self::Invite => "invite",
+            Self::Flehmen => "flehmen",
         }
     }
 

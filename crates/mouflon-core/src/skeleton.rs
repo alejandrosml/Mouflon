@@ -48,6 +48,19 @@ pub enum BoneRole {
     /// La mâchoire du bas : elle s'ouvre autour de son articulation (la
     /// charnière, près de la joue) quand il mâche, bêle ou bâille.
     Jaw,
+    /// L'encolure, entre le corps et la tête (la tête est son enfant) : elle
+    /// tourne autour de sa base, devant le garrot ; pour brouter, c'est
+    /// surtout elle qui descend.
+    Neck,
+    /// Le bas d'une patte (enfant de sa patte) : le canon et le sabot, qui
+    /// plient au carpe (devant) ou au jarret (derrière), son articulation.
+    LegLower { front: bool, near: bool },
+    /// La lèvre supérieure (enfant de la tête) : elle se retrousse pour le
+    /// flehmen, autour de son articulation, sous le naseau.
+    Lip,
+    /// Une mèche de la toison : elle suit le corps avec un ressort amorti.
+    /// Plusieurs os `sway` : les suivants traînent un peu plus.
+    Sway,
 }
 
 impl BoneRole {
@@ -60,6 +73,25 @@ impl BoneRole {
             "eye" => Self::Eye,
             "pupil" => Self::Pupil,
             "jaw" => Self::Jaw,
+            "neck" => Self::Neck,
+            "lip" => Self::Lip,
+            "sway" => Self::Sway,
+            "leg-front-near-lower" => Self::LegLower {
+                front: true,
+                near: true,
+            },
+            "leg-front-far-lower" => Self::LegLower {
+                front: true,
+                near: false,
+            },
+            "leg-back-near-lower" => Self::LegLower {
+                front: false,
+                near: true,
+            },
+            "leg-back-far-lower" => Self::LegLower {
+                front: false,
+                near: false,
+            },
             "leg-front-near" => Self::Leg {
                 front: true,
                 near: true,
@@ -280,6 +312,9 @@ pub struct Skeleton {
     pub size: Vec2,
     /// Où les pattes touchent le sol, dans la toile.
     pub ground: Vec2,
+    /// Ce qui touche l'herbe quand il broute (le bout du museau, sous les
+    /// naseaux), s'il est donné ; sinon, le moteur le devine d'après la tête.
+    pub muzzle: Option<Vec2>,
     /// Les os, chaque parent avant ses enfants.
     pub bones: Vec<Bone>,
     /// Les morceaux, de l'arrière vers l'avant.
@@ -302,6 +337,7 @@ impl Skeleton {
 struct SkeletonToml {
     size: [f32; 2],
     ground: [f32; 2],
+    muzzle: Option<[f32; 2]>,
     #[serde(default, rename = "bone")]
     bones: Vec<BoneToml>,
     #[serde(default, rename = "piece")]
@@ -405,8 +441,9 @@ pub fn parse_skeleton(
             None => None,
             Some(r) => Some(BoneRole::parse(r).ok_or_else(|| {
                 bad(format!(
-                    "rôle inconnu « {r} » (body, head, ear, tail, eye, pupil, \
-                     leg-front-near, leg-front-far, leg-back-near, leg-back-far)"
+                    "rôle inconnu « {r} » (body, neck, head, ear, tail, eye, pupil, \
+                     jaw, lip, sway, leg-front-near, leg-front-far, leg-back-near, \
+                     leg-back-far, et leurs bas : leg-front-near-lower…)"
                 ))
             })?),
         };
@@ -543,6 +580,7 @@ pub fn parse_skeleton(
     Ok(Skeleton {
         size: Vec2::new(file.size[0], file.size[1]),
         ground: Vec2::new(file.ground[0], file.ground[1]),
+        muzzle: file.muzzle.map(|[x, y]| Vec2::new(x, y)),
         bones,
         pieces,
         clips,

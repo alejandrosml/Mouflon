@@ -84,6 +84,11 @@ const GRAZE_STEP_SPEED: f32 = 0.4;
 /// mastication et 10 à 15 s de pause, raccourcies ici).
 const BOLUS_CHEW: (f32, f32) = (9.0, 16.0);
 const BOLUS_PAUSE: (f32, f32) = (1.6, 3.0);
+/// La toison : les mèches sont des ressorts amortis (Hz), plus lents que la
+/// queue ; elles traînent de tant de radians par point par seconde de vitesse.
+const FLEECE_HZ: f32 = 2.0;
+const FLEECE_TIP_HZ: f32 = 1.6;
+const FLEECE_DRAG: f32 = 0.0016;
 /// L'horloge d'un animal (voir [`PoseSignals::clock`]) repart de zéro toutes
 /// les heures : elle garde sa précision.
 pub const CLOCK_LOOP: f32 = 3600.0;
@@ -346,6 +351,12 @@ pub struct PoseSignals {
     pub sleep_low: f32,
     /// Une patte qui tressaille dans le sommeil (0–1, retombe aussitôt).
     pub twitch: f32,
+    /// La toison qui bouge (radians, positif : les mèches partent vers
+    /// l'arrière) : elle traîne quand il court, se balance à chaque pas,
+    /// penche dans le vent. Les mèches du bout (`fleece_tip`, par rapport
+    /// aux premières) suivent avec un temps de retard.
+    pub fleece: f32,
+    pub fleece_tip: f32,
 }
 
 impl PoseSignals {
@@ -489,6 +500,9 @@ struct Anim {
     sleep_low: f32,
     sleep_low_target: f32,
     twitch: f32,
+    /// La toison : les premières mèches, puis celles du bout.
+    fleece: Spring,
+    fleece_tip: Spring,
 }
 
 impl Anim {
@@ -551,6 +565,8 @@ impl Anim {
             sleep_low: 0.0,
             sleep_low_target: 0.0,
             twitch: 0.0,
+            fleece: Spring::new(FLEECE_HZ, 0.28),
+            fleece_tip: Spring::new(FLEECE_TIP_HZ, 0.32),
         }
         .with_clock()
     }
@@ -643,6 +659,8 @@ fn step_mouth(a: &mut Anim, chewing: bool, rng: &mut Rng, dt: f32) {
         Some(Gesture::Bleat) => {
             a.gesture_amount * (0.6 + 0.08 * (a.gesture_time * TAU * 5.5).sin())
         }
+        // Le flehmen : la bouche entrouverte, sous la lèvre retroussée.
+        Some(Gesture::Flehmen) => a.gesture_amount * 0.14 * smoothstep(0.2, 0.7, a.gesture_time),
         _ => 0.0,
     };
     let target = chew.max(voice).max(gesture);
@@ -2846,6 +2864,15 @@ impl Pet {
         a.tail_mid.step(dt);
         a.tail_tip.target = a.tail_mid.value;
         a.tail_tip.step(dt);
+        // La toison : les mèches traînent avec la vitesse (la résistance de
+        // l'air), suivent l'élan du corps et le vent, et sautillent à chaque
+        // appui ; celles du bout suivent les premières avec un temps de retard.
+        let bounce = (0.04 * a.walk + 0.05 * a.trot + 0.07 * a.run) * (2.0 * a.gait_phase).sin();
+        a.fleece.target =
+            (along * FLEECE_DRAG).clamp(-0.35, 0.35) + (inertia * 0.0002).clamp(-0.4, 0.4) + bounce;
+        a.fleece.step(dt);
+        a.fleece_tip.target = a.fleece.value;
+        a.fleece_tip.step(dt);
 
         // Balancement dans le repère de l'écran : tiré vers la droite, le corps
         // reste en arrière, à gauche (rotation positive, y vers le bas).
@@ -3250,6 +3277,8 @@ impl Pet {
                 twist: a.twist,
                 sleep_low: a.sleep_low,
                 twitch: a.twitch,
+                fleece: a.fleece.value,
+                fleece_tip: a.fleece_tip.value - a.fleece.value,
             },
             shadow: self.shadow,
             sprite_frame,

@@ -399,7 +399,18 @@ next = [
     { to = "walk", weight = 2 },
     { to = "graze", weight = 1 },
     { to = "bleat", weight = 1 },
+    { to = "flehmen", weight = 1 },
+    { to = "flehmen", weight = 2, when = "rowdy" },
 ]
+
+# Le flehmen : après avoir flairé un autre mouton, l'encolure tendue, la
+# tête relevée, la lèvre supérieure retroussée, il hume quelques secondes
+# (le bélier en rut, surtout ; un énervé plus souvent).
+[[behavior]]
+name = "flehmen"
+motion = "flehmen"
+duration = [6.0, 10.0]   # 7 à 19 s chez le bélier (Bahadi 2023), raccourci pour un bureau
+next = [{ to = "stand", weight = 2 }, { to = "walk", weight = 2 }, { to = "bleat", weight = 1 }]
 
 # Tape du pied, tête haute : l'alarme des moutons.
 [[behavior]]

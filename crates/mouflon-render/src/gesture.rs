@@ -45,6 +45,16 @@ pub(crate) struct Gesturing {
     /// en l'air, les pattes de derrière restant à leur place (voir
     /// [`rearing`]).
     pub rear: f64,
+    /// Pour les pattes en deux segments : de combien le carpe ou le jarret
+    /// plie en plus de ce que demande la place du sabot (radians ; négatif :
+    /// la patte se tend).
+    pub folds: [f64; 4],
+    /// La lèvre supérieure retroussée (0 à 1) : le flehmen.
+    pub lip: f64,
+    /// Les mèches de la toison, en plus de ce que fait le moteur (radians) :
+    /// les premières, puis celles du bout.
+    pub fleece: f64,
+    pub fleece_tip: f64,
 }
 
 /// De combien un animal cabré se dresse (radians) : le bélier qui se dresse
@@ -117,6 +127,9 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             g.body_squash = 0.05 * swell * (w * t - 1.3).sin();
             g.ear = 1.1 * swell * (w * t - 0.4).sin();
             g.tail = 0.9 * swell * (w * t - 1.8).sin();
+            // Les mèches suivent la secousse, avec un temps de retard.
+            g.fleece = 0.45 * swell * (w * t - 1.6).sin();
+            g.fleece_tip = 0.45 * swell * (w * t - 2.5).sin();
             g.eyes = 0.75 * a;
             // Pattes un peu écartées pour tenir debout.
             g.legs = [
@@ -143,20 +156,25 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             g.legs[leg_slot(true, false)] = (-0.34 * neck, 0.0);
             g.legs[leg_slot(false, true)] = (1.05 * hind, 4.0 * hind);
             g.legs[leg_slot(false, false)] = (0.1 * neck, 0.0);
+            // La patte arrière tendue loin derrière, le jarret ouvert.
+            g.folds[leg_slot(false, true)] = -0.9 * hind;
             g.tail = -0.3 * hind;
         }
         Gesture::Paw => {
             // Une patte de devant gratte le sol : levée et lancée en avant,
             // puis tirée en arrière, le sabot raclant le sol ; tête basse.
             let p = (t / 0.55).fract();
-            let (angle, lift) = if p < 0.35 {
+            let (angle, lift, fold) = if p < 0.35 {
                 let s = p / 0.35;
-                (0.45 - 1.0 * smooth(0.0, 1.0, s), 6.0 * (PI * s).sin())
+                let up = (PI * s).sin();
+                (0.45 - 1.0 * smooth(0.0, 1.0, s), 6.0 * up, 0.8 * up)
             } else {
                 let s = (p - 0.35) / 0.65;
-                (-0.55 + 1.0 * smooth(0.0, 1.0, s), 0.0)
+                (-0.55 + 1.0 * smooth(0.0, 1.0, s), 0.0, 0.0)
             };
             g.legs[leg_slot(true, true)] = (angle * a, lift * a);
+            // Levé, le carpe se plie ; il racle le sol la patte tendue.
+            g.folds[leg_slot(true, true)] = fold * a;
             g.head_angle = 0.38 * a;
             g.head_shift = Vec2::new(0.8 * a, 2.0 * a);
             g.ears_back = 0.45 * a;
@@ -170,6 +188,7 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             let p = (t / 0.45).fract();
             let lift = 7.0 * smooth(0.0, 0.5, p) * (1.0 - smooth(0.58, 0.64, p));
             g.legs[leg_slot(true, true)] = (-0.3 * a * lift / 7.0, lift * a);
+            g.folds[leg_slot(true, true)] = 0.7 * a * lift / 7.0;
             g.head_angle = -0.2 * a;
             g.head_shift = Vec2::new(0.8 * a, -1.4 * a);
             g.ears_back = -0.8 * a;
@@ -242,6 +261,9 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
                 (0.0, 0.0),
                 (0.0, 0.0),
             ];
+            // Les antérieurs repliés : le carpe plié, le canon contre l'avant-bras.
+            g.folds[leg_slot(true, true)] = 1.5 * up + 0.3 * paddle;
+            g.folds[leg_slot(true, false)] = 1.3 * up - 0.3 * paddle;
             g.tail = -0.3 * up;
         }
         Gesture::Invite => {
@@ -274,6 +296,7 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
                 6.0 * reach + 1.8 * reach * stroke,
             );
             g.legs[leg_slot(false, false)] = (-0.06 * reach, 0.0);
+            g.folds[leg_slot(false, true)] = 0.5 * reach;
             g.head_angle = 0.22 * reach;
             g.head_shift = Vec2::new(-1.2 * reach, 1.8 * reach);
             g.body_angle = -0.02 * reach;
@@ -289,9 +312,26 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             g.ears_back = 0.15 * a;
             g.eyes = 0.2 * a;
         }
+        Gesture::Flehmen => {
+            // L'encolure se tend vers l'avant et le haut, la tête se relève
+            // (le nez au ciel), puis la lèvre supérieure se retrousse ; les
+            // yeux mi-clos, il hume, la tête qui balance à peine.
+            let up = a * smooth(0.0, 0.7, t);
+            let curl = a * smooth(0.35, 1.0, t);
+            g.head_angle = -FLEHMEN_HEAD * up + 0.03 * up * (t * TAU * 0.4).sin();
+            g.head_shift = Vec2::new(3.0 * up, -4.0 * up);
+            g.lip = curl;
+            g.eyes = 0.5 * up;
+            g.ears_back = 0.35 * up;
+            g.body_angle = -0.02 * up;
+        }
     }
     g
 }
+
+/// De combien la tête se relève pour le flehmen (radians) : le nez pointe
+/// vers le haut, bien au-dessus de l'horizontale.
+pub(crate) const FLEHMEN_HEAD: f64 = 0.75;
 
 /// La posture de l'humeur ou de l'élan, ajoutée au geste : tête basse,
 /// oreilles couchées ou dressées ; en l'air, pattes raides et tête secouée
@@ -319,6 +359,10 @@ pub(crate) fn with_posture(mut g: Gesturing, s: &PoseSignals) -> Gesturing {
         g.legs[leg_slot(false, true)].0 += 0.7 * twist;
         g.legs[leg_slot(false, false)].0 += 0.55 * twist;
         g.legs[leg_slot(true, true)].0 -= 0.35 * twist;
+        // Il rue les pattes tendues, et replie celles de devant.
+        g.folds[leg_slot(false, true)] -= 1.2 * twist;
+        g.folds[leg_slot(false, false)] -= 1.0 * twist;
+        g.folds[leg_slot(true, true)] += 0.6 * twist;
         g.tail += 0.5 * twist * w;
     }
     // Une patte qui tressaille dans le sommeil.

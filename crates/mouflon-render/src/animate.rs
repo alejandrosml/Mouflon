@@ -9,8 +9,9 @@ use std::f64::consts::PI;
 
 use mouflon_core::{PoseSignals, RUN_STRIDE};
 
-use crate::gesture::{ears_turn, gesturing, leg_slot, rearing, with_posture};
-use peniko::kurbo::{Affine, Point, Vec2};
+use crate::gesture::{Gesturing, ears_turn, gesturing, leg_slot, rearing, with_posture};
+use crate::joints::{Chain, HeadIntent, LegDrive, LegRest, NeckDrive, NeckRest};
+use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
 use crate::rig::{Part, Rig};
 
@@ -329,7 +330,12 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
 
     // Le corps monte et descend à chaque appui ; au galop, il se balance
     // aussi d'avant en arrière.
-    let bob = gait.bob(phase, u) + act.body_shift.y * u;
+    // Des pattes en deux segments amortissent l'atterrissage : le corps
+    // descend, les genoux plient.
+    let segmented = Part::LEGS
+        .iter()
+        .any(|leg| leg.lower().is_some_and(|lower| rig.has_part(lower)));
+    let bob = gait.bob(phase, u) + act.body_shift.y * u + absorb(segmented, landing, h);
     let rock = gait.pitch(phase, u, 2.0 * half_length);
 
     let mut parts = [Affine::IDENTITY; Part::ALL.len()];
@@ -357,6 +363,12 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             + sleep * h * 0.06
             + act.head_shift.y * u,
     );
+    // Ce que le moteur veut de la tête d'une pièce, avant de la poser au sol
+    // (pour brouter, pour dormir) : l'encolure le reprend s'il y en a une.
+    let intent = HeadIntent {
+        angle: head_angle,
+        shift: head_shift,
+    };
     let low = f(s.sleep_low);
     if low > 0.0 && rig.has_part(Part::Head) {
         // Endormi la tête au sol, le cou tendu : la tête ne pend plus comme
@@ -495,6 +507,71 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
             * scale_about(hip, 1.0, stretch);
     }
 
+    // --- Les articulations (encolure, bas des pattes, lèvre, mèches de la
+    // toison) : un dessin qui n'en a pas bouge exactement comme avant.
+    let body_t = parts[Part::Body.index()];
+    if rig.has_part(Part::Neck) && rig.has_part(Part::Head) {
+        let rest = neck_rest(rig);
+        let drive = NeckDrive {
+            base: body_t * rest.base,
+            intent,
+            alert: (-f(s.ears_back)).clamp(0.0, 1.0) * (1.0 - graze) * (1.0 - sit),
+            charge: f(s.head_low).clamp(0.0, 1.0),
+            doze: sleep * (1.0 - low),
+            graze,
+            nibble: f(s.nibble),
+            graze_at: Point::new(fore_hoof(rig).x, g.y - 0.3 * u),
+            sleep_low: low,
+            ground: g.y,
+            u,
+            squash: act.head_squash,
+        };
+        let neck = rest.pose(&drive);
+        parts[Part::Neck.index()] = neck.neck;
+        parts[Part::Head.index()] = neck.neck.inverse() * neck.head;
+        parts[Part::Pupils.index()] = Affine::translate((look.x * u * 2.6, look.y * u * 2.0))
+            * rotate_about(
+                rig.pivot(Part::Pupils),
+                level_pupils(s, facing, neck.head_angle),
+            );
+    }
+    let legs = LegDrive {
+        gait,
+        phase,
+        duty,
+        stride,
+        u,
+        ground: g.y,
+        air,
+        tuck,
+        reach,
+        loose,
+        dangle,
+        swing: f(s.swing),
+        splay,
+        front_down,
+        back_down,
+        act,
+        untilt: untilt(s, g, h),
+    };
+    for leg in Part::LEGS {
+        if let Some(rest) = leg_rest(rig, leg) {
+            let (upper, lower) = legs.pose(&rest, body_t * rest.chain.root);
+            parts[leg.index()] = upper;
+            if let Some(part) = leg.lower() {
+                parts[part.index()] = lower;
+            }
+        }
+    }
+    if rig.has_part(Part::Lip) {
+        parts[Part::Lip.index()] = rotate_about(rig.pivot(Part::Lip), -LIP_CURL * act.lip);
+    }
+    for (k, part) in Part::SWAYS.into_iter().enumerate() {
+        if rig.has_part(part) {
+            parts[part.index()] = rotate_about(rig.pivot(part), sway(s, &act, facing, k));
+        }
+    }
+
     // Cabré : tout l'animal tourne autour de ses hanches, sauf les pattes
     // de derrière, qui restent où elles sont.
     let mut root = root;
@@ -508,7 +585,143 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
         }
     }
 
+    // Des parties rangées autrement que le dit le contrat (la tête dans le
+    // corps, par exemple) : chacune est ramenée à celle qui la contient.
+    if !rig.follows_contract() {
+        to_document_nesting(rig, &mut parts);
+    }
+
     PoseTransforms { root, parts }
+}
+
+/// Défait l'inclinaison de l'élan (celle de [`root_transform`]) pour un sabot
+/// posé au sol ; en l'air ou tenu, les pattes suivent le corps.
+pub(crate) fn untilt(s: &PoseSignals, g: Point, h: f64) -> Affine {
+    let f = |v: f32| f64::from(v);
+    let grounded = (1.0 - f(s.air)) * (1.0 - f(s.dangle));
+    rotate_about(Point::new(g.x, g.y - h * 0.45), -f(s.lean) * 0.6 * grounded)
+}
+
+/// De combien le corps descend à l'atterrissage, sur des pattes en deux
+/// segments qui amortissent (rien sur des pattes d'une pièce : le dessin
+/// s'écrase seulement).
+pub(crate) fn absorb(segmented: bool, landing: f64, h: f64) -> f64 {
+    if segmented {
+        ABSORB * h * (landing.max(0.0) / 0.16)
+    } else {
+        0.0
+    }
+}
+
+/// À l'atterrissage le plus rude, le corps descend de tant de fois la
+/// hauteur de l'animal.
+const ABSORB: f64 = 0.05;
+
+/// De combien la lèvre supérieure se retrousse (radians) : le flehmen.
+pub(crate) const LIP_CURL: f64 = 0.95;
+
+/// L'angle de la `k`-ième mèche de la toison (0 : les premières, 2 : celles
+/// du bout), dans le repère du corps : ce que donne le moteur (elles
+/// traînent, se balancent, penchent dans le vent), la secousse d'un geste,
+/// et, tenu en l'air, elles pendent vers le sol.
+pub(crate) fn sway(s: &PoseSignals, act: &Gesturing, facing: f32, k: usize) -> f64 {
+    let f = |v: f32| f64::from(v);
+    let w = k as f64 * 0.5;
+    let first = f(s.fleece) + act.fleece;
+    let tip = f(s.fleece) + f(s.fleece_tip) + act.fleece_tip;
+    let hang = -0.7 * f(s.local_swing(facing));
+    ((1.0 - w) * first + w * tip) * (1.0 + 0.3 * w) + hang
+}
+
+/// L'encolure au repos : sa base, la nuque, ce qui touche l'herbe.
+fn neck_rest(rig: &Rig) -> NeckRest {
+    let head = rig.part_bounds(Part::Head);
+    NeckRest {
+        base: rig.pivot(Part::Neck),
+        poll: rig.pivot(Part::Head),
+        muzzle: rig.muzzle.unwrap_or_else(|| muzzle_of(head)),
+        head,
+    }
+}
+
+/// Ce qui touche l'herbe, faute de `pivot-muzzle` : près du coin du bas et
+/// de l'avant de la tête.
+pub(crate) fn muzzle_of(head: Rect) -> Point {
+    Point::new(
+        head.max_x() - head.width() * 0.08,
+        head.max_y() - head.height() * 0.12,
+    )
+}
+
+/// Le sabot de l'antérieur qu'on voit, au repos.
+fn fore_hoof(rig: &Rig) -> Point {
+    let part = if rig.has_part(Part::LegFrontNearLower) {
+        Part::LegFrontNearLower
+    } else {
+        Part::LegFrontNear
+    };
+    if rig.has_part(part) {
+        let b = rig.part_bounds(part);
+        Point::new(b.center().x, b.max_y())
+    } else {
+        Point::new(rig.ground.x + rig.bounds.height() * 0.3, rig.ground.y)
+    }
+}
+
+/// Une patte en deux segments, si le dessin en a une.
+fn leg_rest(rig: &Rig, leg: Part) -> Option<LegRest> {
+    let lower = leg.lower()?;
+    if !(rig.has_part(leg) && rig.has_part(lower)) {
+        return None;
+    }
+    let b = rig.part_bounds(lower);
+    Some(LegRest {
+        chain: Chain {
+            root: rig.pivot(leg),
+            joint: rig.pivot(lower),
+            tip: Point::new(b.center().x, b.max_y()),
+        },
+        front: matches!(leg, Part::LegFrontNear | Part::LegFrontFar),
+        near: matches!(leg, Part::LegFrontNear | Part::LegBackNear),
+        half_width: b.width() * 0.4,
+    })
+}
+
+/// Les transformations sont calculées pour les parties rangées comme le dit
+/// le contrat ([`Part::contract_parent`]) ; celles du dessin sont rangées
+/// autrement : chacune est ramenée à la partie qui la contient vraiment.
+fn to_document_nesting(rig: &Rig, parts: &mut [Affine; Part::ALL.len()]) {
+    let neck = rig.has_part(Part::Neck);
+    let mut free = [None; Part::ALL.len()];
+    fn free_of(
+        part: Part,
+        neck: bool,
+        parts: &[Affine; Part::ALL.len()],
+        free: &mut [Option<Affine>; Part::ALL.len()],
+    ) -> Affine {
+        if let Some(t) = free[part.index()] {
+            return t;
+        }
+        let parent = part
+            .contract_parent(neck)
+            .map_or(Affine::IDENTITY, |p| free_of(p, neck, parts, free));
+        let t = parent * parts[part.index()];
+        free[part.index()] = Some(t);
+        t
+    }
+    let all: Vec<Affine> = Part::ALL
+        .into_iter()
+        .map(|p| free_of(p, neck, parts, &mut free))
+        .collect();
+    for part in Part::ALL {
+        if !rig.has_part(part) {
+            continue;
+        }
+        let parent = rig
+            .parent(part)
+            .map_or(Affine::IDENTITY, |p| all[p.index()]);
+        parts[part.index()] = parent.inverse() * all[part.index()];
+    }
 }
 
 /// Les hanches : le milieu des articulations des pattes de derrière (à

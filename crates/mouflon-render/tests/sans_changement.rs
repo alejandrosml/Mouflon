@@ -191,7 +191,8 @@ fn cases() -> Vec<(String, PoseSignals, f32)> {
         ("culbute", PoseSignals { roll: 1.2, ..base }),
     ];
     out.extend(more.into_iter().map(|(n, s)| (n.to_owned(), s, 1.0)));
-    for gesture in Gesture::ALL {
+    // Les gestes d'avant les nouvelles articulations.
+    for gesture in Gesture::ALL.into_iter().filter(|g| *g != Gesture::Flehmen) {
         for time in [0.3_f32, 0.9, 1.7] {
             out.push((
                 format!("{}-{time}", gesture.name()),

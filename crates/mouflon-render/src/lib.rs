@@ -20,6 +20,7 @@ pub mod bc7;
 pub mod cache;
 pub mod display;
 mod gesture;
+mod joints;
 pub mod paint;
 pub mod pieces;
 pub mod props;

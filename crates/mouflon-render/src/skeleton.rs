@@ -19,10 +19,12 @@ use mouflon_core::{BonePose, BoneRole, PoseSignals, Shown, Skeleton};
 use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
 use crate::animate::{
-    Gait, about, ease, leg_phase, root_transform, rotate_about, scale_about, stepping, stride_scale,
+    Gait, LIP_CURL, about, absorb, ease, leg_phase, muzzle_of, root_transform, rotate_about,
+    scale_about, stepping, stride_scale, sway, untilt,
 };
 use crate::display::{Bitmap, Command, DisplayList};
 use crate::gesture::{Gesturing, ears_turn, gesturing, leg_slot, with_posture};
+use crate::joints::{Chain, HeadIntent, LegDrive, LegRest, NeckDrive, NeckPose, NeckRest};
 use crate::sprites::{SpriteError, coverage, decode_png_rgba};
 
 /// Pixels d'image par point affiché : deux (écrans Retina), et un quart de
@@ -66,6 +68,13 @@ pub struct SkeletonArt {
     /// droite de la toile), -1 vers l'arrière ; elle tombe en tournant de
     /// ce côté-là.
     side: Vec<f64>,
+    /// L'encolure et la tête qu'elle porte, s'il y en a une.
+    neck: Option<NeckRest>,
+    /// Les pattes en deux segments (voir [`leg_slot`]) : l'os du haut, celui
+    /// du bas, la chaîne au repos.
+    legs: [Option<(usize, usize, LegRest)>; 4],
+    /// Le sabot de l'antérieur qu'on voit, au repos.
+    fore_hoof: Point,
 }
 
 /// Les transformations d'une image.
@@ -263,6 +272,74 @@ impl SkeletonArt {
             })
             .collect();
         let painted_lids = skeleton.pieces.iter().any(|p| p.shown == Shown::EyesClosed);
+        let at = |i: usize| {
+            let a = skeleton.bones[i].at;
+            Point::new(f64::from(a.x), f64::from(a.y))
+        };
+        let with_role =
+            |wanted: BoneRole| skeleton.bones.iter().position(|b| b.role == Some(wanted));
+        // L'encolure : son os, et la tête, son enfant.
+        let neck = with_role(BoneRole::Neck).and_then(|n| {
+            let head = with_role(BoneRole::Head)?;
+            let rect = carried[head]?;
+            Some(NeckRest {
+                base: at(n),
+                poll: at(head),
+                muzzle: skeleton.muzzle.map_or_else(
+                    || muzzle_of(rect),
+                    |m| Point::new(f64::from(m.x), f64::from(m.y)),
+                ),
+                head: rect,
+            })
+        });
+        // Les pattes en deux segments : chaque bas de patte, enfant de sa patte.
+        let mut legs = [None; 4];
+        let mut fore_hoof = None;
+        for (i, bone) in skeleton.bones.iter().enumerate() {
+            let Some(BoneRole::LegLower { front, near }) = bone.role else {
+                continue;
+            };
+            let Some(upper) = bone.parent else {
+                continue;
+            };
+            if skeleton.bones[upper].role != Some(BoneRole::Leg { front, near }) {
+                continue;
+            }
+            let Some(rect) = carried[i] else {
+                continue;
+            };
+            let tip = Point::new(rect.center().x, rect.max_y());
+            if front && near {
+                fore_hoof = Some(tip);
+            }
+            legs[leg_slot(front, near)] = Some((
+                upper,
+                i,
+                LegRest {
+                    chain: Chain {
+                        root: at(upper),
+                        joint: at(i),
+                        tip,
+                    },
+                    front,
+                    near,
+                    half_width: rect.width() * 0.4,
+                },
+            ));
+        }
+        let fore_hoof = fore_hoof
+            .or_else(|| {
+                let leg = with_role(BoneRole::Leg {
+                    front: true,
+                    near: true,
+                })?;
+                let rect = carried[leg]?;
+                Some(Point::new(rect.center().x, rect.max_y()))
+            })
+            .unwrap_or(Point::new(
+                bounds.center().x + bounds.height() * 0.3,
+                f64::from(skeleton.ground.y),
+            ));
         Ok(Self {
             skeleton,
             pieces,
@@ -272,6 +349,9 @@ impl SkeletonArt {
             painted_lids,
             rank,
             side,
+            neck,
+            legs,
+            fore_hoof,
         })
     }
 
@@ -438,7 +518,9 @@ impl SkeletonArt {
         let drop_back = clearance * back_down;
         let half_length = (body.width() * 0.5).max(u);
         let pitch = ((drop_front - drop_back) / (2.0 * half_length)).atan();
-        let bob = gait.bob(phase, u) + act.body_shift.y * u;
+        let segmented = self.legs.iter().any(Option::is_some);
+        let landing = f(s.squash).clamp(-0.15, 0.16);
+        let bob = gait.bob(phase, u) + act.body_shift.y * u + absorb(segmented, landing, h);
         let rock = gait.pitch(phase, u, 2.0 * half_length);
         let body_t =
             Affine::translate((act.body_shift.x * u, bob + 0.5 * (drop_front + drop_back)))
@@ -452,7 +534,7 @@ impl SkeletonArt {
         let rise = f(s.rise);
         // Un agneau qui saute garde les pattes raides.
         let loose = 1.0 - f(s.stiff);
-        Engine {
+        let mut engine = Engine {
             signals: *p,
             all: *s,
             facing,
@@ -475,7 +557,57 @@ impl SkeletonArt {
             splay: f(s.squash).clamp(-0.15, 0.16).max(0.0) * 3.0,
             front_down,
             back_down,
+            neck: None,
+            legs: [None; 4],
+        };
+        // Les articulations : l'encolure, et les pattes en deux segments.
+        if let Some(rest) = &self.neck {
+            let intent = engine.head_base();
+            let sleep_low = f(s.sleep_low);
+            let drive = NeckDrive {
+                base: body_t * rest.base,
+                intent: HeadIntent {
+                    angle: intent.0,
+                    shift: intent.1,
+                },
+                alert: (-f(s.ears_back)).clamp(0.0, 1.0) * (1.0 - graze) * (1.0 - sit),
+                charge: f(s.head_low).clamp(0.0, 1.0),
+                doze: sleep * (1.0 - sleep_low),
+                graze,
+                nibble: f(p.nibble),
+                graze_at: Point::new(self.fore_hoof.x, g.y - 0.3 * u),
+                sleep_low,
+                ground: g.y,
+                u,
+                squash: engine.act.head_squash,
+            };
+            engine.neck = Some(rest.pose(&drive));
         }
+        let drive = LegDrive {
+            gait: engine.gait,
+            phase,
+            duty,
+            stride: engine.stride,
+            u,
+            ground: g.y,
+            air,
+            tuck: engine.tuck,
+            reach: engine.reach,
+            loose,
+            dangle: f(p.dangle),
+            swing: f(s.swing),
+            splay: engine.splay,
+            front_down,
+            back_down,
+            act: engine.act,
+            untilt: untilt(s, g, h),
+        };
+        for (slot, leg) in self.legs.iter().enumerate() {
+            if let Some((_, _, rest)) = leg {
+                engine.legs[slot] = Some(drive.pose(rest, body_t * rest.chain.root));
+            }
+        }
+        engine
     }
 }
 
@@ -509,9 +641,42 @@ struct Engine {
     splay: f64,
     front_down: f64,
     back_down: f64,
+    /// L'encolure et la tête, s'il y a une encolure.
+    neck: Option<NeckPose>,
+    /// Les pattes en deux segments : le haut, libre dans la toile, et le bas,
+    /// dans le repère du haut.
+    legs: [Option<(Affine, Affine)>; 4],
 }
 
 impl Engine {
+    /// Ce que le moteur veut de la tête d'une pièce, avant de la poser au
+    /// sol pour brouter ou pour dormir : sa rotation et son déplacement.
+    fn head_base(&self) -> (f64, Vec2) {
+        let f = |v: f32| f64::from(v);
+        let (p, s) = (&self.signals, &self.all);
+        let (sleep, air, dangle) = (f(p.sleep), f(p.air), f(p.dangle));
+        let look = Vec2::new(f(s.look.x), f(s.look.y));
+        let u = self.u;
+        let rise = f(s.rise);
+        let act = &self.act;
+        let angle =
+            look.y * 0.16 + 0.42 * sleep - 0.06 * air + f(s.lean) * 0.3 + self.gait.nod(self.phase)
+                - 0.12 * dangle
+                - 0.12 * air * ease(0.0, 1.0, rise)
+                + 0.1 * air * ease(0.0, 1.0, -rise)
+                + act.head_angle;
+        let shift = Vec2::new(
+            look.x * u * 1.4 + (act.head_shift.x + act.body_shift.x) * u,
+            look.y * u
+                + self.bob * 1.15
+                + self.gait.head_bob(self.phase, u)
+                + self.drop_front
+                + sleep * self.h * 0.06
+                + act.head_shift.y * u,
+        );
+        (angle, shift)
+    }
+
     /// Où le moteur met l'os `index` (articulation `at`, `rank`-ième de son
     /// rôle), libre dans la toile ; `parent` : où est son parent.
     fn bone(
@@ -532,24 +697,11 @@ impl Engine {
         match role {
             BoneRole::Body => self.body_t,
             BoneRole::Head => {
-                let rise = f(s.rise);
+                if let Some(neck) = &self.neck {
+                    return neck.head;
+                }
                 let act = &self.act;
-                let mut angle = look.y * 0.16 + 0.42 * sleep - 0.06 * air
-                    + f(s.lean) * 0.3
-                    + self.gait.nod(self.phase)
-                    - 0.12 * dangle
-                    - 0.12 * air * ease(0.0, 1.0, rise)
-                    + 0.1 * air * ease(0.0, 1.0, -rise)
-                    + act.head_angle;
-                let mut shift = Vec2::new(
-                    look.x * u * 1.4 + (act.head_shift.x + act.body_shift.x) * u,
-                    look.y * u
-                        + self.bob * 1.15
-                        + self.gait.head_bob(self.phase, u)
-                        + self.drop_front
-                        + sleep * self.h * 0.06
-                        + act.head_shift.y * u,
-                );
+                let (mut angle, mut shift) = self.head_base();
                 let low = f(s.sleep_low);
                 if low > 0.0
                     && let Some(head) = art.carried[index]
@@ -632,6 +784,18 @@ impl Engine {
             }
             // Elle s'ouvre vers le bas autour de sa charnière.
             BoneRole::Jaw => parent * rotate_about(at, 0.32 * f(s.jaw)),
+            BoneRole::Neck => self.neck.map_or(parent, |n| n.neck),
+            BoneRole::LegLower { front, near } => {
+                parent * self.legs[leg_slot(front, near)].map_or(Affine::IDENTITY, |l| l.1)
+            }
+            // Elle se retrousse vers le haut, autour de son articulation.
+            BoneRole::Lip => parent * rotate_about(at, -LIP_CURL * self.act.lip),
+            BoneRole::Sway => {
+                parent * rotate_about(at, sway(s, &self.act, self.facing, rank.min(2)))
+            }
+            BoneRole::Leg { front, near } if self.legs[leg_slot(front, near)].is_some() => {
+                self.legs[leg_slot(front, near)].map_or(parent, |l| l.0)
+            }
             BoneRole::Leg { front, near } => {
                 let leg_len = (self.g.y - at.y).max(u * 8.0);
                 let amplitude = (self.stride * self.duty / (2.0 * leg_len)).clamp(0.1, 0.75);

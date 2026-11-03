@@ -98,6 +98,11 @@ fn main() -> Result<(), Error> {
         render_gestures(&art, &path)?;
         println!("planche des allures et des gestes : {}", path.display());
     }
+    if mode == "allures" || mode == "all" {
+        let path = out_dir.join("allures.png");
+        render_gaits(&art, &path)?;
+        println!("planche des allures, phase par phase : {}", path.display());
+    }
     if mode == "video" || mode == "all" || mode == "troupeau" {
         let frames = out_dir.join("frames");
         std::fs::create_dir_all(&frames)?;
@@ -1818,6 +1823,11 @@ fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
         ground(gesture(Gesture::Bleat, 0.4)),
         ground(gesture(Gesture::Scratch, 0.8)),
         ground(gesture(Gesture::Rear, 0.6)),
+        // Le flehmen : encolure tendue, tête relevée, lèvre retroussée.
+        ground(PoseSignals {
+            jaw: 0.14,
+            ..gesture(Gesture::Flehmen, 3.0)
+        }),
         // Aux aguets (oreilles dressées), puis couché qui rumine (mâchoire).
         ground(PoseSignals {
             ears_back: -1.0,
@@ -1846,6 +1856,53 @@ fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
             ..base
         }),
     ];
+    draw_cases(art, path, cases, 4)
+}
+
+/// Les allures phase par phase (le pas, le trot, le galop, huit instants
+/// de la foulée chacun), puis il se couche (l'avant d'abord) et saute (il
+/// replie les pattes, les tend vers le sol, atterrit).
+fn render_gaits(art: &PetArt, path: &Path) -> Result<(), Error> {
+    let base = PoseSignals {
+        look: Vec2::new(0.35, 0.05),
+        breath: 0.2,
+        ..PoseSignals::default()
+    };
+    let ground = |pose: PoseSignals| -> PoseCase { (pose, 1.0, Some(0.0), vec![]) };
+    let mut cases: Vec<PoseCase> = Vec::new();
+    for (trot, run, stride) in [(0.0, 0.0, 1.0), (1.0, 0.0, 1.15), (0.0, 1.0, 1.9)] {
+        for i in 0..8 {
+            cases.push(ground(PoseSignals {
+                walk: 1.0,
+                trot,
+                run,
+                stride_scale: stride,
+                gait_phase: TAU * i as f32 / 8.0,
+                lean: 0.08 * run,
+                ..base
+            }));
+        }
+    }
+    for sit in [0.25, 0.5, 0.75, 1.0] {
+        cases.push(ground(PoseSignals { sit, ..base }));
+    }
+    for (rise, squash, lift) in [(0.9, -0.07, 24.0), (0.0, 0.0, 30.0), (-0.8, 0.0, 14.0)] {
+        cases.push((
+            PoseSignals {
+                air: 1.0,
+                rise,
+                squash,
+                ..base
+            },
+            1.0,
+            Some(lift),
+            vec![],
+        ));
+    }
+    cases.push(ground(PoseSignals {
+        squash: 0.16,
+        ..base
+    }));
     draw_cases(art, path, cases, 4)
 }
 
