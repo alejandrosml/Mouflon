@@ -42,12 +42,22 @@ The rights in the characters belong to their respective owners.
   Lamas: its drawings are under the same licenses as the code, and its
   behaviors are adapted from desktopPet (MIT License,
   `pets/pelote/NOTICE_desktopPet_MIT.txt`). The app icon is Pelote's head.
+- **Aquarelle** (`pets/aquarelle`) is an original character created for
+  Mouflon, painted by `tools/mouflon-peintre`, under the same licenses as the
+  code.
+- The four **breeds** (`pets/mouflon-corse`, `pets/nez-noir`, `pets/jacob`,
+  `pets/ouessant`) are original vector drawings made for Mouflon after the
+  published descriptions of real breeds (breed standards, field studies:
+  sources in [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature)),
+  under the same licenses as the code. Photographs were looked at, never
+  copied: no third-party image is part of them.
 - **Poete**, the mascot of Mouflon, is not part of this repository: it lives in
   its own repository, with its own notice.
 
 ### Sounds
 
-The sounds of Lainou, Pelote, the Mannequin and Aquarelle are cut from
+The sounds of Lainou, Pelote, the Mannequin and Aquarelle (the four breeds use
+the Mannequin's) are cut from
 recordings given to the public domain (none requires credit; thanks to their
 authors all the same):
 
@@ -108,12 +118,22 @@ Les droits sur les personnages appartiennent à leurs auteurs respectifs.
   Lamas : ses dessins sont sous les mêmes licences que le code, et ses
   comportements sont adaptés de desktopPet (licence MIT,
   `pets/pelote/NOTICE_desktopPet_MIT.txt`). L'icône de l'app est la tête de Pelote.
+- **Aquarelle** (`pets/aquarelle`) est un personnage original créé pour
+  Mouflon, peint par `tools/mouflon-peintre`, sous les mêmes licences que le
+  code.
+- Les quatre **races** (`pets/mouflon-corse`, `pets/nez-noir`, `pets/jacob`,
+  `pets/ouessant`) sont des dessins vectoriels originaux faits pour Mouflon
+  d'après les descriptions publiées de races réelles (standards des races,
+  études de terrain : sources dans [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature)),
+  sous les mêmes licences que le code. Les photographies ont été regardées,
+  jamais copiées : aucune image de tiers n'en fait partie.
 - **Poete**, la mascotte de Mouflon, ne fait pas partie de ce dépôt : il vit
   dans son propre dépôt, avec sa propre notice.
 
 ### Sons
 
-Les sons de Lainou, de Pelote, du Mannequin et d'Aquarelle sont découpés dans
+Les sons de Lainou, de Pelote, du Mannequin et d'Aquarelle (les quatre races
+prennent ceux du Mannequin) sont découpés dans
 des enregistrements versés au domaine public (aucun n'exige de mention ; merci
 quand même à leurs auteurs) :
 

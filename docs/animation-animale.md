@@ -1,12 +1,12 @@
 # L'animation des animaux : ce que disent les études, ce qu'en fait Mouflon
 
-Mouflon anime lui-même ses moutons dessinés en vecteurs (le Mannequin) ou
-peints sur un squelette (Aquarelle) : à partir d'une seule pose de profil, le
-moteur calcule à chaque image où vont les pattes, le corps, la tête, les
-oreilles, la queue, les paupières et la mâchoire. Pour que ce mouvement soit
-juste, il s'appuie sur ce que les études disent des vrais moutons — et des
-autres quadrupèdes quand il n'y a rien sur le mouton — et sur ce que font de
-mieux les jeux et les films.
+Mouflon anime lui-même ses moutons dessinés en vecteurs (le Mannequin et
+quatre races réelles, § 10) ou peints sur un squelette (Aquarelle) : à
+partir d'une seule pose de profil, le moteur calcule à chaque image où vont
+les pattes, le corps, la tête, les oreilles, la queue, les paupières et la
+mâchoire. Pour que ce mouvement soit juste, il s'appuie sur ce que les
+études disent des vrais moutons — et des autres quadrupèdes quand il n'y a
+rien sur le mouton — et sur ce que font de mieux les jeux et les films.
 
 Ce document rassemble ces connaissances (recherche de novembre 2026), dit
 pour chacune ce que Mouflon en fait, avec ses valeurs, et ce qui reste à
@@ -337,14 +337,82 @@ l'écran restent fluides).
 | MANN, DeepPhase, Peng 2020 | réseaux de neurones qui mêlent les allures, phases par membre, imitation d'animaux filmés | l'idée retenue : mêler les allures en continu, sans machine à états ; les réseaux, trop lourds ici |
 | RDR2 (chevaux), Ubisoft IK Rig, Rain World | vitesses min/idéale/max par allure, mouvements en longueurs de patte, créatures en points + images | nos allures sont rapportées à la longueur des pattes ; nos dessins sont posés sur des signaux |
 
-## 10. Ce qui reste à faire
+## 10. Quatre races d'après nature
+
+Le Mannequin et Aquarelle sont des moutons « en général ». Quatre animaux du
+dépôt suivent au contraire une race réelle, au plus près. Pour chacune, une
+fiche d'abord (le standard de la race, les études, les mesures, une quinzaine
+de photographies regardées de près, et les points où les sources se
+contredisent), puis un dessin vectoriel tiré de la fiche, à l'échelle (une
+unité du dessin pour un centimètre de l'animal, affiché à 0,5 pt par cm) et
+écrit par un script qu'on relance pour le retoucher (`tools/races`) :
+on les reconnaît à leurs dix traits les plus sûrs, et on évite ce qui en
+ferait une autre race. Leur `pet.toml` reprend tous les comportements du
+Mannequin, réglés sur le tempérament de la race.
+
+| Race | L'animal dessiné | Ce qui la fait reconnaître | Sa vie |
+|---|---|---|---|
+| **Mouflon de Corse** (`pets/mouflon-corse`) | un bélier du Cinto d'environ huit ans (cornes finies de pousser), en pelage d'hiver ; 75 cm au garrot | poil ras, pas de toison ; l'avant presque noir avec son jabot, l'arrière châtain ; la **selle** blanche sur le flanc, derrière l'épaule (pas sur le dos) ; une bande noire au bas du flanc, au-dessus du ventre blanc ; balzanes blanches ; museau et tour de l'œil blancs, chanfrein busqué ; queue courte et sombre sur un miroir blanc ; cornes lourdes, annelées, de section triangulaire, sur 270 à 320° autour de l'oreille, la pointe vers la gorge, jamais écartée | sauvage : il guette souvent (et l'alerte se propage), tape du pied quand le pointeur approche, fuit au galop à la première alarme puis se retourne pour regarder, saute volontiers d'un rebord ; il bêle peu. Il **ne se cabre pas** : aucune source ne le décrit chez lui (c'est le mouflon canadien qui se dresse) ; il recule, puis charge tête basse |
+| **Nez noir du Valais** (`pets/nez-noir`) | une brebis de deux à quatre ans en pleine toison ; 75 cm au garrot | longues mèches blanches ondulées partout, jusqu'aux pattes ; un **masque** noir du museau au milieu du front, sans blanc entre le nez et les yeux, sous un toupet blanc ; oreilles noires jusqu'à la base, à l'horizontale sous des cornes pâles en spirale ; taches noires devant les genoux et derrière les jarrets, séparées des **bottes** noires par du blanc ; aucun noir sur le corps ; longue queue en trois morceaux | calme, sociable, curieuse : elle broute, se couche et renifle plus volontiers, s'alarme et charge moins |
+| **Jacob** (`pets/jacob`) | un bélier de trois à cinq ans à **quatre cornes**, du type américain (le plus souvent à quatre cornes, ossature fine) ; 75 cm au garrot | les cornes du haut dressées en V, celles du bas en boucle autour de l'oreille, de la laine blanche entre les deux paires ; toison blanche à **taches noires** nettes (environ 40 %), surtout sur le cou et les épaules, pointes brûlées de soleil ; tête de blaireau : joues noires, chanfrein blanc de la nuque au nez, museau sombre ; pattes blanches sans laine, taches aux genoux et aux jarrets ; petites oreilles noires dans la boucle des cornes ; queue naturelle jusqu'au jarret | vif, aux aguets, agile : il regarde souvent (contagieux), tape du pied pour l'alarme, fuit plus vite et le troupeau le suit, saute volontiers d'un rebord ; il suit moins les autres en marchant (troupeau lâche), bêle peu, les béliers se cognent plus souvent |
+| **Ouessant** (`pets/ouessant`) | un bélier noir de trois à cinq ans ; 47 cm au garrot, l'un des plus petits moutons du monde | petit mais proportionné, pas un nain ; une seule paire de cornes, chacune une large spirale autour de l'oreille, détachée de la face ; tout noir, sans une tache blanche ; toupet laineux, face nue noir de jais sous les yeux ; vraie toison de mèches ondulées roussies au soleil, jusqu'aux genoux et aux jarrets ; la **cravate**, de longs poils noirs sous la gorge ; queue courte et fine, au-dessus des jarrets ; petites oreilles rondes à l'horizontale, yeux dorés | vif et très grégaire : il broute davantage (en groupe), rumine couché plus longtemps, détale en bande par courtes pointes puis fait **volte-face** pour regarder ; rustique, il tourne le dos au vent et se blottit peu |
+
+Leurs allures restent justes à leur taille : les vitesses du Mannequin sont
+mises à l'échelle de leurs pattes (`stride` vaut 1,6 fois la longueur des
+pattes), si bien que le moteur choisit le pas, le trot ou le galop au même
+nombre de longueurs de patte par seconde (§ 1) ; les sauts de l'Ouessant sont
+réduits comme la racine de sa taille, pour garder la même hauteur rapportée
+au corps.
+
+Ce que le moteur ne permet pas encore, et qui se voit sur ces races : le cou
+ne se plie pas (la tête qui broute descend d'un bloc ; le mouflon a son
+encolure dans la tête pour la suivre) ; les pattes restent raides, si bien
+qu'un animal couché les cache sous lui ; à leur taille habituelle, la laine
+et les annelures des cornes se fondent (on lit la silhouette, les taches et
+les cornes ; le détail paraît quand on les agrandit).
+
+Les sources de ces fiches, par race :
+
+- Mouflon de Corse : le Plan national d'actions 2024-2033 (DREAL Corse, OFB)
+  <https://arpi.unipi.it/retrieve/ebe90e8e-8bdf-4b75-b175-69ca1f412c4c/PNA_muflone%20Corsica%202024-2033.pdf> ;
+  OFB 2024, *E Mufre di Corsica, 50 ans de travaux*
+  <https://ofb.gouv.fr/doc/e-mufre-di-corsica-les-mouflons-de-corse-ovis-gmelini-musimon-var-corsicana-50-ans-de-travaux> ;
+  la fiche de l'INPN <https://inpn.mnhn.fr/docs-web/docs/download/440950> ;
+  Valette 2010, *Grande Faune* (ANCGG)
+  <https://www.ancgg.org/wp-content/uploads/2020/10/Le-mouflon-Corse-et-medtterraneen.pdf> ;
+  Garel, Cugnasse et Maillard 2005, l'âge par les cornes
+  <https://agris.fao.org/search/en/records/65dfb4c263b8185d9cae210b>.
+- Nez noir du Valais : le standard suisse, dans ses traductions de la Valais
+  Blacknose Society <https://valaisblacknosesociety.co.uk/the-breed/> et de
+  l'association nord-américaine <https://vbsana.com/breed/breed-standard/> ;
+  la fiche de la LfL de Bavière
+  <https://www.lfl.bayern.de/mam/cms07/itz/dateien/schafrassen_walliser_schwarznasenschaf.pdf> ;
+  la fiche de l'ASSONAPA
+  <https://www.assonapa.it/public/schede-ovini/conservazione-e-salvaguardia/autoctone/SCHWARZNASENSCHAF.pdf>.
+- Jacob : les standards de la Jacob Sheep Society
+  <https://jacobsheepsociety.co.uk/breed-standard/> et de la JSBA
+  <https://jsba.org/breed-standard/>, sa fiche sur les cornes
+  <https://jsba.org/wp-content/uploads/2024/05/Horns.pdf> ; la Livestock
+  Conservancy
+  <https://livestockconservancy.org/heritage-breeds/heritage-breeds-list/jacob-american-sheep/> ;
+  Anjola et McEwan 2018, la couleur et le nombre de cornes
+  <https://rgu-repository.worktribe.com/output/249253/inheritance-patterns-of-coat-colouration-and-horn-number-in-jacob-sheep>.
+- Ouessant : le standard du GEMO <http://www.mouton-ouessant.com/les-standards/>
+  et ses caractères généraux
+  <http://www.mouton-ouessant.com/generalites/caracteres-generaux> ; les notes
+  de l'Ouessant Sheep Society sur le standard
+  <https://ouessantsheep.org.uk/wp-content/uploads/2024/05/Guide-to-breed-standard.pdf> ;
+  la fiche de l'ASSONAPA
+  <https://www.assonapa.it/public/schede-ovini/conservazione-e-salvaguardia/estere/PECORA%20D'OUESSANT.pdf>.
+
+## 11. Ce qui reste à faire
 
 Fait à l'essai 18 : les regroupements, les jeux d'agneaux (sauts tordus,
 demi-tours en l'air, courses, coups de front), le bélier qui recule avant de
 charger, le sommeil la tête au sol et les pattes qui tressaillent,
 l'anticipation avant un saut. À l'essai 19 : le bélier qui se cabre, l'agneau
-qui invite au jeu, les queues qui ondulent, les pupilles horizontales.
-Reste :
+qui invite au jeu, les queues qui ondulent, les pupilles horizontales, et
+quatre races dessinées d'après nature (§ 10). Reste :
 
 - La toison qui bouge au vent et quand il court (des mèches qui traînent).
 - Le bélier en rut : le flehmen (lèvre retroussée), le cou tendu vers la
@@ -353,6 +421,13 @@ Reste :
   fermée).
 - Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
   la tête au sol, ce que font nos moutons).
+- Un cou qui se plie, et des pattes qui se replient vraiment sous l'animal
+  couché (voir § 10).
+- Pour les races : le cri d'alarme du mouflon (un sifflement bref par les
+  naseaux, souvent avec un coup de patte) et son grondement en rut ; les
+  brebis et les agneaux de chaque race (la brebis d'Ouessant n'a pas de
+  cornes, l'agneau Jacob naît avec sa tête de blaireau, le bélier Nez noir
+  porte des cornes bien plus fortes que la brebis).
 
 ## Sources
 

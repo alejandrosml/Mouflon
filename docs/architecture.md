@@ -154,7 +154,13 @@ pour les rigs comme pour les squelettes) ; **l'invitation au jeu**
 et les phases `Hit`, `Flee`, `Crash`, `Wreck`, `Limp` de la soucoupe, qui
 fume) ; **les queues en chaîne** (parties `tail-mid` et `tail-tip`, ou
 plusieurs os `tail` ; signaux `tail_mid` et `tail_tip`) ; **les pupilles
-horizontales**, gardées à l'horizontale par le dessin (`level_pupils`).
+horizontales**, gardées à l'horizontale par le dessin (`level_pupils`) ;
+**quatre races réelles** (`pets/mouflon-corse`, `pets/nez-noir`,
+`pets/jacob`, `pets/ouessant`), des rigs de quelques centaines de Ko que la
+cuisson réduit à moins de vingt images chacun. Le test
+`crates/mouflon-render/tests/troupeau.rs` charge, fait vivre et dessine tous
+les animaux du dépôt, et vérifie que chaque mouton dessiné a ses parties, se
+cuit et pose ses sabots au sol.
 
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup

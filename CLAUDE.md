@@ -14,9 +14,10 @@ tutoie.
 | `crates/mouflon-render` | le dessin : rigs SVG, squelettes peints, gestes, allures, cuisson en images, BC7 |
 | `crates/mouflon-platform` | macOS (AppKit, Core Animation, Accessibilité) : **le seul crate où `unsafe` est permis**, chaque bloc justifié |
 | `crates/mouflon-app` | l'app : fil de l'affichage, menus, réglages, bibliothèque des animaux |
-| `pets/` | les animaux du dépôt (Pelote, Lainou, le Mannequin, Aquarelle…) |
+| `pets/` | les animaux du dépôt (Pelote, Lainou, le Mannequin, Aquarelle, et quatre races réelles : `mouflon-corse`, `nez-noir`, `jacob`, `ouessant`) |
 | `tools/mouflon-preview` | aperçu hors écran (poses, gestes, jeux, rencontre, vidéo…) |
 | `tools/mouflon-peintre` | peint les morceaux d'Aquarelle |
+| `tools/races` | les scripts Python qui écrivent les SVG des quatre races : pour retoucher une race, change son script et relance-le (voir son README), ne modifie pas le SVG à la main |
 | `tools/essai` | scripts d'essai sur le vrai Mac et `analyse.py` (lecture des journaux) |
 | `docs/` | `format.md` (le format `pet.toml`), `rig.md` (dessiner un rig SVG), `squelette.md`, `animation-animale.md` (ce que disent les études sur les moutons, et ce qu'en fait le moteur), `architecture.md` |
 

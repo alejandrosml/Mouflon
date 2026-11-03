@@ -81,6 +81,21 @@ throw them across the desktop.
 | **Aquarelle** | A ewe painted in watercolor (`pets/aquarelle`): a dozen painted pieces on a skeleton, jaw included, animated entirely by Mouflon. |
 | Mannequin | The built-in example: a sheep drawn as a vector rig (slate-blue head, after the Bleu du Maine breed) and animated by Mouflon (`pets/mannequin`); its `pet.toml` shows every gesture the engine can animate. |
 
+### Real breeds
+
+Four sheep drawn as vector rigs after real breeds, as faithfully as we could:
+each started from a study sheet (the breed standard, field studies,
+measurements, about fifteen photographs examined closely), then a drawing to
+scale with the ten details that make the breed recognizable. Each has the temper of
+its breed. Details and sources: [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature).
+
+| | |
+|---|---|
+| **Corsican mouflon** | The wild sheep of Corsica (`pets/mouflon-corse`): an adult ram in winter coat, short chestnut hair, white saddle, black ruff and flank band, white belly, rump and stockings, heavy horns coiled around the ear. Wary: it watches, stamps, bolts at the first alarm, and never rears. |
+| **Valais Blacknose** | A Swiss mountain ewe in full fleece (`pets/nez-noir`): long wavy white locks, black mask under a white topknot, black ears, knee and hock spots and boots, pale spiral horns. Calm and curious. |
+| **Jacob** | A four-horned piebald ram (`pets/jacob`): an upright pair and a pair curling around the ears, white fleece with black patches, badger face with a white blaze, white legs. Alert and agile. |
+| **Ouessant** | A black ram of one of the smallest sheep breeds in the world (`pets/ouessant`), from the island of Ouessant in Brittany: wide spiral horns, curly fleece browned by the sun, a black mane under the throat. Lively: the flock bolts together, then wheels round to look. |
+
 ### Requirements
 
 - A Mac with Apple Silicon (M1 or later), macOS 27 Golden Gate
@@ -363,6 +378,9 @@ cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
 # leaps and a spin in the air:
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu jeux
 
+# A pet thrown at the flying saucer while it carries another away:
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu soucoupe
+
 # Two Lainou bumping into each other, then a throw; and all its images as
 # Mouflon draws them, in both directions:
 cargo run -p mouflon-preview --release -- pets/lainou/pet.toml apercu rencontre
@@ -380,7 +398,7 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 ### Roadmap
 
 - More of real sheep life (see
-  [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
+  [docs/animation-animale.md](docs/animation-animale.md#11-ce-qui-reste-à-faire)).
 - Windows and Linux (X11; Wayland in a reduced mode).
 - A real-time 3D option.
 
@@ -390,8 +408,9 @@ MOUFLON_DESKTOPPET=path/to/animations.xml \
 under the [MIT License](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE),
 at your option: you may use, change and share it freely, including
 commercially, as long as the copyright notice with the author's name stays.
-The pets of this repository (Pelote, Lainou, the Mannequin) are under the same
-licenses. Credits and third-party licenses: [CREDITS.md](CREDITS.md).
+The pets of this repository (Pelote, Lainou, Aquarelle, the Mannequin and the
+four breeds) are under the same licenses. Credits and third-party licenses:
+[CREDITS.md](CREDITS.md).
 
 ## Français
 
@@ -473,6 +492,21 @@ se laissent attraper et lancer à travers le bureau.
 | **Lainou** | Un petit mouton de laine à clochette (`pets/lainou`) : 26 animations dessinées image par image, dans les deux sens. |
 | **Aquarelle** | Une brebis peinte à l'aquarelle (`pets/aquarelle`) : une douzaine de morceaux peints sur un squelette, mâchoire comprise, animés tout entiers par Mouflon. |
 | Mannequin | L'exemple intégré : un mouton dessiné en vecteurs (tête bleu ardoise, d'après la race Bleu du Maine) et animé par Mouflon (`pets/mannequin`) ; son `pet.toml` montre tous les gestes que le moteur sait animer. |
+
+### Les races
+
+Quatre moutons dessinés en vecteurs d'après des races réelles, au plus près :
+chacun est parti d'une fiche (le standard de la race, les études, les
+mesures, une quinzaine de photographies regardées de près), puis d'un dessin
+à l'échelle avec les dix détails qui font reconnaître la race. Chacun a le
+tempérament de sa race. Détails et sources : [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature).
+
+| | |
+|---|---|
+| **Mouflon de Corse** | Le mouton sauvage de Corse (`pets/mouflon-corse`) : un bélier adulte en pelage d'hiver, poil ras châtain, selle blanche, jabot et bande du flanc noirs, ventre, miroir et balzanes blancs, lourdes cornes enroulées autour de l'oreille. Méfiant : il guette, tape du pied, détale à la première alarme, et ne se cabre jamais. |
+| **Nez noir du Valais** | Une brebis de montagne suisse en pleine toison (`pets/nez-noir`) : longues mèches blanches ondulées, masque noir sous un toupet blanc, oreilles, genoux, jarrets et bottes noirs, cornes pâles en spirale. Calme et curieuse. |
+| **Jacob** | Un bélier pie à quatre cornes (`pets/jacob`) : une paire dressée et une paire enroulée autour des oreilles, toison blanche à taches noires, tête de blaireau au chanfrein blanc, pattes blanches. Vif et agile. |
+| **Ouessant** | Un bélier noir de l'une des plus petites races de moutons du monde (`pets/ouessant`), de l'île d'Ouessant : larges cornes en spirale, toison bouclée roussie au soleil, cravate noire sous la gorge. Vif : le troupeau détale ensemble, puis fait volte-face pour regarder. |
 
 ### Prérequis
 
@@ -776,6 +810,9 @@ cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
 # charge, puis des sauts tordus et un demi-tour en l'air :
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu jeux
 
+# Un animal lancé sur la soucoupe pendant qu'elle en emporte un autre :
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu soucoupe
+
 # Deux Lainou qui se rentrent dedans, puis un lancer ; et toutes ses images
 # telles que Mouflon les dessine, dans les deux sens :
 cargo run -p mouflon-preview --release -- pets/lainou/pet.toml apercu rencontre
@@ -793,7 +830,7 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 ### Feuille de route
 
 - Davantage de la vie des moutons (voir
-  [docs/animation-animale.md](docs/animation-animale.md#10-ce-qui-reste-à-faire)).
+  [docs/animation-animale.md](docs/animation-animale.md#11-ce-qui-reste-à-faire)).
 - Windows et Linux (X11 ; Wayland en mode dégradé).
 - Option 3D temps réel.
 
@@ -803,5 +840,6 @@ MOUFLON_DESKTOPPET=chemin/vers/animations.xml \
 [licence MIT](LICENSE-MIT) ou [licence Apache 2.0](LICENSE-APACHE), au choix :
 on peut l'utiliser, le modifier et le partager librement, y compris
 commercialement, tant que la mention de copyright avec le nom de l'auteur
-reste. Les animaux de ce dépôt (Pelote, Lainou, le Mannequin) sont sous les
-mêmes licences. Crédits et licences des tiers : [CREDITS.md](CREDITS.md).
+reste. Les animaux de ce dépôt (Pelote, Lainou, Aquarelle, le Mannequin et
+les quatre races) sont sous les mêmes licences. Crédits et licences des
+tiers : [CREDITS.md](CREDITS.md).

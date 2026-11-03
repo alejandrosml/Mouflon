@@ -23,6 +23,9 @@ n'importe quel écran Retina, même agrandi.
   est dessiné en premier (derrière).
 - Les articulations se chevauchent : le haut des pattes rentre sous le corps,
   le cou sous la tête. Sinon, les rotations ouvrent des trous.
+- Une longue encolure (un mouflon qui porte la tête haute) se dessine plutôt
+  dans `head`, avec `pivot-head` à la base du cou : elle suit la tête quand
+  il broute, au lieu que la tête s'en détache (voir `pets/mouflon-corse`).
 - Pas d'ombre portée ni de reflet « collés » sous le personnage : le moteur
   ajoute une ombre douce au sol et une lumière dynamique sur le corps.
 
@@ -67,6 +70,14 @@ le personnage touche le sol, entre ses pattes.
 
 Pris en charge : tracés et formes, remplissages et contours, dégradés
 linéaires et radiaux, opacité de groupe.
+
+Le moteur cuit le dessin en images, une par suite de tracés d'une même
+partie, et ne pose plus que ces images à l'écran : un dessin de milliers de
+tracés ne coûte pas plus cher à animer que le Mannequin (les dessins des
+quatre races du dépôt pèsent de 280 à 540 Ko, cuits en moins de vingt
+images). Un
+groupe semi-transparent empêche cette cuisson (le dessin est alors redessiné
+à chaque image) : mets plutôt l'opacité sur chaque tracé.
 
 Pas encore : masques, découpes (`clip-path`), filtres (flou…), motifs,
 texte (convertis-le en tracés), images bitmap intégrées.

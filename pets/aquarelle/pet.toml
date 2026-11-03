@@ -427,7 +427,12 @@ name = "back_up"
 motion = "back"
 speed = 38.0
 duration = [1.0, 1.6]
-next = [{ to = "rear", weight = 3 }, { to = "charge", weight = 2 }]
+next = [
+    { to = "rear", weight = 7 },
+    { to = "charge", weight = 2 },
+    # Énervé, il fonce plus souvent sans se cabrer : à peu près une fois sur deux.
+    { to = "charge", weight = 5, when = "rowdy" },
+]
 
 # Se cabre : l'avant se dresse sur les pattes de derrière, celles de devant
 # repliées, puis retombe d'un coup, tête la première ; et il charge.

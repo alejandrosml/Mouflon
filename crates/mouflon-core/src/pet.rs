@@ -5221,7 +5221,16 @@ mod tests {
     #[test]
     fn every_sheep_knows_what_to_do_with_the_wind_and_its_temper() {
         // Le vent dans le museau : tous les moutons lui tournent le dos.
-        for name in ["mannequin", "aquarelle", "lainou", "pelote"] {
+        for name in [
+            "mannequin",
+            "aquarelle",
+            "lainou",
+            "pelote",
+            "mouflon-corse",
+            "nez-noir",
+            "jacob",
+            "ouessant",
+        ] {
             let def = bundled(name);
             assert!(
                 def.reflexes
@@ -5257,6 +5266,61 @@ mod tests {
             let ruminate = &def.behaviors[def.behavior_index("ruminate").unwrap()];
             assert!(ruminate.chew && ruminate.motion == Motion::Sit);
         }
+    }
+
+    #[test]
+    fn every_breed_lives_like_a_sheep_and_keeps_the_ways_of_its_kind() {
+        // Les quatre races dessinées d'après nature gardent tout ce que sait
+        // faire le Mannequin (le moteur trouve certains comportements par leur
+        // nom : jeux, invitations…), sauf ce que leur race ne fait pas.
+        let mannequin = bundled("mannequin");
+        for name in ["mouflon-corse", "nez-noir", "jacob", "ouessant"] {
+            let def = bundled(name);
+            assert_eq!(def.meta.category.as_deref(), Some("sheep"), "{name}");
+            for behavior in &mannequin.behaviors {
+                if name == "mouflon-corse" && behavior.name == "rear" {
+                    continue;
+                }
+                assert!(
+                    def.behavior_index(&behavior.name).is_some(),
+                    "{name} : {}",
+                    behavior.name
+                );
+            }
+        }
+        let next = |def: &PetDef, name: &str| -> Vec<String> {
+            def.behaviors[def.behavior_index(name).unwrap()]
+                .next
+                .iter()
+                .map(|t| def.behaviors[t.to].name.clone())
+                .collect()
+        };
+        // Le mouflon de Corse ne se cabre pas (aucune source ne le décrit ;
+        // c'est le mouflon canadien) : il recule, puis il charge. Sauvage, il
+        // guette plus que les autres et fuit au galop à la première alarme.
+        let mouflon = bundled("mouflon-corse");
+        assert!(
+            !mouflon
+                .behaviors
+                .iter()
+                .any(|b| b.motion == Motion::Gesture(Gesture::Rear))
+        );
+        assert!(next(&mouflon, "back_up").iter().all(|n| n == "charge"));
+        let flight = mouflon
+            .reflexes
+            .startle
+            .iter()
+            .max_by(|a, b| a.weight.total_cmp(&b.weight))
+            .unwrap();
+        assert_eq!(mouflon.behaviors[flight.to].name, "run");
+        let look = |def: &PetDef| def.behaviors[def.behavior_index("look").unwrap()].contagious;
+        assert!(look(&mouflon) > look(&mannequin));
+        // Le bélier d'Ouessant détale en bande, puis fait volte-face pour
+        // regarder.
+        let ouessant = bundled("ouessant");
+        assert!(next(&ouessant, "run").iter().any(|n| n == "volte"));
+        assert_eq!(next(&ouessant, "volte"), ["look"]);
+        assert!(ouessant.behaviors[ouessant.behavior_index("run").unwrap()].contagious > 0.0);
     }
 
     #[test]
