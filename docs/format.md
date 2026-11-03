@@ -113,8 +113,9 @@ devant, tête basse), `stamp` (tape du pied, tête haute : l'alarme), `sniff`
 mi-clos), `brace` (contre le vent : tête basse, oreilles couchées, serré sur
 ses pattes), `yawn` (bâille ; 1,6 s), `bleat` (bêle, la bouche ouverte),
 `flehmen` (le bélier qui a flairé une brebis : l'encolure tendue, la tête
-relevée, la lèvre supérieure retroussée, la bouche entrouverte ; 6 à 10 s
-dans les animaux du dépôt, 7 à 19 s chez un vrai bélier).
+relevée, la lèvre supérieure retroussée, la bouche entrouverte ; 7 à 12 s
+dans les animaux du dépôt, 7 à 19 s en moyenne chez de jeunes béliers,
+parfois une minute ou deux).
 `pets/mannequin/pet.toml` les montre tous.
 
 D'autres clés d'un comportement :
