@@ -253,6 +253,8 @@ pub struct Rig {
     /// Les articulations, préparées une fois : l'encolure, les pattes en
     /// deux segments.
     pub(crate) joints: crate::animate::RigJoints,
+    /// L'étendue de la toison (voir [`Rig::body_extent`]).
+    body_extent: Rect,
     /// Ce qui touche l'herbe quand il broute (`pivot-muzzle`), s'il est donné.
     pub muzzle: Option<Point>,
     /// Silhouette du corps, pour l'éclairage dynamique.
@@ -297,6 +299,7 @@ impl Rig {
             parents,
             unusual: Vec::new(),
             joints: crate::animate::RigJoints::default(),
+            body_extent: bounds,
             muzzle,
             body_silhouette: builder.body_silhouette,
             items: builder.items,
@@ -308,6 +311,20 @@ impl Rig {
                 .copied()
                 .unwrap_or_else(|| rig.guess_pivot(part));
         }
+        // La toison : le corps, ses mèches et ce que l'encolure dessine
+        // elle-même (sans la tête), où qu'elle soit posée dans le document.
+        let mut extent = rig.part_bounds(Part::Body);
+        if rig.has_part(Part::Body) {
+            for part in Part::SWAYS {
+                if let Some(r) = rig.part_bounds[part.index()] {
+                    extent = extent.union(r);
+                }
+            }
+            if let Some(r) = builder.own_bounds.get(&Part::Neck) {
+                extent = extent.union(*r);
+            }
+        }
+        rig.body_extent = extent;
         let neck = rig.has_part(Part::Neck);
         rig.unusual = Part::ALL
             .into_iter()
@@ -366,6 +383,16 @@ impl Rig {
         }
     }
 
+    /// L'étendue de la toison : la boîte du corps, de ses mèches (`sway-*`)
+    /// et de l'encolure (sans la tête qu'elle porte). Le moteur s'en sert
+    /// pour coucher l'animal (jusqu'où descend le corps) et l'incliner :
+    /// découper la toison en morceaux ne la change pas, ni l'endroit où
+    /// l'encolure est posée dans le document.
+    #[must_use]
+    pub fn body_extent(&self) -> Rect {
+        self.body_extent
+    }
+
     /// Boîte d'une partie (ou du dessin entier si elle est absente).
     #[must_use]
     pub fn part_bounds(&self, part: Part) -> Rect {
@@ -381,6 +408,8 @@ struct Builder {
     part_bounds: HashMap<Part, Rect>,
     open_parts: Vec<Part>,
     parents: HashMap<Part, Option<Part>>,
+    /// Ce que dessine chaque partie elle-même (sans les parties qu'elle porte).
+    own_bounds: HashMap<Part, Rect>,
     body_silhouette: Option<(BezPath, Affine)>,
 }
 
@@ -455,6 +484,12 @@ impl Builder {
         self.bounds = Some(self.bounds.map_or(rect, |r| r.union(rect)));
         for part in &self.open_parts {
             self.part_bounds
+                .entry(*part)
+                .and_modify(|r| *r = r.union(rect))
+                .or_insert(rect);
+        }
+        if let Some(part) = self.open_parts.last() {
+            self.own_bounds
                 .entry(*part)
                 .and_modify(|r| *r = r.union(rect))
                 .or_insert(rect);

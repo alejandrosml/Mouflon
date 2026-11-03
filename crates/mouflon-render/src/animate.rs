@@ -309,7 +309,7 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
 
     // --- Corps couché : l'avant se plie d'abord (il s'agenouille), puis
     // l'arrière ; il se relève dans l'ordre inverse, l'arrière d'abord.
-    let body = rig.part_bounds(Part::Body);
+    let body = rig.body_extent();
     let has_body = rig.has_part(Part::Body);
     let clearance = if has_body {
         (g.y - body.max_y() - 0.6 * u).max(0.0)
@@ -565,7 +565,7 @@ pub fn pose(rig: &Rig, s: &PoseSignals, facing: f32, stride: f64) -> PoseTransfo
     }
     for (k, part) in Part::SWAYS.into_iter().enumerate() {
         if rig.has_part(part) {
-            parts[part.index()] = rotate_about(rig.pivot(part), sway(s, &act, facing, k));
+            parts[part.index()] = sway_shear(rig.pivot(part), sway(s, &act, facing, k));
         }
     }
 
@@ -616,6 +616,15 @@ const ABSORB: f64 = 0.06;
 
 /// De combien la lèvre supérieure se retrousse (radians) : le flehmen.
 pub(crate) const LIP_CURL: f64 = 0.95;
+
+/// Une mèche penchée de `angle` (positif : son bout vers l'arrière) : elle se
+/// cisaille autour de la ligne horizontale de son attache, qui reste fixe. Une
+/// mèche attachée sur toute sa largeur (un feston de la toison) ne s'en
+/// détache jamais, comme elle le ferait en tournant autour d'un point.
+pub(crate) fn sway_shear(pivot: Point, angle: f64) -> Affine {
+    let k = -angle.clamp(-0.6, 0.6).tan();
+    about(pivot, Affine::new([1.0, 0.0, k, 1.0, 0.0, 0.0]))
+}
 
 /// L'angle de la `k`-ième mèche de la toison (0 : les premières, 2 : celles
 /// du bout), dans le repère du corps : ce que donne le moteur (elles
@@ -754,7 +763,7 @@ fn hips_of(rig: &Rig) -> Point {
         .map(|p| rig.pivot(p))
         .collect();
     if legs.is_empty() {
-        let b = rig.part_bounds(Part::Body);
+        let b = rig.body_extent();
         Point::new(b.min_x() + b.width() * 0.25, b.max_y())
     } else {
         let n = legs.len() as f64;

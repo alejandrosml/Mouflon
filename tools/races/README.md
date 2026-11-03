@@ -58,8 +58,10 @@ Ce qu'il faut savoir :
   (`pets/mannequin/mannequin.svg`) de sa version d'avant les articulations,
   gardée pour le test `sans_changement` : son lobe de laine de l'avant
   devient l'encolure, trois festons du ventre deviennent des mèches
-  (`articulations.cut_under`), la lèvre est détachée de la tête avec la
-  gencive qu'elle cache (`articulations.lift_part`).
+  (`articulations.cut_under`), chacun pris d'un creux du contour au suivant
+  (une mèche penche sans quitter son attache, voir docs/rig.md), la lèvre
+  est détachée de la tête avec la gencive qu'elle cache
+  (`articulations.lift_part`).
 - Seuls des tracés, des dégradés et l'opacité de chaque tracé : pas de
   groupe semi-transparent, de masque, de découpe ni de filtre (voir
   [docs/rig.md](../../docs/rig.md)).

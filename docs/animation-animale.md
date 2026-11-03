@@ -259,7 +259,7 @@ dessiné du dépôt broute le museau dans l'herbe.
 | Bêler | aigu bouche ouverte : isolement, stress ; grave bouche fermée : brebis et agneau proches ; sinon rare | `bleat` et les sons `mouth = true` : la bouche s'ouvre en 0,1 s, un léger vibrato |
 | Renifler | le museau tendu vers l'autre | `sniff` : quand deux moutons se croisent |
 | Sonné | — | `daze` : la tête décrit de petits cercles, les yeux mi-clos, les oreilles pendantes ; après un atterrissage rude, puis il s'ébroue |
-| Flehmen | le bélier flaire l'urine ou la région ano-génitale d'une brebis, puis relève la tête, lèvre supérieure retroussée, et hume ; surtout la veille des chaleurs, à la saison du rut (l'automne). Durée moyenne d'un flehmen : 7,3 à 19 s selon les groupes (12,1 s pour un bélier seul avec la brebis ; Bahadi 2023, béliers Najdi) | `flehmen` : l'encolure tendue vers l'avant et le haut, le nez relevé, puis la lèvre retroussée (la gencive rose apparaît, le mouton n'a pas d'incisives en haut), la bouche entrouverte, les yeux mi-clos, la tête qui balance à peine ; 6 à 10 s (raccourci pour un bureau) ; après avoir reniflé un autre mouton, plus souvent chez un énervé et chez les béliers des races |
+| Flehmen | le bélier flaire l'urine d'une brebis ou sa vulve, puis relève la tête (d'environ 30°), les naseaux plissés, la lèvre supérieure retroussée sur le bourrelet sans dents, et hume (Blissitt 1989) ; il suit surtout l'urine (Stevens 1982), qu'une brebis émet quand un bélier l'approche, sauf si elle est en chaleur : devant une brebis en chaleur, le flehmen est le plus rare ; celui qui suit le flairage de la vulve, bref, est le plus fréquent la veille des chaleurs (Bland & Jubilan 1987, résumés par Blissitt 1989 ; Mirto 2015). Tenu d'un instant à deux minutes (Banks 1964, cité par Blissitt 1989) ; en moyenne 7 à 19 s selon les groupes chez de jeunes béliers Najdi, 12 s pour un bélier seul avec une brebis (Bahadi 2023, sur peu de flehmen : les écarts ne sont pas significatifs) | `flehmen` : l'encolure tendue vers l'avant et le haut, la tête relevée d'une quarantaine de degrés (le chanfrein à peu près à l'horizontale, le menton en avant, comme sur les photos), puis la lèvre retroussée (la gencive rose apparaît, le mouton n'a pas d'incisives en haut), la bouche entrouverte, les yeux mi-clos, la tête qui balance à peine ; 7 à 12 s, le bas des moyennes mesurées (pour un bureau) ; après avoir reniflé un autre mouton, plus souvent chez un énervé et chez les béliers des races, rarement chez une brebis |
 
 ## 4. Les émotions : oreilles, tête, queue
 
@@ -400,7 +400,7 @@ l'écran restent fluides).
 | Le corps d'après les pieds | hauteur = min √(L² − Δx²) des pattes d'appui ; tangage d'après l'avant et l'arrière | approché : garrot et croupe calés sur les mi-appuis (le même résultat, sans calcul) |
 | Dynamique du second ordre (t3ssel8r) | un ressort réglé par une fréquence, un amortissement et une « réponse » (dépassement, anticipation) | oui : oreilles, queue, inclinaison, écrasement, balancement sont des ressorts amortis |
 | Ressorts à amortissement critique, inertialisation (Holden) | passer d'une pose à l'autre sans à-coup, en amortissant l'écart | oui : tous les poids (allures, poses, gestes, posture) s'approchent de leur cible en douceur |
-| Mouvement secondaire (la toison) | les parties molles suivent le corps avec retard | des mèches (`sway`) en ressorts amortis (2 et 1,6 Hz) : elles traînent avec la vitesse (0,0016 rad par pt/s), suivent l'élan et le vent, sautillent à chaque appui, suivent la secousse quand il s'ébroue ; aucune étude n'en parle, réglé à l'œil |
+| Mouvement secondaire (la toison) | les parties molles suivent le corps avec retard | des mèches (`sway`) en ressorts amortis (2 et 1,6 Hz, celles du bout en retard sur les premières) : elles traînent avec la vitesse (0,0016 rad par pt/s), penchent avec l'élan quand le corps freine ou démarre (en physique réaliste) et dans le vent (0,3 rad au plus fort d'une rafale), balancent au rythme des pas (deux fois par cycle), suivent la secousse quand il s'ébroue ; une mèche penche sans quitter son attache (cisaillée autour de la ligne de son pivot) ; aucune étude n'en parle, réglé à l'œil |
 | Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | à notre façon (essai 19) : une queue en deux ou trois morceaux est une chaîne de ressorts amortis, chacun suivant le précédent avec un temps de retard (2,2 puis 1,8 Hz) : un coup de queue descend jusqu'au bout, elle ondule |
 | Bruit de Perlin au repos (Improv) | de petits mouvements qui ne se répètent pas | en partie : regards, oreilles, queue et clignements tirés au hasard, respiration |
 | Clignements et regard (Eyes Alive) | clignements asymétriques, liés aux tours de tête | oui (voir plus haut) |
@@ -517,8 +517,9 @@ bouge. Reste :
   naseaux, souvent avec un coup de patte) et son grondement en rut ; les
   brebis et les agneaux de chaque race (la brebis d'Ouessant n'a pas de
   cornes, l'agneau Jacob naît avec sa tête de blaireau, le bélier Nez noir
-  porte des cornes bien plus fortes que la brebis) ; le flehmen réservé à la
-  saison du rut (le moteur ne connaît pas encore la date).
+  porte des cornes bien plus fortes que la brebis) ; le flehmen devant une
+  brebis plutôt qu'après n'importe quel mouton (le moteur ne sait pas encore
+  qui est bélier ou brebis).
 
 ## Sources
 
@@ -555,7 +556,7 @@ Comportement du mouton :
 - Taper du pied : <https://pmc.ncbi.nlm.nih.gov/articles/PMC7070376>
 - Suivre : <https://pmc.ncbi.nlm.nih.gov/articles/PMC3016320/> ; <https://ar5iv.arxiv.org/html/1712.05774> ; regroupements, Ginelli 2015 : <https://pmc.ncbi.nlm.nih.gov/articles/PMC4611628>
 - Jeux d'agneaux : <https://stud.epsilon.slu.se/13350/1/Augustsson_S_180314.pdf>
-- Le flehmen du bélier (durées), Bahadi et al. 2023, *Animal Reproduction* 20:e20220051 : <https://doi.org/10.1590/1984-3143-AR2022-0051> ; après le flairage ano-génital, Lacuesta & Ungerfeld 2012 : <https://doi.org/10.1016/j.anireprosci.2012.08.021>
+- Le flehmen du bélier : durées (jeunes béliers Najdi, une brebis entravée, quatre séances de 15 min), Bahadi et al. 2023, *Animal Reproduction* 20:e20220051 : <https://doi.org/10.1590/1984-3143-AR2022-0051> ; la posture, ce qui le déclenche et sa durée (d'après Banks 1964 et Bland & Jubilan 1987), Blissitt 1989, thèse, Édimbourg : <http://hdl.handle.net/1842/34797> ; Bland & Jubilan 1987, *Animal Behaviour* 35:735 : <https://doi.org/10.1016/S0003-3472(87)80109-4> ; il suit l'urine de la brebis, Stevens, Perry & Long 1982, *Journal of Chemical Ecology* 8:23 : <https://doi.org/10.1007/BF00984002> ; Mirto et al. 2015, *Applied Animal Behaviour Science* 186:22 : <https://doi.org/10.1016/j.applanim.2015.09.001>
 - La tétée (durée et nombre par jour), Gordon & Siegmann 1991, *Physiology & Behavior* 50:1079 : <https://doi.org/10.1016/0031-9384(91)90442-q>
 - Sommeil : <https://www.pharma.uzh.ch/apps/sleepcd/demo/animals/chap8/is165.htm> ; postures couchées : <https://pmc.ncbi.nlm.nih.gov/articles/PMC12411910>
 - Respiration : <https://www.msdvetmanual.com/multimedia/table/resting-respiratory-rates>

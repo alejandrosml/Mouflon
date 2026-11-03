@@ -49,9 +49,13 @@ MUZZLE = (134.0, 71.0)
 LIP = [(129.4, 61.8), (133.0, 60.6), (135.5, 60.4), (137.6, 62.0), (137.6, 67.0),
        (135.9, 66.9), (134.3, 67.9), (132.2, 68.6), (130.0, 68.0), (128.8, 64.4)]
 LIP_PIVOT = (130.2, 62.4)
-# Les festons du bas de la toison qui deviennent des mèches : de x0 à x1,
-# sous la hauteur y (leur attache, au milieu).
-LOCKS = [(92.5, 101.5, 86.5), (79.6, 92.0, 90.5), (62.4, 79.4, 91.5)]
+# Les festons du bas du ventre qui deviennent des mèches, de l'avant vers
+# l'arrière : chacun pris d'un creux du contour au suivant (la corde entre
+# les deux creux est son attache, son milieu le pivot). Coupée là, une mèche
+# qui penche ne laisse aucun bord coupé à la vue : seuls ses creux touchent
+# ses voisines, et ils bougent à peine.
+LOCKS = [((90.44, 95.09), (79.48, 95.6)), ((79.48, 95.6), (62.18, 96.54)),
+         ((62.18, 96.54), (52.03, 94.54))]
 
 
 def gum():
@@ -97,9 +101,10 @@ def main():
             head.remove(c)
     head.append(A._pivot("head", POLL))
     head.append(A._pivot("muzzle", MUZZLE))
-    for i, (x0, x1, y) in enumerate(LOCKS):
-        area = [(x0, y), (x1, y), (x1, 130.0), (x0, 130.0)]
-        A.cut_under(root, paints, "body", area, f"sway-{i + 1}", ((x0 + x1) / 2, y), margin=1.5)
+    for i, ((xa, ya), (xb, yb)) in enumerate(LOCKS):
+        area = [(xa, ya), (xb, yb), (xb, 130.0), (xa, 130.0)]
+        pivot = (round((xa + xb) / 2, 2), round((ya + yb) / 2, 2))
+        A.cut_under(root, paints, "body", area, f"sway-{i + 1}", pivot, margin=1.5)
     ET.indent(root, space="  ")
     out = ET.tostring(root, encoding="unicode") + "\n"
     with open(OUT, "w") as f:

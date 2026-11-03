@@ -86,13 +86,13 @@ role = "leg-front-near-lower"
 [[bone]]
 name = "meche-1"
 parent = "corps"
-at = [644, 686]
+at = [616, 694]
 role = "sway"
 
 [[bone]]
 name = "meche-2"
 parent = "corps"
-at = [515, 690]
+at = [536, 696]
 role = "sway"
 
 # L'encolure, l'avant de la toison : elle tourne autour de sa base, dans le

@@ -1310,18 +1310,27 @@ impl BehaviorToml {
             other => match Gesture::from_name(other) {
                 Some(gesture) => Motion::Gesture(gesture),
                 None => {
+                    let known: Vec<&str> = MOTIONS
+                        .into_iter()
+                        .chain(Gesture::ALL.map(Gesture::name))
+                        .collect();
                     return Err(format_error(format!(
-                        "comportement « {} » : mouvement inconnu « {other} » (stand, walk, \
-                         run, charge, back, turn, sit, sleep, look, graze, jump, pronk, fall, \
-                         land, held, shake, stretch, scratch, paw, stamp, sniff, daze, brace, \
-                         yawn, bleat)",
-                        self.name
+                        "comportement « {} » : mouvement inconnu « {other} » ({})",
+                        self.name,
+                        known.join(", ")
                     )));
                 }
             },
         })
     }
 }
+
+/// Les mouvements du moteur, par leur nom dans un `pet.toml` ; les gestes
+/// s'y ajoutent (voir [`Gesture::name`]).
+const MOTIONS: [&str; 15] = [
+    "stand", "walk", "run", "charge", "back", "turn", "sit", "sleep", "look", "graze", "jump",
+    "pronk", "fall", "land", "held",
+];
 
 #[derive(Deserialize, Clone, Copy)]
 #[serde(untagged)]
@@ -1597,6 +1606,12 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("moonwalk"), "{err}");
+        // Le message rappelle tous les mouvements possibles, gestes compris.
+        let (_, list) = err.rsplit_once('(').unwrap();
+        let listed: Vec<&str> = list.trim_end_matches(')').split(", ").collect();
+        for name in MOTIONS.into_iter().chain(Gesture::ALL.map(Gesture::name)) {
+            assert!(listed.contains(&name), "{name} : {err}");
+        }
     }
 
     /// Animal en bandes d'images, deux sens : images de 64 × 64 pixels.

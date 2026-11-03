@@ -329,8 +329,10 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
     g
 }
 
-/// De combien la tête se relève pour le flehmen (radians) : le nez pointe
-/// vers le haut, bien au-dessus de l'horizontale.
+/// De combien la tête se relève pour le flehmen (radians), en plus de
+/// l'encolure qui se tend : une quarantaine de degrés en tout, le chanfrein
+/// passe à peu près à l'horizontale, le menton en avant, comme sur les
+/// photos de béliers (« la tête relevée d'environ 30° », Blissitt 1989).
 pub(crate) const FLEHMEN_HEAD: f64 = 0.75;
 
 /// La posture de l'humeur ou de l'élan, ajoutée au geste : tête basse,

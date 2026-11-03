@@ -384,7 +384,7 @@ next = [
 [[behavior]]
 name = "flehmen"
 motion = "flehmen"
-duration = [6.0, 10.0]   # 7 à 19 s chez le bélier (Bahadi 2023), raccourci pour un bureau
+duration = [7.0, 12.0]   # 7 à 19 s en moyenne chez de jeunes béliers (Bahadi 2023) : le bas, pour un bureau
 next = [{ to = "stand", weight = 2 }, { to = "walk", weight = 2 }, { to = "look", weight = 1 }]
 
 # L'alarme : tête haute, il tape d'un antérieur (et souffle par les naseaux),

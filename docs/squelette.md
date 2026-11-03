@@ -112,7 +112,7 @@ Un `role` dit ce que le moteur fait de l'os de lui-même :
 | `neck` | l'encolure (la tête est son enfant) : elle descend pour brouter, se redresse aux aguets, se tend quand il fonce, s'allonge vers l'avant quand il dort la tête au sol | la base de l'encolure, dans l'épaule |
 | `leg-front-near-lower`… | le bas d'une patte (enfant de sa patte) : il plie au carpe (devant) ou au jarret (derrière) | le carpe ou le jarret |
 | `lip` | la lèvre supérieure (enfant de la tête) : elle se retrousse pour le flehmen | son arrière, sous le naseau |
-| `sway` | une mèche de la toison (enfant du corps) : elle traîne quand il court, balance à chaque pas, suit la secousse ; plusieurs os `sway`, les suivants un peu plus en retard | son attache, en haut |
+| `sway` | une mèche de la toison (enfant du corps) : elle traîne quand il court, balance au rythme des pas, penche dans le vent, suit la secousse ; elle penche sans quitter son attache (le moteur la cisaille autour de la ligne horizontale de son pivot) ; plusieurs os `sway`, les suivants un peu plus en retard | le milieu de son attache, en haut |
 
 La mâchoire d'Aquarelle est un morceau posé **derrière** la tête : le bas du
 museau, peint comme la tête l'aurait peint, et au-dessus, cachés tant que la
@@ -170,7 +170,7 @@ role = "lip"
 [[bone]]
 name = "meche-1"
 parent = "corps"
-at = [644, 686]
+at = [616, 694]
 role = "sway"
 ```
 
@@ -190,7 +190,12 @@ role = "sway"
 - **La lèvre** : le morceau de la tête qui la peint, posé par-dessus la
   tête, et juste avant lui (sur l'os de la tête) la gencive qu'elle découvre.
 - **Les mèches** : des festons du bas de la toison, détachés du corps et
-  posés juste avant lui, dessous : au repos, rien ne change.
+  posés juste avant lui, dessous : au repos, rien ne change. Prends chacun
+  d'un creux du contour au suivant (la corde entre les deux creux est son
+  attache, son milieu le pivot de l'os) : une mèche coupée au milieu d'un
+  feston s'ouvrirait en encoche en penchant. Au-dessus de la corde, la
+  mèche déborde sous le corps, qui s'y fond ; sous la corde, ses côtés sont
+  nets.
 
 Voir `tools/mouflon-peintre` : `split_joint` coupe une patte peinte à son
 articulation, `split_lock` détache une mèche, `paint_neck` peint l'encolure
@@ -291,5 +296,6 @@ cargo run --release -p mouflon-preview -- pets/aquarelle/pet.toml apercu poses
 
 donne une planche de poses (debout, au pas, au galop, en l'air, tenu,
 couché, endormi, en broutant) ; `gestes` et `allures` (les allures phase
-par phase, le coucher, le saut) montrent les articulations. `video` à la place de `poses` donne une
+par phase, le coucher, le saut) montrent les articulations, `toison` les
+mèches. `video` à la place de `poses` donne une
 scène de 18 secondes, image par image.

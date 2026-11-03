@@ -55,6 +55,7 @@ cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu gestes 
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu poses
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu jeux     # jeux d'agneaux
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures  # pas, trot, galop phase par phase, coucher, saut
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu toison   # les mèches : galop, arrêt net, secousse, vent
 ```
 
 Regarde toujours les images produites avant de dire qu'un dessin ou une

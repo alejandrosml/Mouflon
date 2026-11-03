@@ -40,6 +40,14 @@
 //!
 //! `soucoupe` : une soucoupe emporte un animal ; on lui en lance un autre
 //! dessus : elle le lâche, fume, puis s'enfuit ou tombe.
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> toison
+//! ```
+//!
+//! `toison` : les mèches (`sway`) d'un mouton simulé, à dix instants : au
+//! repos, au galop, après un arrêt net, quand il s'ébroue, puis dans un coup
+//! de vent qui le prend de dos.
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -102,6 +110,11 @@ fn main() -> Result<(), Error> {
         let path = out_dir.join("allures.png");
         render_gaits(&art, &path)?;
         println!("planche des allures, phase par phase : {}", path.display());
+    }
+    if mode == "toison" {
+        let path = out_dir.join("toison.png");
+        render_fleece(&def, &art, &path)?;
+        println!("planche de la toison : {}", path.display());
     }
     if mode == "video" || mode == "all" || mode == "troupeau" {
         let frames = out_dir.join("frames");
@@ -1904,6 +1917,55 @@ fn render_gaits(art: &PetArt, path: &Path) -> Result<(), Error> {
         ..base
     }));
     draw_cases(art, path, cases, 4)
+}
+
+/// La toison qui bouge, sur un vrai mouton simulé : au repos, au galop,
+/// juste après un arrêt net (les mèches partent vers l'avant, puis
+/// reviennent), pendant qu'il s'ébroue, puis un coup de vent dans le dos.
+fn render_fleece(def: &Arc<mouflon_core::PetDef>, art: &PetArt, path: &Path) -> Result<(), Error> {
+    const DT: f32 = 1.0 / 120.0;
+    let world = World::new(vec![screen()]);
+    let mut flock = Flock::new();
+    let id = flock.spawn(Arc::clone(def), 7, &world, Some(150.0));
+    let input = Input {
+        local_hour: 15.0,
+        ..Input::default()
+    };
+    let shots = [1.8, 2.6, 3.1, 3.25, 3.4, 3.6, 3.9, 4.8, 4.86, 7.0];
+    let mut cases: Vec<PoseCase> = Vec::new();
+    let mut t = 0.0;
+    let mut next = 0;
+    let mut blown = false;
+    while next < shots.len() {
+        let wanted = match t {
+            t if t < 2.0 => "stand",
+            t if t < 3.2 => "run",
+            t if t < 4.6 => "stand",
+            t if t < 5.5 => "shake",
+            _ => "stand",
+        };
+        if t >= 5.8 && !blown {
+            flock.blow(1.0, 4.0);
+            blown = true;
+        }
+        if let Some(pet) = flock.get_mut(id)
+            && pet.behavior_name() != wanted
+            && (wanted != "shake" || t < 4.62)
+        {
+            pet.face(1.0);
+            pet.force(wanted);
+        }
+        flock.advance(DT, &world, &input);
+        t += DT;
+        if t >= shots[next] {
+            if let Some(pet) = flock.pets().iter().find(|p| p.id() == id) {
+                let view = pet.view(1.0);
+                cases.push((view.pose, view.facing, Some(0.0), vec![]));
+            }
+            next += 1;
+        }
+    }
+    draw_cases(art, path, cases, 5)
 }
 
 // ---------------------------------------------------------------- export

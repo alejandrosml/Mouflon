@@ -794,24 +794,15 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
     une partie `name` dessinée par-dessus, qui tourne autour de `pivot` (la
     lèvre). `source` garde ses remplissages opaques entiers (cachés au repos),
     et `under` (des éléments : la gencive) se pose entre les deux : c'est ce
-    qu'on voit quand la partie se soulève."""
+    qu'on voit quand la partie se soulève. Les groupes sans nom de `source`
+    sont coupés comme le reste ; ses parties (un groupe nommé : la mâchoire,
+    les yeux, les oreilles) restent entières à leur place."""
     _, _, src = _find(root, source)
     area = Polygon(area)
     outside = box(-1000, -1000, 1000, 1000).difference(area)
-    keep = []
-    for child in list(src):
-        tag = _tag(child)
-        if tag == "g" or child.get("id", "").startswith("pivot-"):
-            keep.append(child)
-            continue
-        keep += _clip_element(child, outside, paints, opaque_extra=area,
-                              inherited=_inherit(src, None))
-    lifted = ET.Element(Q + "g", {"id": name})
-    for child in list(src):
-        if _tag(child) == "g" or child.get("id", "").startswith("pivot-"):
-            continue
-        for piece in _clip_element(child, area, paints, inherited=_inherit(src, None)):
-            lifted.append(piece)
+    keep, lifted = _split_tree(src, area, outside, paints, None)
+    lifted.attrib.clear()
+    lifted.set("id", name)
     lifted.append(_pivot(name, pivot))
     for child in list(src):
         src.remove(child)
@@ -825,6 +816,32 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
     for c in pivots:
         src.append(c)
     return lifted
+
+
+def _split_tree(group, area, outside, paints, inherited):
+    """Ce qui reste d'un groupe hors de `area` (ses remplissages opaques
+    entiers) et ce qui en est soulevé (ce qu'il dessine dans `area`), dans
+    deux copies du groupe. Ses parties (groupes nommés) et ses pivots restent
+    entiers dans la première."""
+    keep = ET.Element(group.tag, dict(group.attrib))
+    lift = ET.Element(group.tag, dict(group.attrib))
+    inner = _inherit(group, inherited) if inherited is not None else _inherit(group, None)
+    for child in group:
+        tag = _tag(child)
+        if child.get("id") and (tag == "g" or child.get("id", "").startswith("pivot-")):
+            keep.append(child)
+        elif tag == "g":
+            k, l = _split_tree(child, area, outside, paints, inner)
+            if len(k):
+                keep.append(k)
+            if len(l):
+                lift.append(l)
+        elif tag in DRAWN:
+            keep.extend(_clip_element(child, outside, paints, opaque_extra=area, inherited=inner))
+            lift.extend(_clip_element(child, area, paints, inherited=inner))
+        else:
+            keep.append(child)
+    return keep, lift
 
 
 def clip_away(root, paints, gid, polygon):

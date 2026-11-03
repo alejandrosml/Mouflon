@@ -20,7 +20,7 @@ use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
 use crate::animate::{
     Gait, LIP_CURL, about, absorb, ease, leg_phase, muzzle_of, root_transform, rotate_about,
-    scale_about, stepping, stride_scale, sway, untilt,
+    scale_about, stepping, stride_scale, sway, sway_shear, untilt,
 };
 use crate::display::{Bitmap, Command, DisplayList};
 use crate::gesture::{Gesturing, ears_turn, gesturing, leg_slot, with_posture};
@@ -56,8 +56,6 @@ pub struct SkeletonArt {
     pieces: Vec<PieceArt>,
     /// Ce qui est dessiné, dans la toile (pixels).
     pub bounds: Rect,
-    /// Ce que montrent les morceaux posés sur chaque os, dans la toile.
-    own: Vec<Option<Rect>>,
     /// Ce que montrent un os et tous ceux qu'il porte.
     carried: Vec<Option<Rect>>,
     /// Des paupières peintes : les yeux ne s'écrasent pas pour se fermer.
@@ -75,6 +73,10 @@ pub struct SkeletonArt {
     legs: [Option<(usize, usize, LegRest)>; 4],
     /// Le sabot de l'antérieur qu'on voit, au repos.
     fore_hoof: Point,
+    /// La toison : ce que montrent les morceaux du corps, de l'encolure et
+    /// des mèches (le moteur couche et incline l'animal d'après elle :
+    /// découper la toison en morceaux ne la change pas).
+    fleece: Option<Rect>,
 }
 
 /// Les transformations d'une image.
@@ -336,11 +338,22 @@ impl SkeletonArt {
                 bounds.center().x + bounds.height() * 0.3,
                 f64::from(skeleton.ground.y),
             ));
+        let fleece = skeleton
+            .bones
+            .iter()
+            .zip(&own)
+            .filter(|(bone, _)| {
+                matches!(
+                    bone.role,
+                    Some(BoneRole::Body | BoneRole::Neck | BoneRole::Sway)
+                )
+            })
+            .filter_map(|(_, rect)| *rect)
+            .reduce(|a, b| a.union(b));
         Ok(Self {
             skeleton,
             pieces,
             bounds,
-            own,
             carried,
             painted_lids,
             rank,
@@ -348,6 +361,7 @@ impl SkeletonArt {
             neck,
             legs,
             fore_hoof,
+            fleece,
         })
     }
 
@@ -507,10 +521,7 @@ impl SkeletonArt {
         let (sit, sleep, air) = (f(p.sit), f(p.sleep), f(p.air));
         let graze = ease(0.0, 1.0, f(p.graze));
         let act = with_posture(gesturing(s), s);
-        let body = self
-            .role(BoneRole::Body)
-            .and_then(|b| self.own[b])
-            .unwrap_or(self.bounds);
+        let body = self.fleece.unwrap_or(self.bounds);
         let clearance = (g.y - body.max_y() - 0.6 * u).max(0.0);
         let front_down = ease(0.0, 0.65, sit);
         let back_down = ease(0.35, 1.0, sit);
@@ -790,9 +801,7 @@ impl Engine {
             }
             // Elle se retrousse vers le haut, autour de son articulation.
             BoneRole::Lip => parent * rotate_about(at, -LIP_CURL * self.act.lip),
-            BoneRole::Sway => {
-                parent * rotate_about(at, sway(s, &self.act, self.facing, rank.min(2)))
-            }
+            BoneRole::Sway => parent * sway_shear(at, sway(s, &self.act, self.facing, rank.min(2))),
             BoneRole::Leg { front, near } if self.legs[leg_slot(front, near)].is_some() => {
                 self.legs[leg_slot(front, near)].map_or(parent, |l| l.0)
             }

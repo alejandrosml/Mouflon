@@ -85,10 +85,14 @@ const GRAZE_STEP_SPEED: f32 = 0.4;
 const BOLUS_CHEW: (f32, f32) = (9.0, 16.0);
 const BOLUS_PAUSE: (f32, f32) = (1.6, 3.0);
 /// La toison : les mèches sont des ressorts amortis (Hz), plus lents que la
-/// queue ; elles traînent de tant de radians par point par seconde de vitesse.
+/// queue ; elles traînent de tant de radians par point par seconde de vitesse,
+/// penchent de tant par point par seconde² d'accélération du corps (physique
+/// réaliste), et de tant au plus fort d'un coup de vent.
 const FLEECE_HZ: f32 = 2.0;
 const FLEECE_TIP_HZ: f32 = 1.6;
 const FLEECE_DRAG: f32 = 0.0016;
+const FLEECE_SURGE: f32 = 0.0003;
+const FLEECE_WIND: f32 = 0.3;
 /// L'horloge d'un animal (voir [`PoseSignals::clock`]) repart de zéro toutes
 /// les heures : elle garde sa précision.
 pub const CLOCK_LOOP: f32 = 3600.0;
@@ -351,10 +355,11 @@ pub struct PoseSignals {
     pub sleep_low: f32,
     /// Une patte qui tressaille dans le sommeil (0–1, retombe aussitôt).
     pub twitch: f32,
-    /// La toison qui bouge (radians, positif : les mèches partent vers
-    /// l'arrière) : elle traîne quand il court, se balance à chaque pas,
-    /// penche dans le vent. Les mèches du bout (`fleece_tip`, par rapport
-    /// aux premières) suivent avec un temps de retard.
+    /// La toison qui bouge (radians, positif : le bas des mèches part vers
+    /// l'arrière) : elle traîne quand il court, balance au rythme des pas,
+    /// penche quand le corps freine ou démarre (physique réaliste) et dans le
+    /// vent. Les mèches du bout (`fleece_tip`, par rapport aux premières)
+    /// suivent avec un temps de retard.
     pub fleece: f32,
     pub fleece_tip: f32,
 }
@@ -2679,12 +2684,17 @@ impl Pet {
         let stride_walk = self.def.stride();
         // Physique réaliste : l'inertie des oreilles et de la queue quand le
         // corps accélère (une fenêtre qui l'emporte, un choc…).
-        let inertia = if realistic && dt > 0.0 {
+        let surge = if realistic && dt > 0.0 {
             let accel = (self.vel + self.carry - self.prev_world_vel) * (1.0 / dt);
             -accel.x * self.facing
         } else {
             0.0
-        } + self.wind * self.facing * 0.5;
+        };
+        let inertia = surge + self.wind * self.facing * 0.5;
+        // Ce qui pousse la toison vers l'avant de l'animal (négatif : vers
+        // l'arrière) : l'élan du corps qui freine, le vent dans le dos.
+        let fleece_push = (surge * FLEECE_SURGE).clamp(-0.3, 0.3)
+            + self.wind * self.facing / crate::surprise::GUST_PEAK * FLEECE_WIND;
         let wind = self.wind;
         let Self {
             anim: a,
@@ -2865,11 +2875,14 @@ impl Pet {
         a.tail_tip.target = a.tail_mid.value;
         a.tail_tip.step(dt);
         // La toison : les mèches traînent avec la vitesse (la résistance de
-        // l'air), suivent l'élan du corps et le vent, et sautillent à chaque
-        // appui ; celles du bout suivent les premières avec un temps de retard.
+        // l'air) ; ce qui pousse l'animal vers l'avant (il freine, le vent
+        // dans le dos) porte leur bout vers l'avant (un angle négatif), ce
+        // qui le pousse vers l'arrière (il démarre, le vent dans le museau)
+        // vers l'arrière ; elles balancent au rythme des pas. Celles du bout
+        // suivent les premières avec un temps de retard.
         let bounce = (0.04 * a.walk + 0.05 * a.trot + 0.07 * a.run) * (2.0 * a.gait_phase).sin();
         a.fleece.target =
-            (along * FLEECE_DRAG).clamp(-0.35, 0.35) + (inertia * 0.0002).clamp(-0.4, 0.4) + bounce;
+            ((along * FLEECE_DRAG).clamp(-0.35, 0.35) - fleece_push + bounce).clamp(-0.6, 0.6);
         a.fleece.step(dt);
         a.fleece_tip.target = a.fleece.value;
         a.fleece_tip.step(dt);
@@ -5575,6 +5588,34 @@ mod tests {
         }
         assert!(trailing > 0.12, "les mèches traînent : {trailing}");
         assert!(lag > 0.005, "le bout suit avec retard : {lag}");
+    }
+
+    #[test]
+    fn the_wind_blows_the_fleece_the_way_it_goes() {
+        // Un mouton tourné vers la droite : le vent qui souffle vers la droite
+        // (dans son dos) porte le bout des mèches vers l'avant (angle
+        // négatif) ; le vent dans le museau, vers l'arrière.
+        let world = world();
+        let peak = crate::surprise::GUST_PEAK;
+        for (wind, forward) in [(peak, true), (-peak, false)] {
+            let mut pet = standing(bundled("mannequin"), &world, 600.0, 1.0, "stand");
+            pet.behavior_length = 60.0;
+            run(&mut pet, &world, 1.0);
+            let mut extreme = 0.0f32;
+            for _ in 0..(1.0 / TICK) as usize {
+                pet.wind = wind;
+                pet.step(TICK, &world, &Input::default());
+                let fleece = pet.view(1.0).pose.fleece;
+                if fleece.abs() > extreme.abs() {
+                    extreme = fleece;
+                }
+            }
+            if forward {
+                assert!(extreme < -0.15, "vent dans le dos : {extreme}");
+            } else {
+                assert!(extreme > 0.15, "vent dans le museau : {extreme}");
+            }
+        }
     }
 
     #[test]

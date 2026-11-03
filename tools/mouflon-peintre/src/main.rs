@@ -1087,26 +1087,62 @@ fn paint_gum() -> Layer {
     layer
 }
 
-/// Les mèches de la toison : deux festons du bas du ventre, de x0 à x1,
-/// sous la hauteur y (leur attache).
-const LOCKS: [(f32, f32, f32); 2] = [(598.0, 690.0, 686.0), (470.0, 560.0, 690.0)];
+/// Les mèches de la toison : deux festons du ventre, entre les pattes, de
+/// l'avant vers l'arrière. Chacun va d'un creux du contour au suivant
+/// (cherchés près de ces abscisses, voir [`valley`]) : la corde entre les
+/// deux creux est son attache, son milieu le pivot de son os.
+const LOCKS: [(f32, f32); 2] = [(656.0, 576.0), (576.0, 496.0)];
 
-/// Détache de la toison ce qu'elle peint dans le rectangle `area` (x0, x1,
-/// y : tout ce qui est plus bas) : une mèche, peinte sous le corps, qui
-/// déborde de `band` pixels sous lui ; le corps s'y fond sur `band` pixels.
-/// Au repos, rien ne change.
-fn split_lock(layer: &Layer, area: (f32, f32, f32), band: f32) -> (Layer, Layer) {
-    let (x0, x1, y0) = area;
+/// Le creux du bas de la toison le plus proche de `x`, à 12 pixels près : le
+/// point où son bord du bas (là où l'opacité passe un demi) remonte le plus
+/// haut ; au milieu, s'il est plat sur quelques colonnes.
+fn valley(layer: &Layer, x: f32) -> (f32, f32) {
+    let bottom = |col: usize| (0..H).rev().find(|&y| layer.px[y * W + col][3] > 0.5);
+    let guess = x.round() as usize;
+    let cols: Vec<(usize, usize)> = (guess - 12..=guess + 12)
+        .filter_map(|c| bottom(c).map(|y| (c, y)))
+        .collect();
+    let top = cols
+        .iter()
+        .map(|&(_, y)| y)
+        .min()
+        .expect("le bas de la toison");
+    let at: Vec<usize> = cols
+        .iter()
+        .filter(|&&(_, y)| y == top)
+        .map(|&(c, _)| c)
+        .collect();
+    let mid = at.iter().sum::<usize>() as f32 / at.len() as f32;
+    (mid + 0.5, top as f32 + 1.0)
+}
+
+/// Détache de la toison ce qu'elle peint sous la corde `a`–`b` (deux creux
+/// du contour), entre les verticales de ses deux bouts : une mèche, peinte
+/// sous le corps. Au-dessus de la corde, la mèche déborde de `band` pixels
+/// sous le corps, qui s'y fond sur `band` pixels : en penchant, elle ne
+/// découvre rien. Sous la corde, ses côtés sont nets : il n'y passe que le
+/// vide entre deux festons, et la mèche n'emporte rien de ses voisines. Au
+/// repos, rien ne change.
+fn split_lock(layer: &Layer, a: (f32, f32), b: (f32, f32), band: f32) -> (Layer, Layer) {
+    let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+    let slope = (b.1 - a.1) / (b.0 - a.0);
+    let norm = (1.0 + slope * slope).sqrt();
     let mut lock = vec![0.0; W * H];
     let mut body = vec![0.0; W * H];
     for y in 0..H {
         for x in 0..W {
             let i = y * W + x;
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            // La distance (signée) au bord de la zone : positive dedans.
-            let d = (py - y0).min(px - x0).min(x1 - px);
-            lock[i] = smoothstep(-2.0 * band, -band, d);
-            body[i] = 1.0 - smoothstep(-band, 0.0, d);
+            // Sous la corde (positif), et entre ses deux bouts (positif).
+            let below = (py - a.1 - slope * (px - a.0)) / norm;
+            let inside = (px - x0).min(x1 - px);
+            let within = if inside >= 0.0 { 1.0 } else { 0.0 };
+            lock[i] = if below >= 0.0 {
+                within
+            } else {
+                smoothstep(-2.0 * band, -band, below) * smoothstep(-2.0 * band, -band, inside)
+            };
+            body[i] = 1.0 - smoothstep(-band, 0.0, below) * within;
         }
     }
     (layer.masked(&lock), layer.masked(&body))
@@ -1153,8 +1189,15 @@ fn main() {
     // L'encolure (les boucles de l'avant de la toison) et deux mèches (des
     // festons du ventre), peintes sous le corps.
     let encolure = paint_neck(&p);
-    let (meche_1, corps) = split_lock(&paint_body(&p), LOCKS[0], 8.0);
-    let (meche_2, corps) = split_lock(&corps, LOCKS[1], 8.0);
+    let corps = paint_body(&p);
+    let [(a1, b1), (a2, b2)] = LOCKS.map(|(a, b)| (valley(&corps, a), valley(&corps, b)));
+    for (i, (a, b)) in [(a1, b1), (a2, b2)].into_iter().enumerate() {
+        // Les attaches des mèches, à recopier dans `squelette.toml`.
+        let (x, y) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        println!("mèche {} : [{x:.0}, {y:.0}]", i + 1);
+    }
+    let (meche_1, corps) = split_lock(&corps, a1, b1, 8.0);
+    let (meche_2, corps) = split_lock(&corps, a2, b2, 8.0);
     let tete = paint_head(&p);
     let levre = paint_lip(&tete);
     // Dans l'ordre où ils se posent, de l'arrière vers l'avant.

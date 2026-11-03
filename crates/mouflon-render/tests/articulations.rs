@@ -73,6 +73,13 @@ fn angle(t: Affine) -> f64 {
     b.atan2(a)
 }
 
+/// De combien une transformation penche la verticale (radians ; positif : le
+/// bas part vers l'arrière, les x négatifs). Une rotation ou un cisaillement.
+fn lean(t: Affine) -> f64 {
+    let [_, _, c, d, ..] = t.as_coeffs();
+    (-c).atan2(d)
+}
+
 fn signals(f: impl FnOnce(&mut PoseSignals)) -> PoseSignals {
     let mut s = PoseSignals::default();
     f(&mut s);
@@ -294,10 +301,24 @@ fn the_flehmen_curls_the_upper_lip_and_raises_the_head() {
 #[test]
 fn the_fleece_trails_when_running_and_swings_when_shaking() {
     let rig = rig();
-    let sway = |s: &PoseSignals| angle(pose(&rig, s, 1.0, 0.0).part(Part::Sway1));
+    let sway = |s: &PoseSignals| lean(pose(&rig, s, 1.0, 0.0).part(Part::Sway1));
     assert!(sway(&PoseSignals::default()).abs() < 1e-9);
     // Les mèches traînent : positif, leur bout part vers l'arrière.
-    assert!(sway(&signals(|s| s.fleece = 0.2)) > 0.15);
+    let trailing = signals(|s| s.fleece = 0.2);
+    assert!(sway(&trailing) > 0.15);
+    // Elles penchent sans quitter leur attache : toute la ligne horizontale
+    // du pivot reste en place (un feston attaché sur toute sa largeur ne
+    // s'ouvre pas), seul le bas part.
+    let t = pose(&rig, &trailing, 1.0, 0.0).part(Part::Sway1);
+    for x in [46.0, 50.0, 54.0] {
+        let p = Point::new(x, 75.0);
+        assert!((t * p - p).hypot() < 1e-9, "{x}");
+    }
+    let bottom = t * Point::new(50.0, 84.0);
+    assert!(
+        bottom.x < 50.0 - 1.0 && (bottom.y - 84.0).abs() < 1e-9,
+        "{bottom:?}"
+    );
     // Elles suivent la secousse, d'un côté puis de l'autre.
     let shaking: Vec<f64> = (0..24)
         .map(|i| {
@@ -477,7 +498,7 @@ fn a_skeleton_grazes_with_its_neck_and_folds_its_legs_when_lying() {
     let lip = flehmen.bones[6].inverse() * flehmen.bones[7];
     assert!(angle(lip) < -0.6, "{}", angle(lip));
     let trailing = art.pose(&signals(|s| s.fleece = 0.2), 1.0, 0.0);
-    assert!(angle(trailing.bones[1].inverse() * trailing.bones[4]) > 0.15);
+    assert!(lean(trailing.bones[1].inverse() * trailing.bones[4]) > 0.15);
 }
 
 #[test]

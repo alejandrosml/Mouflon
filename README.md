@@ -353,7 +353,7 @@ its behaviors: [docs/format.md](docs/format.md) (all in French).
 | `mouflon-render` | SVG rig, procedural animation, shadow, light, particles; everything as pieces of image (rigs, shadows and discs baked with tiny-skia); SVG output | forbidden |
 | `mouflon-platform` | other apps' windows (and their moves, with Accessibility), screens, cursor, the user's activity (when, never what), languages, the Dock (Accessibility), non-activating screen windows, Core Animation layers and the display clock, settings window, gallery and a pet's menu (AppKit), the menu bar icon, Mouflon's windows in front of its pets, keyboard shortcuts in every app (Carbon hot keys) and the Escape key (Accessibility), opening at login | isolated and commented |
 | `mouflon-app` | one transparent window per screen (winit), the display thread (flock, scene of layers, timing), GPU renderer for systems without layers (wgpu), input, native menu, translations | forbidden |
-| `tools/mouflon-preview` | off-screen preview: poses, gaits and gestures, video scene, flock, encounter, lamb play, image sheet, icon | forbidden |
+| `tools/mouflon-preview` | off-screen preview: poses, gaits and gestures, fleece, video scene, flock, encounter, lamb play, image sheet, icon | forbidden |
 | `tools/mouflon-licenses` | gathers the licenses of the libraries built into the app | forbidden |
 | `tools/inbetween` | computes the in-between images of a pet, once (Python script, RIFE network), not part of the app | — |
 | `tools/essai` | the three-minute trial (a double-clickable script) and the reading of its journal and surroundings (Python script) | — |
@@ -382,6 +382,10 @@ cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
 
 # The gaits phase by phase, lying down and jumping (the knees and hocks):
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures
+
+# The fleece: its locks at rest, at a gallop, after a sudden stop, while it
+# shakes itself, then in a gust of wind from behind:
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu toison
 
 # Lambs at play: two butt heads, a ram backs up and charges, then twisting
 # leaps and a spin in the air:
@@ -794,7 +798,7 @@ squelette) ; pour régler ses comportements : [docs/format.md](docs/format.md).
 | `mouflon-render` | rig SVG, animation procédurale, ombre, lumière, particules ; tout en morceaux d'image (rigs, ombres et disques cuits avec tiny-skia) ; sortie SVG | interdit |
 | `mouflon-platform` | fenêtres des autres apps (et leurs déplacements, avec l'Accessibilité), écrans, curseur, activité de l'utilisateur (quand, jamais quoi), langues, Dock (Accessibilité), fenêtres d'écran non activantes, calques Core Animation et horloge de l'écran, fenêtre des réglages, galerie et menu d'un animal (AppKit), icône de la barre des menus, fenêtres de Mouflon devant ses animaux, raccourcis clavier dans toutes les apps (« hot keys » de Carbon) et touche Échap (Accessibilité), ouverture à l'ouverture de session | isolé et commenté |
 | `mouflon-app` | une fenêtre transparente par écran (winit), le fil de l'affichage (troupeau, scène de calques, rythme), dessin sur le GPU pour les systèmes sans calques (wgpu), entrées, menu natif, traductions | interdit |
-| `tools/mouflon-preview` | aperçu hors écran : poses, allures et gestes, scène vidéo, troupeau, rencontre, jeux d'agneaux, planche d'images, icône | interdit |
+| `tools/mouflon-preview` | aperçu hors écran : poses, allures et gestes, toison, scène vidéo, troupeau, rencontre, jeux d'agneaux, planche d'images, icône | interdit |
 | `tools/mouflon-licenses` | réunit les licences des bibliothèques compilées dans l'app | interdit |
 | `tools/inbetween` | calcule une fois pour toutes les images intermédiaires d'un animal (script Python, réseau RIFE), hors de l'app | — |
 | `tools/essai` | l'essai de trois minutes (un script à double-cliquer) et la lecture de son journal et de ses alentours (script Python) | — |
@@ -824,6 +828,10 @@ cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
 
 # Les allures phase par phase, le coucher et le saut (le carpe et le jarret) :
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures
+
+# La toison : ses mèches au repos, au galop, après un arrêt net, quand il
+# s'ébroue, puis dans un coup de vent qui le prend de dos :
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu toison
 
 # Les jeux d'agneaux : deux qui se cognent le front, un bélier qui recule puis
 # charge, puis des sauts tordus et un demi-tour en l'air :

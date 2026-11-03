@@ -55,7 +55,7 @@ Toutes sont facultatives.
 | `neck` | l'encolure, qui porte la tête (`head` dedans) : elle descend pour brouter, se redresse aux aguets, se tend quand il fonce, s'allonge vers l'avant quand il dort la tête au sol | la base de l'encolure, devant le garrot, dans l'épaule |
 | `leg-front-near-lower`… (dans sa patte) | le bas de chaque patte (le canon et le sabot) : il plie au carpe (devant) ou au jarret (derrière) | le carpe ou le jarret |
 | `lip` (dans `head`) | la lèvre supérieure : elle se retrousse pour le flehmen | son arrière, sous le naseau |
-| `sway-1`, `sway-2`, `sway-3` (dans `body`, ou juste avant lui) | des mèches de la toison : elles traînent quand il court, balancent à chaque pas, penchent dans le vent, suivent la secousse quand il s'ébroue | leur attache, en haut |
+| `sway-1`, `sway-2`, `sway-3` (dans `body`, ou juste avant lui) | des mèches de la toison : elles traînent quand il court, balancent au rythme des pas, penchent dans le vent, suivent la secousse quand il s'ébroue | le milieu de leur attache, en haut |
 
 Et un point qui n'est pas une partie : `pivot-muzzle`, ce qui touche l'herbe
 quand il broute (le bout du museau, sous les naseaux). Sans lui, le moteur
@@ -139,7 +139,13 @@ un bourrelet rose). `pivot-lip` à son arrière.
 **Les mèches** (`sway-1`, `sway-2`, `sway-3`) : des boucles ou des mèches qui
 pendent. Le plus sûr est de les prendre dans la toison elle-même (des
 festons du bas du ventre, posés juste avant le corps, dessous) : au repos,
-rien ne change. Elles sont éclairées comme le corps.
+rien ne change. Une mèche **penche** sans quitter son attache : le moteur la
+cisaille autour de la ligne horizontale de son pivot, qui ne bouge pas, et
+seul son bas part vers l'arrière ou vers l'avant. Coupe donc chaque feston
+d'un creux du contour au suivant, et pose son pivot au milieu de la corde
+entre les deux creux : seuls les creux touchent les voisins, et ils bougent
+à peine ; un bord coupé au milieu d'un feston s'ouvrirait en encoche dès
+que la mèche penche. Elles sont éclairées comme le corps.
 
 Un exemple, réduit à l'essentiel :
 
