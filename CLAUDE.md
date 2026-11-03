@@ -82,8 +82,9 @@ pose est juste. `apercu/` n'est pas versionné.
 - Branche de travail : `fenetres-dock` (pull request n° 2), sauf indication
   contraire.
 - La CI (`.github/workflows/ci.yml`) teste sous Linux, construit l'app Mac
-  (artefact `Mouflon-macos-arm64`), puis fait trois essais sur un Mac
-  virtuel (trois minutes, GPU, charge) et vérifie leurs budgets :
+  (artefact `Mouflon-macos-arm64`), puis fait quatre essais sur un Mac
+  virtuel (trois minutes, une minute avec les quatre races, GPU, charge) et
+  vérifie leurs budgets :
   `python3 tools/essai/analyse.py --budget <dossier>` doit dire « tenu »
   (aucun à-coup dû à Mouflon) et ne relever aucun saut de position. Les
   journaux sont dans l'artefact `essai-journal`.

@@ -79,6 +79,18 @@ jobs:
             bash "tools/essai/Essai de 3 minutes.command" | tee essai-console.log
           grep -q "essai terminé" essais/*/sortie.log
 
+      # Une minute avec les quatre races dessinées d'après nature (des
+      # dessins vectoriels de quelques centaines de Ko, cuits en images) :
+      # elles se chargent, vivent et s'affichent sur les calques Core
+      # Animation sans planter ; leurs budgets sont vérifiés avec les autres.
+      - name: Essai d'une minute, les quatre races
+        run: |
+          MOUFLON_ESSAI_CI=1 MOUFLON_ESSAI_DUREE=60 MOUFLON_ESSAI_SUFFIXE=races \
+            MOUFLON_ESSAI_ANIMAUX=mouflon-corse,nez-noir,jacob,ouessant \
+            perl -e 'alarm 240; exec @ARGV' \
+            bash "tools/essai/Essai de 3 minutes.command" | tee essai-races-console.log
+          grep -q "essai terminé" essais/*-races/sortie.log
+
       # La même chose en une minute, les animaux dessinés sur le GPU
       # (`MOUFLON_GPU`, l'autre façon d'afficher, gardée pour les autres
       # systèmes) : qu'elle tourne sans planter. Un échec ne fait pas
@@ -145,6 +157,7 @@ jobs:
             essai-console.log
             essai-gpu-console.log
             essai-charge-console.log
+            essai-races-console.log
             essais/
 
       - name: Publier la version

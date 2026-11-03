@@ -21,7 +21,10 @@
 # MOUFLON_ESSAI_INSTANTANES=1 pour des instantanés de ce qui est à l'écran
 # (dans instantanes/ ; chacun retient l'affichage quelques millisecondes) ;
 # MOUFLON_ESSAI_CHARGE=1 pour un essai de charge (voir « Essai de
-# charge.command »).
+# charge.command ») ; MOUFLON_ESSAI_ANIMAUX pour d'autres animaux au
+# départ (leurs identifiants, « lainou,pelote » par défaut) ;
+# MOUFLON_ESSAI_SUFFIXE pour marquer le dossier des résultats (« races »
+# donne essais/<date>-races/).
 
 set -u
 DUREE="${MOUFLON_ESSAI_DUREE:-180}"
@@ -29,6 +32,8 @@ CI="${MOUFLON_ESSAI_CI:-}"
 GPU="${MOUFLON_ESSAI_GPU:-}"
 CHARGE="${MOUFLON_ESSAI_CHARGE:-}"
 INSTANTANES="${MOUFLON_ESSAI_INSTANTANES:-}"
+ANIMAUX="${MOUFLON_ESSAI_ANIMAUX:-lainou,pelote}"
+SUFFIXE="${MOUFLON_ESSAI_SUFFIXE:-}"
 
 # Le dossier du projet : celui de ce fichier, ou deux crans au-dessus
 # (tools/essai/ dans le dépôt).
@@ -41,7 +46,7 @@ if [ ! -x "$BIN" ]; then
     echo "Mouflon introuvable : $APP"
     exit 1
 fi
-OUT="$racine/essais/$(date +%Y-%m-%d_%Hh%M)${GPU:+-gpu}${CHARGE:+-charge}"
+OUT="$racine/essais/$(date +%Y-%m-%d_%Hh%M)${GPU:+-gpu}${CHARGE:+-charge}${SUFFIXE:+-$SUFFIXE}"
 mkdir -p "$OUT"
 REPERES="$OUT/reperes.txt"
 debut=$(date +%s)
@@ -146,7 +151,7 @@ touch "$OUT/.debut"
 debut=$(date +%s)
 repere "lancement de Mouflon"
 MOUFLON_ESSAI="$DUREE" MOUFLON_ESSAI_COLLISIONS=1 \
-    MOUFLON_ESSAI_ANIMAUX=lainou,pelote MOUFLON_GPU="${GPU:+1}" \
+    MOUFLON_ESSAI_ANIMAUX="$ANIMAUX" MOUFLON_GPU="${GPU:+1}" \
     MOUFLON_ESSAI_CHARGE="${CHARGE:+1}" \
     MOUFLON_INSTANTANES="${INSTANTANES:+$OUT/instantanes}" \
     MOUFLON_JOURNAL="$OUT/journal.log" \

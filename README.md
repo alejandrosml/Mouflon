@@ -242,7 +242,10 @@ the GPU in each screen's window instead of Core Animation layers
 (`MOUFLON_GPU=1`; the images are then made on the main thread), to compare the
 two; its results go to `essais/<date>-gpu/`. `Essai de charge.command` adds
 pets in steps (20, then 100, 500 and 1,000) for two and a half minutes, and the
-analysis measures each step; its results go to `essais/<date>-charge/`.
+analysis measures each step; its results go to `essais/<date>-charge/`. The
+script takes other pets with `MOUFLON_ESSAI_ANIMAUX` (their ids) and marks the
+results folder with `MOUFLON_ESSAI_SUFFIXE`: the CI also runs a one-minute
+trial with the four breeds (`essais/<date>-races/`).
 
 Without the script: `MOUFLON_ESSAI=180` runs a trial of 180 seconds
 (`MOUFLON_JOURNAL` names the journal, `mouflon-essai.log` by default),
@@ -669,7 +672,10 @@ Animation (`MOUFLON_GPU=1` ; les images se font alors sur le fil principal),
 pour comparer les deux ; ses résultats vont dans `essais/<date>-gpu/`.
 `Essai de charge.command` fait arriver des animaux par paliers (20, puis 100,
 500 et 1 000) pendant deux minutes et demie, et l'analyse mesure chaque
-palier ; ses résultats vont dans `essais/<date>-charge/`.
+palier ; ses résultats vont dans `essais/<date>-charge/`. Le script prend
+d'autres animaux avec `MOUFLON_ESSAI_ANIMAUX` (leurs identifiants) et marque
+le dossier des résultats avec `MOUFLON_ESSAI_SUFFIXE` : la CI fait aussi un
+essai d'une minute avec les quatre races (`essais/<date>-races/`).
 
 Sans le script : `MOUFLON_ESSAI=180` lance un essai de 180 secondes
 (`MOUFLON_JOURNAL` nomme le journal, `mouflon-essai.log` par défaut),
