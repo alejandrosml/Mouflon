@@ -13,7 +13,9 @@ avant). Ce script en tire `pets/mannequin/mannequin.svg` :
   à sa base) ; la tête reste par-dessus le corps, à part, et tourne
   désormais à la nuque (le moteur lui fait suivre l'encolure) ;
 - la lèvre supérieure (`lip`), avec la gencive qu'elle découvre ;
-- trois mèches de laine qui pendent sous le corps (`sway-1` à `sway-3`) ;
+- trois festons du bas de la toison détachés en mèches (`sway-1` à
+  `sway-3`), posés sous le corps : au repos rien ne change, en mouvement la
+  frange du ventre balance ;
 - `pivot-muzzle`, ce qui touche l'herbe.
 
     python3 tools/races/mannequin/articule.py
@@ -47,8 +49,9 @@ MUZZLE = (134.0, 71.0)
 LIP = [(129.4, 61.8), (133.0, 60.6), (135.5, 60.4), (137.6, 62.0), (137.6, 67.0),
        (135.9, 66.9), (134.3, 67.9), (132.2, 68.6), (130.0, 68.0), (128.8, 64.4)]
 LIP_PIVOT = (130.2, 62.4)
-# Les mèches sous le corps : (x de l'attache, y de l'attache, longueur, largeur).
-TUFTS = [(99.5, 90.2, 5.6, 6.0), (70.0, 95.6, 5.2, 7.0), (49.5, 93.6, 4.8, 6.2)]
+# Les festons du bas de la toison qui deviennent des mèches : de x0 à x1,
+# sous la hauteur y (leur attache, au milieu).
+LOCKS = [(92.5, 101.5, 86.5), (79.6, 92.0, 90.5), (62.4, 79.4, 91.5)]
 
 
 def gum():
@@ -64,26 +67,6 @@ def gum():
         "d": "M130.2 63.3C132.0 62.3 134.3 62.1 135.9 62.8",
         "fill": "none", "stroke": "#8e4a5b", "stroke-width": "0.6", "stroke-linecap": "round"})
     return [pad, ridge, dark]
-
-
-def tuft(x, y, length, width, name):
-    """Une mèche de laine, attachée en (x, y) sous la toison : sa base,
-    cachée dans le corps, et son bout bouclé, cerné en bas seulement."""
-    w = width / 2
-    b = y + length
-    fill = (f"M{x - w:.2f} {y - 2:.2f}C{x - w - 0.6:.2f} {y + length * 0.55:.2f} {x - w * 0.6:.2f} {b:.2f} {x:.2f} {b:.2f}"
-            f"C{x + w * 0.6:.2f} {b:.2f} {x + w + 0.6:.2f} {y + length * 0.55:.2f} {x + w:.2f} {y - 2:.2f}Z")
-    edge = (f"M{x - w - 0.25:.2f} {y + length * 0.3:.2f}C{x - w - 0.2:.2f} {y + length * 0.75:.2f} {x - w * 0.55:.2f} {b:.2f} {x:.2f} {b:.2f}"
-            f"C{x + w * 0.55:.2f} {b:.2f} {x + w + 0.2:.2f} {y + length * 0.75:.2f} {x + w + 0.25:.2f} {y + length * 0.3:.2f}")
-    curl = (f"M{x - w * 0.35:.2f} {b - length * 0.42:.2f}A{w * 0.42:.2f} {w * 0.42:.2f} 0 0 0 {x + w * 0.45:.2f} {b - length * 0.48:.2f}")
-    g = ET.Element(Q + "g", {"id": name})
-    ET.SubElement(g, Q + "path", {"d": fill, "fill": "url(#wool-body)"})
-    ET.SubElement(g, Q + "path", {"d": edge, "fill": "none", "stroke": "#a9b2c4", "stroke-width": "1.2",
-                                  "stroke-linecap": "round", "stroke-linejoin": "round"})
-    ET.SubElement(g, Q + "path", {"d": curl, "fill": "none", "stroke": "#c9d0de", "stroke-width": "0.9",
-                                  "stroke-linecap": "round"})
-    ET.SubElement(g, Q + "circle", {"id": f"pivot-{name}", "cx": f"{x:.2f}", "cy": f"{y:.2f}", "r": "0.8"})
-    return g
 
 
 def main():
@@ -114,20 +97,9 @@ def main():
             head.remove(c)
     head.append(A._pivot("head", POLL))
     head.append(A._pivot("muzzle", MUZZLE))
-    # Le dégradé de la laine du corps, en coordonnées absolues, pour les mèches.
-    defs = root.find(Q + "defs")
-    wool = ET.SubElement(defs, Q + "linearGradient", {
-        "id": "wool-body", "gradientUnits": "userSpaceOnUse", "x1": "0", "y1": "49", "x2": "0", "y2": "96.6"})
-    for offset, color in (("0", "#ffffff"), ("0.55", "#f4f6fa"), ("1", "#dde3ee")):
-        ET.SubElement(wool, Q + "stop", {"offset": offset, "stop-color": color})
-    _, _, body = A._find(root, "body")
-    pivot = [c for c in body if c.get("id") == "pivot-body"]
-    for c in pivot:
-        body.remove(c)
-    for i, (x, y, length, width) in enumerate(TUFTS):
-        body.append(tuft(x, y, length, width, f"sway-{i + 1}"))
-    for c in pivot:
-        body.append(c)
+    for i, (x0, x1, y) in enumerate(LOCKS):
+        area = [(x0, y), (x1, y), (x1, 130.0), (x0, 130.0)]
+        A.cut_under(root, paints, "body", area, f"sway-{i + 1}", ((x0 + x1) / 2, y), margin=1.5)
     ET.indent(root, space="  ")
     out = ET.tostring(root, encoding="unicode") + "\n"
     with open(OUT, "w") as f:

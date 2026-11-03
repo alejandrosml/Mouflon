@@ -153,6 +153,15 @@ impl Part {
         )
     }
 
+    /// La toison : le corps, l'encolure et les mèches (éclairés ensemble).
+    #[must_use]
+    pub fn is_fleece(self) -> bool {
+        matches!(
+            self,
+            Self::Body | Self::Neck | Self::Sway1 | Self::Sway2 | Self::Sway3
+        )
+    }
+
     /// Le bas d'une patte.
     #[must_use]
     pub fn lower(self) -> Option<Self> {
@@ -429,9 +438,9 @@ impl Builder {
                 .or_insert(rect);
         }
 
-        // L'encolure est de la toison, comme le corps : même silhouette, même
-        // lumière.
-        let in_body = matches!(self.open_parts.last(), Some(Part::Body | Part::Neck));
+        // L'encolure et les mèches sont de la toison, comme le corps : même
+        // silhouette, même lumière.
+        let in_body = self.open_parts.last().is_some_and(|p| p.is_fleece());
         if let Some(fill) = path.fill() {
             if in_body {
                 let (sil, t) = self

@@ -71,8 +71,8 @@ impl BakedRig {
         let mut run: Vec<usize> = Vec::new();
         let mut flush = |run: &mut Vec<usize>, parts: &[Part]| -> Option<()> {
             if let Some(&first) = run.first() {
-                // Le corps et l'encolure (de la toison) sont éclairés.
-                let lit = matches!(parts.last(), Some(Part::Body | Part::Neck));
+                // La toison (le corps, l'encolure, les mèches) est éclairée.
+                let lit = parts.last().is_some_and(|p| p.is_fleece());
                 let light = (lit && lighting > 0.0).then_some(lighting);
                 if let Some(piece) = bake_piece(rig, run, scale, light)? {
                     pieces.insert(first, piece);

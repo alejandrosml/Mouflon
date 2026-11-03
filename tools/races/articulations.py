@@ -618,30 +618,38 @@ def split_neck(root, paints, source, pivot, radius, forward, poll, head="head", 
     return group
 
 
-def split_neck_under(root, paints, source, area, pivot, poll, head="head", muzzle=None,
-                     skip_ids=(), margin=2.0):
-    """L'encolure sous le corps, comme une marionnette découpée : ce que le
-    groupe `source` (le corps) dessine dans `area` (un polygone : ce qui
-    dépasse devant l'épaule) devient l'encolure, posée juste avant le corps,
-    qui la recouvre à sa base. Ses remplissages opaques débordent de `margin`
-    sous le corps (aucune jointure ne laisse passer le jour) ; ses traits et
-    ses tracés transparents s'arrêtent net. La tête reste à sa place dans le
-    document (par-dessus le corps) : le moteur la fait suivre l'encolure.
-    `pivot` : la base de l'encolure ; `poll` : la nuque, le nouveau pivot de
-    la tête ; `muzzle` : ce qui touche l'herbe."""
+def cut_under(root, paints, source, area, name, pivot, margin=2.0, skip_ids=()):
+    """Détache de `source` (le corps) ce qu'il dessine dans `area` (un
+    polygone) : une partie `name`, posée juste avant `source` (dessous),
+    qui tourne autour de `pivot`. Ses remplissages opaques débordent de
+    `margin` sous le corps (aucune jointure ne laisse passer le jour) ; ses
+    traits et ses tracés transparents s'arrêtent net. Au repos, le dessin ne
+    change pas. Sert à l'encolure et aux mèches de la toison."""
     area = Polygon(area)
     outside = box(-1000, -1000, 1000, 1000).difference(area)
     sparent, sindex, body = _find(root, source)
-    neck = _clip_tree(body, area, paints, opaque_extra=area.buffer(margin), skip_ids=skip_ids)
+    piece = _clip_tree(body, area, paints, opaque_extra=area.buffer(margin), skip_ids=skip_ids)
     rest = _clip_tree(body, outside, paints, skip_ids=skip_ids)
     for c in body:
         if c.get("id", "").startswith("pivot-"):
             rest.append(c)
-    neck.set("id", "neck")
-    neck.append(_pivot("neck", pivot))
+    piece.set("id", name)
+    piece.append(_pivot(name, pivot))
     sparent.remove(body)
     sparent.insert(sindex, rest)
-    sparent.insert(sindex, neck)
+    sparent.insert(sindex, piece)
+    return piece
+
+
+def split_neck_under(root, paints, source, area, pivot, poll, head="head", muzzle=None,
+                     skip_ids=(), margin=2.0):
+    """L'encolure sous le corps, comme une marionnette découpée : ce que le
+    groupe `source` (le corps) dessine dans `area` (un polygone : ce qui
+    dépasse devant l'épaule) devient l'encolure (voir `cut_under`). La tête
+    reste à sa place dans le document (par-dessus le corps) : le moteur la
+    fait suivre l'encolure. `pivot` : la base de l'encolure ; `poll` : la
+    nuque, le nouveau pivot de la tête ; `muzzle` : ce qui touche l'herbe."""
+    neck = cut_under(root, paints, source, area, "neck", pivot, margin, skip_ids)
     _, _, head_el = _find(root, head)
     for c in list(head_el):
         if c.get("id") == f"pivot-{head}":
