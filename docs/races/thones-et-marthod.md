@@ -181,7 +181,9 @@ de jour neutre et couverte ; le détail et les variantes sont au § 4) :
 
 H = 76 cm [EST]. Les rapports « P6 » sont mesurés en pixels sur le profil
 tondu P6 (jeune animal, tourné vers la droite, pattes avant comme
-échelle ; H = 765 px). Les autres photos servent de contrôle.
+échelle ; H = 765 px à la résolution mesurée d'abord, environ 505 px sur
+la vignette de 1 280 px de Commons : seuls les rapports comptent). Les
+autres photos servent de contrôle.
 
 | Mesure | H = 100 | cm | Balise et source |
 |---|---|---|---|
@@ -222,8 +224,10 @@ le quart de la silhouette.
   plus épais et plus haut chez le bélier adulte, avec une crête de laine
   sur le dessus (P3).
 - [EST] **Port au repos**, debout et attentif : la ligne du dessus du cou
-  monte à **50° au-dessus de l'horizontale** (P6 : 50°). La nuque est
-  alors à ≈ 1,30 H du sol.
+  monte à **36-40° au-dessus de l'horizontale** du garrot à la nuque, et
+  ne se redresse à **≈ 50°** que près de la nuque (P6, remesurée pour le
+  dessin). La nuque est alors à ≈ 1,30 H du sol, et l'œil à ≈ 4 cm sous
+  le profil du front.
 - [EST] **Chanfrein au repos** : la ligne front-nez descend vers l'avant à
   **≈ 40° sous l'horizontale** (P6 : 39°). Le bout du nez arrive un peu
   au-dessus du garrot.
@@ -511,8 +515,10 @@ parc), contrôlé sur P22 (jeune bélier, de face) et P6 (jeune, profil).
    tour, serré, pour un jeune d'un an (P6, P22) ; jusqu'à 1 tour ½ chez
    les vieux béliers [EST].
 4. **En profil**, la corne dessine un **anneau presque rond**, ouvert vers
-   l'avant, autour de l'oreille. Hauteur de la boucle : **0,55 à 0,6 de
-   la longueur de la tête** [EST P1] ; elle va du dessus du crâne jusqu'à
+   l'avant, autour de l'oreille. Hauteur de la boucle : **≈ 0,65 de la
+   longueur de la tête** [EST P1, P3] (0,55 à 0,6 avant d'avoir remesuré :
+   avec la pointe à hauteur de la commissure et la tête portée à 35-40°,
+   la boucle est plus haute) ; elle va du dessus du crâne jusqu'à
    peu près le niveau de la bouche, et de l'arrière de la nuque jusqu'à
    l'aplomb de l'œil. Elle **ne cache pas l'œil** : les lunettes restent
    devant elle.
@@ -616,7 +622,7 @@ parc), contrôlé sur P22 (jeune bélier, de face) et P6 (jeune, profil).
 
 ### 8.3 Les gestes et les postures
 
-- **Debout, attentif** : tête haute, cou à ≈ 50°, oreilles à
+- **Debout, attentif** : tête haute, cou à ≈ 40° (50° près de la nuque), oreilles à
   l'horizontale vers le côté. Les lunettes donnent un regard fixe et
   sérieux même quand l'animal est calme.
 - **Brouter** : cou à 55-60° sous l'horizontale, chanfrein presque
