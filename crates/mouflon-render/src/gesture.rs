@@ -325,6 +325,24 @@ pub(crate) fn gesturing(s: &PoseSignals) -> Gesturing {
             g.ears_back = 0.35 * up;
             g.body_angle = -0.02 * up;
         }
+        Gesture::Nurse => {
+            // Sous le flanc, le museau se relève vers la mamelle ; le
+            // placement précis est repris par l'encolure articulée. Le
+            // corps et les quatre appuis restent immobiles. Le frétillement
+            // de queue est illustratif, pas une fréquence mesurée.
+            let up = a * smooth(0.0, 0.45, t);
+            g.head_angle = -0.95 * up;
+            g.head_shift = Vec2::new(1.5 * up, -2.0 * up);
+            g.ears_back = 0.15 * up;
+            g.tail = 0.65 * up * (t * TAU * 5.0).sin();
+        }
+        Gesture::MaternalCall => {
+            // L'appel grave de proximité reste bouche fermée (la mâchoire
+            // est menée par le cœur), le cou à peine tendu vers l'agneau.
+            g.head_angle = -0.06 * a;
+            g.head_shift = Vec2::new(0.5 * a, -0.3 * a);
+            g.ears_back = -0.2 * a;
+        }
     }
     g
 }

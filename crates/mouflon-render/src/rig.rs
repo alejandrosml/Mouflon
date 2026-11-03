@@ -11,7 +11,9 @@
 //!   qui porte `head`), `lip` (la lèvre supérieure, dans `head`),
 //!   `leg-front-near-lower` et les trois autres bas de pattes (chacun dans sa
 //!   patte), `sway-1`, `sway-2`, `sway-3` (des mèches de la toison, dans
-//!   `body`). Toutes sont facultatives ; une partie peut en contenir
+//!   `body`), `neck-sway-1`, `neck-sway-2`, `neck-sway-3` (des touffes à
+//!   racine étroite sous `neck`, dont le bout pend). Toutes sont
+//!   facultatives ; une partie peut en contenir
 //!   d'autres (`eyes` dans `head`, `pupils` dans `eyes`, `tail-mid` dans
 //!   `tail`, `tail-tip` dans `tail-mid`, `head` dans `neck`).
 //! - Le pivot de chaque partie (épaule, hanche, cou, base d'oreille…) est un
@@ -67,10 +69,15 @@ pub enum Part {
     Sway1,
     Sway2,
     Sway3,
+    /// Des touffes à racine étroite, cachée sous la laine de l'encolure :
+    /// l'attache suit le cou, le bout pend au lieu de tourner avec lui.
+    NeckSway1,
+    NeckSway2,
+    NeckSway3,
 }
 
 impl Part {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 26] = [
         Self::Body,
         Self::Head,
         Self::EarNear,
@@ -94,6 +101,9 @@ impl Part {
         Self::Sway1,
         Self::Sway2,
         Self::Sway3,
+        Self::NeckSway1,
+        Self::NeckSway2,
+        Self::NeckSway3,
     ];
 
     /// Les quatre pattes, puis leurs bas, dans le même ordre.
@@ -104,6 +114,7 @@ impl Part {
         Self::LegBackFar,
     ];
     pub const SWAYS: [Self; 3] = [Self::Sway1, Self::Sway2, Self::Sway3];
+    pub const NECK_SWAYS: [Self; 3] = [Self::NeckSway1, Self::NeckSway2, Self::NeckSway3];
 
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -131,6 +142,9 @@ impl Part {
             Self::Sway1 => "sway-1",
             Self::Sway2 => "sway-2",
             Self::Sway3 => "sway-3",
+            Self::NeckSway1 => "neck-sway-1",
+            Self::NeckSway2 => "neck-sway-2",
+            Self::NeckSway3 => "neck-sway-3",
         }
     }
 
@@ -158,7 +172,14 @@ impl Part {
     pub fn is_fleece(self) -> bool {
         matches!(
             self,
-            Self::Body | Self::Neck | Self::Sway1 | Self::Sway2 | Self::Sway3
+            Self::Body
+                | Self::Neck
+                | Self::Sway1
+                | Self::Sway2
+                | Self::Sway3
+                | Self::NeckSway1
+                | Self::NeckSway2
+                | Self::NeckSway3
         )
     }
 
@@ -202,6 +223,13 @@ impl Part {
             Self::LegBackNearLower => Self::LegBackNear,
             Self::LegBackFarLower => Self::LegBackFar,
             Self::Sway1 | Self::Sway2 | Self::Sway3 => Self::Body,
+            Self::NeckSway1 | Self::NeckSway2 | Self::NeckSway3 => {
+                if has_neck {
+                    Self::Neck
+                } else {
+                    Self::Body
+                }
+            }
             _ => return None,
         })
     }
@@ -315,7 +343,7 @@ impl Rig {
         // elle-même (sans la tête), où qu'elle soit posée dans le document.
         let mut extent = rig.part_bounds(Part::Body);
         if rig.has_part(Part::Body) {
-            for part in Part::SWAYS {
+            for part in Part::SWAYS.into_iter().chain(Part::NECK_SWAYS) {
                 if let Some(r) = rig.part_bounds[part.index()] {
                     extent = extent.union(r);
                 }
@@ -378,7 +406,12 @@ impl Rig {
             // L'arrière de la lèvre, sous le naseau.
             Part::Lip => Point::new(b.min_x(), b.center().y),
             // Une mèche pend de son attache.
-            Part::Sway1 | Part::Sway2 | Part::Sway3 => Point::new(b.center().x, b.min_y()),
+            Part::Sway1
+            | Part::Sway2
+            | Part::Sway3
+            | Part::NeckSway1
+            | Part::NeckSway2
+            | Part::NeckSway3 => Point::new(b.center().x, b.min_y()),
             _ => b.center(),
         }
     }

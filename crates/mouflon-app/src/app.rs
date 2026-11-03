@@ -51,9 +51,15 @@ pub enum UserEvent {
     ArtReady(String),
     /// Les images de cet animal sont compressées (voir `App::compress_later`).
     ArtCompressed(String),
-    /// Le dessin à sa nouvelle taille de cet animal (son numéro, le rang de
-    /// la taille) est prêt (voir `App::set_pet_size`).
-    PetSizeReady(u32, usize),
+    /// Le dessin à sa nouvelle taille de cet animal (son numéro, la définition
+    /// exacte attendue) est prêt (voir `App::set_pet_size`).
+    PetSizeReady(u32, Arc<PetDef>),
+    /// Le dessin de l’agneau est prêt; sa mère est revalidée à réception.
+    LambReady {
+        mother: u32,
+        from: Arc<PetDef>,
+        entry: Entry,
+    },
     /// L'aperçu d'une espèce (son rang) pour la galerie est prêt.
     GalleryPreview(u32, Vec<platform::GalleryImage>),
     /// Un article du menu d'un animal, un contrôle de la fenêtre des réglages.
@@ -122,6 +128,32 @@ impl FlockView {
         self.pets.iter().find(|p| p.id == id).map(|p| &p.def)
     }
 
+    /// Une définition peut être partagée par plusieurs nouveaux agneaux :
+    /// chacun reçoit la taille choisie avant leur premier rapport.
+    fn take_offspring_sizes(
+        &self,
+        waiting: &mut Vec<OffspringSize>,
+        unseen: &[(u64, Arc<PetDef>)],
+    ) -> Vec<(u32, usize)> {
+        let mut sizes = Vec::new();
+        waiting.retain_mut(|request| {
+            for pet in self
+                .pets
+                .iter()
+                .filter(|p| Arc::ptr_eq(&p.def, &request.def))
+            {
+                if !request.applied.contains(&pet.id) {
+                    request.applied.push(pet.id);
+                    if !sizes.iter().any(|(id, _)| *id == pet.id) {
+                        sizes.push((pet.id, request.size));
+                    }
+                }
+            }
+            unseen.iter().any(|(_, d)| Arc::ptr_eq(d, &request.def))
+        });
+        sizes
+    }
+
     fn apply(&mut self, handed: &Handed) {
         match handed {
             Handed::Pet(id, def) => {
@@ -139,6 +171,14 @@ impl FlockView {
             }
         }
     }
+}
+
+#[derive(Debug)]
+struct OffspringSize {
+    def: Arc<PetDef>,
+    size: usize,
+    /// Les rapports peuvent décrire les frères l’un après l’autre.
+    applied: Vec<u32>,
 }
 
 /// Un changement de définition demandé à l'affichage, qu'une description du
@@ -246,6 +286,14 @@ pub struct App {
     decoding: HashSet<String>,
     /// Animaux qui attendent leur dessin à une autre taille, et cette entrée.
     resizing: Vec<(u32, Entry)>,
+    /// Définitions des jeunes, distinctes de leurs parents dans la bibliothèque.
+    offspring: Vec<Entry>,
+    /// Cuissons de jeunes en cours, partagées dès la première demande.
+    preparing_offspring: Vec<(Entry, usize)>,
+    /// Une taille globale demandée avant le premier rapport d’un jeune.
+    offspring_sizes: Vec<OffspringSize>,
+    /// Sources encore affichées après un rechargement de la bibliothèque.
+    retired_entries: Vec<Entry>,
     /// Essai (`MOUFLON_ESSAI`) : étapes à venir.
     trial_steps: Vec<(Instant, TrialStep)>,
     /// Le journal d'un essai, vu d'ici (les images y sont notées par
@@ -377,6 +425,10 @@ impl App {
             pending: HashMap::new(),
             decoding: HashSet::new(),
             resizing: Vec::new(),
+            offspring: Vec::new(),
+            preparing_offspring: Vec::new(),
+            offspring_sizes: Vec::new(),
+            retired_entries: Vec::new(),
             trial_steps: Vec::new(),
             notes: None,
             frame_time: Duration::ZERO,
@@ -478,6 +530,7 @@ impl App {
             && self.library.changed_since(&stamp)
         {
             log::info!("dossier des animaux modifié : rechargement");
+            self.preserve_live_entries();
             self.library.reload();
             self.rebuild_menu();
         }
@@ -507,6 +560,139 @@ impl App {
         });
         self.unseen
             .push((self.display.sent(), Arc::clone(&entry.def)));
+    }
+
+    /// Un rechargement remplace les entrées de la bibliothèque, mais pas
+    /// les animaux affichés ni les dessins qui finissent de changer leur taille.
+    fn preserve_live_entries(&mut self) {
+        let sources: Vec<Entry> = self
+            .flock
+            .pets
+            .iter()
+            .map(|p| &p.def)
+            .chain(self.unseen.iter().map(|(_, d)| d))
+            .filter_map(|def| self.library.entry_of(def).cloned())
+            .chain(self.resizing.iter().map(|(_, entry)| entry.clone()))
+            .collect();
+        for entry in sources {
+            if !self
+                .retired_entries
+                .iter()
+                .any(|e| Arc::ptr_eq(&e.def, &entry.def))
+            {
+                self.retired_entries.push(entry);
+            }
+        }
+    }
+
+    /// Le dessin d’un jeune se prépare sur un fil à part, même quand sa
+    /// mère est déjà à l’écran : il a une autre taille de cuisson.
+    fn add_lamb(&mut self, mother: u32) {
+        let Some(pet) = self
+            .flock
+            .pets
+            .iter()
+            .find(|p| p.id == mother && p.is_ewe && !p.extra)
+        else {
+            return;
+        };
+        let from = Arc::clone(&pet.def);
+        let Some(parent) = self.library.entry_of(&from).or_else(|| {
+            self.retired_entries
+                .iter()
+                .find(|e| Arc::ptr_eq(&e.def, &from))
+        }) else {
+            return;
+        };
+        let entry = self
+            .offspring
+            .iter()
+            .find(|e| e.is_lamb_of(parent, 2.0))
+            .cloned()
+            .or_else(|| {
+                self.preparing_offspring
+                    .iter()
+                    .find(|(e, _)| e.is_lamb_of(parent, 2.0))
+                    .map(|(e, _)| e.clone())
+            })
+            .or_else(|| parent.as_lamb(2.0));
+        let Some(entry) = entry else {
+            return;
+        };
+        if let Some((_, count)) = self
+            .preparing_offspring
+            .iter_mut()
+            .find(|(e, _)| Arc::ptr_eq(&e.def, &entry.def))
+        {
+            *count += 1;
+        } else {
+            self.preparing_offspring.push((entry.clone(), 1));
+        }
+        let requested = Arc::clone(&entry.def);
+        let proxy = Arc::clone(&self.proxy);
+        let spawned = std::thread::Builder::new()
+            .name("mouflon-agneau".into())
+            .spawn(move || {
+                let _ = entry.art();
+                if let Ok(proxy) = proxy.lock() {
+                    let _ = proxy.send_event(UserEvent::LambReady {
+                        mother,
+                        from,
+                        entry,
+                    });
+                }
+            });
+        if let Err(e) = spawned {
+            self.finish_lamb_loading(&requested);
+            log::warn!("impossible de préparer l’agneau : {e}");
+        }
+    }
+
+    fn finish_lamb_loading(&mut self, def: &Arc<PetDef>) {
+        if let Some(at) = self
+            .preparing_offspring
+            .iter()
+            .position(|(e, _)| Arc::ptr_eq(&e.def, def))
+        {
+            self.preparing_offspring[at].1 -= 1;
+            if self.preparing_offspring[at].1 == 0 {
+                self.preparing_offspring.remove(at);
+            }
+        }
+    }
+
+    fn lamb_ready(&mut self, mother: u32, from: Arc<PetDef>, entry: Entry) {
+        self.finish_lamb_loading(&entry.def);
+        let Some(pet) = self
+            .flock
+            .pets
+            .iter()
+            .find(|p| p.id == mother && p.is_ewe && !p.extra)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(&from, &pet.def) {
+            // Un changement de taille est arrivé pendant le chargement.
+            self.add_lamb(mother);
+            return;
+        }
+        let Some(art) = entry.art() else {
+            return;
+        };
+        let def = Arc::clone(&entry.def);
+        if !self
+            .offspring
+            .iter()
+            .any(|e| Arc::ptr_eq(&e.def, &entry.def))
+        {
+            self.offspring.push(entry);
+        }
+        self.send(Command::SpawnLamb {
+            mother,
+            def: Arc::clone(&def),
+            art,
+        });
+        self.unseen.push((self.display.sent(), def));
     }
 
     /// Lance le décodage des dessins de ces animaux, une espèce par fil, sans
@@ -670,6 +856,7 @@ impl App {
     /// Un fichier ou un dossier d'animal déposé sur un animal : on l'installe,
     /// et l'animal visé laisse sa place au nouveau venu (comme dans desktopPet).
     fn install_pet(&mut self, path: &std::path::Path) {
+        self.preserve_live_entries();
         match self.library.install(path) {
             Ok(id) => {
                 log::info!("animal installé : {id} ({})", path.display());
@@ -698,8 +885,15 @@ impl App {
     /// Taille d'un animal d'après sa définition : la sienne s'il en a une à
     /// lui, celle de tous sinon.
     fn size_of(&self, def: &Arc<PetDef>) -> f32 {
-        self.library
-            .entry_of(def)
+        self.offspring
+            .iter()
+            .find(|e| Arc::ptr_eq(&e.def, def))
+            .or_else(|| self.library.entry_of(def))
+            .or_else(|| {
+                self.retired_entries
+                    .iter()
+                    .find(|e| Arc::ptr_eq(&e.def, def))
+            })
             .map_or(self.library.size(), |entry| entry.size)
     }
 
@@ -716,23 +910,40 @@ impl App {
                 defs.push(Arc::clone(def));
             }
         }
+        let all_sizes_match = defs.iter().all(|d| (self.size_of(d) - size).abs() < 1e-3);
+        let young: Vec<u32> = self
+            .flock
+            .pets
+            .iter()
+            .filter(|p| self.offspring.iter().any(|e| Arc::ptr_eq(&e.def, &p.def)))
+            .map(|p| p.id)
+            .collect();
         let before: Vec<(Arc<PetDef>, f32)> = defs
             .into_iter()
+            .filter(|d| !self.offspring.iter().any(|e| Arc::ptr_eq(&e.def, d)))
             .map(|def| {
                 let size = self.size_of(&def);
                 (def, size)
             })
             .collect();
-        let unchanged = (size - self.settings.size_factor()).abs() < f32::EPSILON
-            && self
-                .flock
-                .pets
-                .iter()
-                .all(|p| (self.size_of(&p.def) - size).abs() < 1e-3);
+        let unchanged =
+            (size - self.settings.size_factor()).abs() < f32::EPSILON && all_sizes_match;
+        // Un choix même égal à la taille courante annule les anciens travaux.
+        self.resizing.clear();
+        self.offspring_sizes.clear();
         if unchanged {
             return;
         }
-        self.resizing.clear();
+        self.offspring_sizes = self
+            .unseen
+            .iter()
+            .filter(|(_, d)| self.offspring.iter().any(|e| Arc::ptr_eq(&e.def, d)))
+            .map(|(_, d)| OffspringSize {
+                def: Arc::clone(d),
+                size: index,
+                applied: Vec::new(),
+            })
+            .collect();
         self.settings.size = size;
         self.save_settings();
         self.library.set_size(size);
@@ -774,6 +985,9 @@ impl App {
             .collect();
         self.send(Command::Redraw { changes, gone });
         self.hand(Handed::Defs(map));
+        for id in young {
+            self.set_pet_size(id, index);
+        }
         log::info!(
             "taille des animaux : × {size} ({} à l'écran)",
             self.flock.pets.len()
@@ -790,17 +1004,38 @@ impl App {
         let Some(def) = self.flock.def_of(id).cloned() else {
             return;
         };
+        // Rechoisir sa taille actuelle annule aussi un ancien changement
+        // qui attendait encore son dessin.
+        self.resizing.retain(|(pet, _)| *pet != id);
         if (self.size_of(&def) - size).abs() < 1e-3 {
             return;
         }
         let species = def.meta.id.clone();
-        let Some(entry) = self
-            .library
-            .pets
+        let young = self
+            .offspring
             .iter()
-            .position(|e| e.def.meta.id == species)
-            .and_then(|i| self.library.at_size(i, size))
-        else {
+            .find(|e| Arc::ptr_eq(&e.def, &def))
+            .cloned();
+        let entry = if let Some(young) = young {
+            if let Some(entry) = self
+                .offspring
+                .iter()
+                .find(|e| e.same_base_at_size(&young, size))
+            {
+                Some(entry.clone())
+            } else {
+                let entry = young.at_size(size);
+                self.offspring.push(entry.clone());
+                Some(entry)
+            }
+        } else {
+            self.library
+                .pets
+                .iter()
+                .position(|e| e.def.meta.id == species)
+                .and_then(|i| self.library.at_size(i, size))
+        };
+        let Some(entry) = entry else {
             return;
         };
         self.resizing.retain(|(pet, _)| *pet != id);
@@ -816,28 +1051,20 @@ impl App {
                 let (entry, proxy) = job;
                 let _ = entry.art();
                 if let Ok(proxy) = proxy.lock() {
-                    let _ = proxy.send_event(UserEvent::PetSizeReady(id, index));
+                    let _ = proxy.send_event(UserEvent::PetSizeReady(id, Arc::clone(&entry.def)));
                 }
             });
         if let Err(e) = spawned {
-            log::warn!("dessin préparé sur le fil principal : {e}");
-            self.pet_size_ready(id, index);
+            log::warn!("impossible de préparer la nouvelle taille : {e}");
+            self.resizing.retain(|(pet, _)| *pet != id);
         }
     }
 
     /// Le dessin attendu par un animal pour sa nouvelle taille est prêt.
-    fn pet_size_ready(&mut self, id: u32, index: usize) {
-        let size = crate::settings::SIZES[index.min(crate::settings::SIZES.len() - 1)];
-        // Toujours voulu (une autre taille a pu être choisie entre-temps) ?
-        let Some(at) = self
-            .resizing
-            .iter()
-            .position(|(pet, entry)| *pet == id && (entry.size - size).abs() < 1e-3)
-        else {
-            return;
-        };
-        let (_, entry) = self.resizing.remove(at);
-        self.apply_pet_size(id, &entry);
+    fn pet_size_ready(&mut self, id: u32, def: &Arc<PetDef>) {
+        if let Some(entry) = take_ready_resize(&mut self.resizing, id, def) {
+            self.apply_pet_size(id, &entry);
+        }
     }
 
     fn apply_pet_size(&mut self, id: u32, entry: &Entry) {
@@ -875,6 +1102,25 @@ impl App {
     fn flock_changed(&mut self, generation: u64, done: u64, pets: Vec<PetSummary>) {
         self.unseen.retain(|(at, _)| *at > done);
         self.flock = FlockView::described(generation, done, pets, &mut self.handed);
+        let used = |entry: &Entry| {
+            self.flock
+                .pets
+                .iter()
+                .any(|p| Arc::ptr_eq(&p.def, &entry.def))
+                || self.unseen.iter().any(|(_, d)| Arc::ptr_eq(d, &entry.def))
+                || self
+                    .resizing
+                    .iter()
+                    .any(|(_, e)| Arc::ptr_eq(&e.def, &entry.def))
+        };
+        self.offspring.retain(used);
+        self.retired_entries.retain(used);
+        let sizes = self
+            .flock
+            .take_offspring_sizes(&mut self.offspring_sizes, &self.unseen);
+        for (id, size) in sizes {
+            self.set_pet_size(id, size);
+        }
         self.sync_menu();
     }
 
@@ -938,13 +1184,19 @@ impl App {
 
     /// Le menu d'un animal, au clic droit (ou Contrôle-clic) sur lui :
     /// l'affichage a trouvé l'animal sous le curseur, qui attend sous le menu.
-    fn open_pet_menu(&mut self, id: u32, def: Arc<PetDef>) {
+    fn open_pet_menu(&mut self, id: u32, def: Arc<PetDef>, can_have_lamb: bool) {
         let species = self
             .library
             .pets
             .iter()
             .position(|e| e.def.meta.id == def.meta.id);
         let state = PetMenuState {
+            is_ewe: self
+                .flock
+                .pets
+                .iter()
+                .any(|p| p.id == id && p.is_ewe && !p.extra),
+            can_have_lamb,
             paused: self.live.paused,
             sounds: self.settings.sounds,
             size: crate::settings::size_index_of(self.size_of(&def)),
@@ -990,6 +1242,7 @@ impl App {
                 self.spawn(index);
                 self.make_favorite(index);
             }
+            Action::AddLamb(mother) => self.add_lamb(mother),
             Action::AddRandom => {
                 // Chacun d'une espèce tirée au hasard (pas le préféré : de
                 // quoi découvrir les autres).
@@ -1443,6 +1696,8 @@ impl App {
         saved.push(platform::snapshot_form(&image("remarques-clair"), false));
         saved.push(platform::snapshot_form(&image("remarques-sombre"), true));
         let state = PetMenuState {
+            is_ewe: false,
+            can_have_lamb: false,
             paused: false,
             sounds: true,
             size: 1,
@@ -1678,7 +1933,11 @@ impl App {
                     self.windows.set_hittest(key, on);
                 }
             }
-            Report::PetMenu { id, def } => self.open_pet_menu(id, def),
+            Report::PetMenu {
+                id,
+                def,
+                can_have_lamb,
+            } => self.open_pet_menu(id, def, can_have_lamb),
             Report::Trusted(trusted) => {
                 // L'autorisation arrive : l'écoute d'Échap est refaite, pour
                 // l'entendre aussi dans les autres apps.
@@ -1975,6 +2234,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::ArtReady(_) => "dessin prêt",
             UserEvent::ArtCompressed(_) => "images compressées",
             UserEvent::PetSizeReady(..) => "dessin à une autre taille prêt",
+            UserEvent::LambReady { .. } => "dessin de l’agneau prêt",
             UserEvent::GalleryPreview(..) => "aperçu de la galerie prêt",
             UserEvent::Ui(_) => "menu d'un animal ou réglages",
             UserEvent::LoginItem(_) => "ouverture de session relue",
@@ -2007,7 +2267,12 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::ArtReady(id) => self.art_ready(&id),
             UserEvent::ArtCompressed(id) => self.art_compressed(&id),
-            UserEvent::PetSizeReady(pet, index) => self.pet_size_ready(pet, index),
+            UserEvent::PetSizeReady(pet, def) => self.pet_size_ready(pet, &def),
+            UserEvent::LambReady {
+                mother,
+                from,
+                entry,
+            } => self.lamb_ready(mother, from, entry),
             UserEvent::GalleryPreview(index, frames) => {
                 platform::set_gallery_preview(index, &frames);
             }
@@ -2195,6 +2460,20 @@ impl App {
     }
 }
 
+/// Seul le dessin de la demande encore courante peut être appliqué. Une
+/// ancienne réponse pour la même taille ne doit jamais attendre la nouvelle
+/// cuisson sur le fil principal.
+fn take_ready_resize(
+    resizing: &mut Vec<(u32, Entry)>,
+    id: u32,
+    def: &Arc<PetDef>,
+) -> Option<Entry> {
+    let at = resizing
+        .iter()
+        .position(|(pet, entry)| *pet == id && Arc::ptr_eq(&entry.def, def) && entry.art_ready())?;
+    Some(resizing.remove(at).1)
+}
+
 /// Temps écoulé depuis `mark`, qui passe à maintenant.
 fn lap(mark: &mut Instant) -> Duration {
     let now = Instant::now();
@@ -2236,6 +2515,7 @@ mod tests {
         ids.iter()
             .map(|&id| PetSummary {
                 id,
+                is_ewe: false,
                 def: Arc::clone(def),
                 extra: false,
             })
@@ -2265,5 +2545,126 @@ mod tests {
         let flock = FlockView::described(1, 2, pets(&def, &[1, 2, 3]), &mut handed);
         assert!(flock.pets.iter().all(|p| Arc::ptr_eq(&p.def, &big)));
         assert!(flock.def_of(4).is_none());
+    }
+    #[test]
+    fn every_new_lamb_sharing_an_image_gets_the_pending_size_once() {
+        let def = Arc::new(
+            crate::library::builtin_mannequin()
+                .unwrap()
+                .as_lamb(2.0)
+                .unwrap(),
+        );
+        let other = Arc::new((*def).clone());
+        let pending = Arc::new((*def).clone());
+        let flock = FlockView {
+            generation: Some(1),
+            pets: vec![
+                PetSummary {
+                    id: 4,
+                    def: Arc::clone(&def),
+                    is_ewe: false,
+                    extra: false,
+                },
+                PetSummary {
+                    id: 8,
+                    def: Arc::clone(&def),
+                    is_ewe: false,
+                    extra: false,
+                },
+                PetSummary {
+                    id: 9,
+                    def: other,
+                    is_ewe: false,
+                    extra: false,
+                },
+            ],
+        };
+        let mut waiting = vec![
+            OffspringSize {
+                def: Arc::clone(&def),
+                size: 3,
+                applied: vec![],
+            },
+            OffspringSize {
+                def,
+                size: 3,
+                applied: vec![],
+            },
+            OffspringSize {
+                def: Arc::clone(&pending),
+                size: 2,
+                applied: vec![],
+            },
+        ];
+        assert_eq!(
+            flock.take_offspring_sizes(&mut waiting, &[(10, Arc::clone(&pending))]),
+            [(4, 3), (8, 3)]
+        );
+        assert_eq!(waiting.len(), 1);
+        assert!(flock.take_offspring_sizes(&mut waiting, &[]).is_empty());
+        assert!(
+            waiting.is_empty(),
+            "la naissance refusée n’attend plus après son accusé"
+        );
+    }
+    #[test]
+    fn a_stale_size_completion_never_takes_a_new_request_for_the_same_size() {
+        let library = Library::load(None, None, 1.0);
+        let parent = library.pets[0].clone();
+        let young = parent.as_lamb(2.0).unwrap();
+        let old = young.at_size(2.0);
+        let current = young.at_size(2.0);
+        let mut pending = vec![(7, current.clone())];
+        assert!(take_ready_resize(&mut pending, 7, &old.def).is_none());
+        assert!(take_ready_resize(&mut pending, 7, &current.def).is_none());
+        assert_eq!(
+            pending.len(),
+            1,
+            "aucune attente ni retrait pendant le décodage"
+        );
+        current.art().expect("dessin préparé sur le fil de travail");
+        assert!(take_ready_resize(&mut pending, 7, &current.def).is_some());
+        assert!(pending.is_empty());
+    }
+    #[test]
+    fn a_pending_global_size_survives_partial_reports_of_shared_lambs() {
+        let def = Arc::new(
+            crate::library::builtin_mannequin()
+                .unwrap()
+                .as_lamb(2.0)
+                .unwrap(),
+        );
+        let mut flock = FlockView {
+            generation: Some(1),
+            pets: vec![PetSummary {
+                id: 4,
+                def: Arc::clone(&def),
+                is_ewe: false,
+                extra: false,
+            }],
+        };
+        let mut waiting = vec![OffspringSize {
+            def: Arc::clone(&def),
+            size: 3,
+            applied: vec![],
+        }];
+        assert_eq!(
+            flock.take_offspring_sizes(&mut waiting, &[(12, Arc::clone(&def))]),
+            [(4, 3)]
+        );
+        assert_eq!(waiting.len(), 1);
+        assert!(
+            flock
+                .take_offspring_sizes(&mut waiting, &[(12, Arc::clone(&def))])
+                .is_empty()
+        );
+        flock.pets.push(PetSummary {
+            id: 8,
+            def,
+            is_ewe: false,
+            extra: false,
+        });
+        assert_eq!(flock.take_offspring_sizes(&mut waiting, &[]), [(8, 3)]);
+        assert!(waiting.is_empty());
     }
 }

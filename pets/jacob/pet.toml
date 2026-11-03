@@ -5,6 +5,8 @@
 # docs/animation-animale.md pour les durées et les fréquences).
 
 [pet]
+# Sexe du dessin adulte actuel ; les variantes anatomiques restent à dessiner.
+sex = "male"
 id = "jacob"
 name = "Jacob"
 author = "Alejandro San Martin Lamas"

@@ -259,7 +259,7 @@ dessiné du dépôt broute le museau dans l'herbe.
 | Bêler | aigu bouche ouverte : isolement, stress ; grave bouche fermée : brebis et agneau proches ; sinon rare | `bleat` et les sons `mouth = true` : la bouche s'ouvre en 0,1 s, un léger vibrato |
 | Renifler | le museau tendu vers l'autre | `sniff` : quand deux moutons se croisent |
 | Sonné | — | `daze` : la tête décrit de petits cercles, les yeux mi-clos, les oreilles pendantes ; après un atterrissage rude, puis il s'ébroue |
-| Flehmen | le bélier flaire l'urine d'une brebis ou sa vulve, puis relève la tête (d'environ 30°), les naseaux plissés, la lèvre supérieure retroussée sur le bourrelet sans dents, et hume (Blissitt 1989) ; il suit surtout l'urine (Stevens 1982), qu'une brebis émet quand un bélier l'approche, sauf si elle est en chaleur : devant une brebis en chaleur, le flehmen est le plus rare ; celui qui suit le flairage de la vulve, bref, est le plus fréquent la veille des chaleurs (Bland & Jubilan 1987, résumés par Blissitt 1989 ; Mirto 2015). Tenu d'un instant à deux minutes (Banks 1964, cité par Blissitt 1989) ; en moyenne 7 à 19 s selon les groupes chez de jeunes béliers Najdi, 12 s pour un bélier seul avec une brebis (Bahadi 2023, sur peu de flehmen : les écarts ne sont pas significatifs) | `flehmen` : l'encolure tendue vers l'avant et le haut, la tête relevée d'une quarantaine de degrés (le chanfrein à peu près à l'horizontale, le menton en avant, comme sur les photos), puis la lèvre retroussée (la gencive rose apparaît, le mouton n'a pas d'incisives en haut), la bouche entrouverte, les yeux mi-clos, la tête qui balance à peine ; 7 à 12 s, le bas des moyennes mesurées (pour un bureau) ; après avoir reniflé un autre mouton, plus souvent chez un énervé et chez les béliers des races, rarement chez une brebis |
+| Flehmen | le bélier flaire l'urine d'une brebis ou sa vulve, puis relève la tête (d'environ 30°), les naseaux plissés, la lèvre supérieure retroussée sur le bourrelet sans dents, et hume (Blissitt 1989) ; il suit surtout l'urine (Stevens 1982), qu'une brebis émet quand un bélier l'approche, sauf si elle est en chaleur : devant une brebis en chaleur, le flehmen est le plus rare ; celui qui suit le flairage de la vulve, bref, est le plus fréquent la veille des chaleurs (Bland & Jubilan 1987, résumés par Blissitt 1989 ; Mirto 2015). Tenu d'un instant à deux minutes (Banks 1964, cité par Blissitt 1989) ; en moyenne 7 à 19 s selon les groupes chez de jeunes béliers Najdi, 12 s pour un bélier seul avec une brebis (Bahadi 2023, sur peu de flehmen : les écarts ne sont pas significatifs) | `flehmen` : l'encolure tendue vers l'avant et le haut, la tête relevée d'une quarantaine de degrés (le chanfrein à peu près à l'horizontale, le menton en avant, comme sur les photos), puis la lèvre retroussée (la gencive rose apparaît, le mouton n'a pas d'incisives en haut), la bouche entrouverte, les yeux mi-clos, la tête qui balance à peine ; 7 à 12 s, le bas des moyennes mesurées (pour un bureau) ; seulement chez un bélier adulte après avoir reniflé une brebis adulte rencontrée, jamais chez une brebis ou un agneau (§ 5) |
 
 ## 4. Les émotions : oreilles, tête, queue
 
@@ -294,6 +294,75 @@ Un énervé remue aussi les oreilles et fouette de la queue plus souvent ; un
 calme, moins.
 
 ## 5. La vie du troupeau
+
+### Béliers, brebis et agneaux
+
+Le troupeau distingue désormais les adultes et les agneaux, ainsi que les
+mâles et les femelles. Le flehmen est réservé au bélier : il peut suivre
+un `sniff` joué lors d'une rencontre avec une brebis adulte. Renifler seul,
+un bélier, un agneau ou un animal d'une autre famille ne le permet pas ;
+un autre comportement efface ce contexte, qui expire après quinze secondes.
+Le contexte est consommé par le flehmen : ni un enchaînement sur lui-même,
+ni la contagion ne le prolongent indéfiniment.
+
+Chez les ovins, les choix de recul, charge et cabré sont favorisés
+dans une rencontre entre béliers adultes (poids ×3), et réduits dans les autres
+paires (×0,25), sauf entre agneaux, qui gardent leur poids. Hors rencontre,
+les poids de ces actions sont divisés par quatre chez une brebis. Ce sont des
+réglages du moteur pour distinguer les situations, pas des fréquences
+mesurées chez les moutons. Les comportements desktopPet restent inchangés.
+
+Les durées du flehmen et leurs limites restent celles décrites au § 3
+(Bahadi et al. 2023 ; Blissitt 1989 ; Bland & Jubilan 1987 ; Stevens et al.
+1982). La simulation ne modélise ni le cycle reproductif ni une odeur réelle.
+
+### La mère et son agneau
+
+Un agneau garde l'identifiant de sa mère : la proximité d'une autre brebis
+ne remplace pas ce lien. La reconnaissance vocale mère–jeune apparaît très
+tôt (24 h pour la brebis, 48 h pour l'agneau dans Sèbe et al. 2007) ; cela
+motive un lien durable, sans prétendre simuler l'apprentissage d'une voix.
+Une mère retirée laisse son jeune indépendant ; une interruption (prise,
+chute, départ, autre comportement) arrête la rencontre. L'agneau ne saute
+pas d'une fenêtre à l'autre pour la rejoindre : le suivi et la tétée
+exigent un support commun et une place suffisante sur le rebord.
+
+La mère attend et l'appelle brièvement, bouche fermée. Le jeune la rejoint
+en marchant, ralentit, s'arrête, se tourne à l'inverse d'elle, puis lève la
+tête vers la région mammaire sous son flanc. Le déplacement alimente la
+même horloge de foulée que la marche ordinaire. Pendant la tétée, les quatre
+sabots restent à leur place ; l'encolure et la tête rejoignent une cible
+tirée du dessin, la queue frétille. La cible reste disponible pendant le
+fondu de sortie du geste, pour que la tête rejoigne le repos sans saut.
+La fréquence de ce frétillement et la
+position sous le flanc sont des réglages visuels, pas des angles ou des
+fréquences mesurés dans l'étude de tétée.
+
+Gordon & Siegmann (1991) ont suivi **sept brebis Mérinos à agneau unique**,
+24 heures par semaine pendant sept semaines :
+
+| Âge | Tétées par 24 h | Durée d'une tétée |
+|---|---|---|
+| 1–2 semaines | 36 ± 5,5 | 41,1 ± 9,9 s |
+| 6–7 semaines | 14,3 ± 2,78 | 11,9 ± 1,2 s |
+
+Ces dispersions ne sont pas des bornes de tirage aléatoire. Mouflon garde
+les moyennes de durée et de nombre quotidien, les interpole entre deux et
+six semaines, puis en déduit l'intervalle (2 400 s à deux semaines, environ
+6 042 s à six et sept semaines). Il permet une première tétée dès
+l'ajout de l'agneau et ne compresse pas les répétitions pour en montrer
+plus souvent. Au-delà de sept semaines, le suivi demeure mais il ne
+programme plus de tétée : c'est une limite du modèle documenté, pas un âge
+universel de sevrage. L'étude observe plus de tétées le jour ; cette
+variation diurne n'est pas simulée.
+
+L'appel maternel est occasionnel, au début du rendez-vous. Les appels
+graves sont surtout nombreux juste après la naissance et diminuent ensuite
+(Sèbe et al. 2007) : l'app ne fait pas bêler la mère en permanence.
+`mouflon-preview … famille` montre le rapprochement, la tétée et sa fin,
+à deux et sept semaines, dans les deux sens.
+
+### Se suivre et se regrouper
 
 - **Suivre** : 95 % des moutons partent dans les 12 s qui suivent le
   départ de celui qui les précède ; les départs s'accélèrent quand la moitié
@@ -400,7 +469,7 @@ l'écran restent fluides).
 | Le corps d'après les pieds | hauteur = min √(L² − Δx²) des pattes d'appui ; tangage d'après l'avant et l'arrière | approché : garrot et croupe calés sur les mi-appuis (le même résultat, sans calcul) |
 | Dynamique du second ordre (t3ssel8r) | un ressort réglé par une fréquence, un amortissement et une « réponse » (dépassement, anticipation) | oui : oreilles, queue, inclinaison, écrasement, balancement sont des ressorts amortis |
 | Ressorts à amortissement critique, inertialisation (Holden) | passer d'une pose à l'autre sans à-coup, en amortissant l'écart | oui : tous les poids (allures, poses, gestes, posture) s'approchent de leur cible en douceur |
-| Mouvement secondaire (la toison) | les parties molles suivent le corps avec retard | des mèches (`sway`) en ressorts amortis (2 et 1,6 Hz, celles du bout en retard sur les premières) : elles traînent avec la vitesse (0,0016 rad par pt/s), penchent avec l'élan quand le corps freine ou démarre (en physique réaliste) et dans le vent (0,3 rad au plus fort d'une rafale), balancent au rythme des pas (deux fois par cycle), suivent la secousse quand il s'ébroue ; une mèche penche sans quitter son attache (cisaillée autour de la ligne de son pivot) ; aucune étude n'en parle, réglé à l'œil |
+| Mouvement secondaire (la toison) | les parties molles suivent le corps avec retard | des mèches (`sway`) en ressorts amortis (2 et 1,6 Hz, celles du bout en retard sur les premières) : elles traînent avec la vitesse (0,0016 rad par pt/s), penchent avec l'élan quand le corps freine ou démarre (en physique réaliste) et dans le vent (0,3 rad au plus fort d'une rafale), balancent au rythme des pas (deux fois par cycle), suivent la secousse quand il s'ébroue ; une mèche penche sans quitter son attache (cisaillée autour de la ligne de son pivot). Les petites touffes d'encolure du Nez noir suivent le cou par leur racine, mais compensent sa rotation et son étirement pour garder leurs fibres pendantes pendant le broutage ; elles reçoivent le même balancement que la frange du ventre. Aucune étude n'en mesure les amplitudes : réglé à l'œil |
 | Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | à notre façon (essai 19) : une queue en deux ou trois morceaux est une chaîne de ressorts amortis, chacun suivant le précédent avec un temps de retard (2,2 puis 1,8 Hz) : un coup de queue descend jusqu'au bout, elle ondule |
 | Bruit de Perlin au repos (Improv) | de petits mouvements qui ne se répètent pas | en partie : regards, oreilles, queue et clignements tirés au hasard, respiration |
 | Clignements et regard (Eyes Alive) | clignements asymétriques, liés aux tours de tête | oui (voir plus haut) |
@@ -450,11 +519,12 @@ pend : chez le Nez noir, le bout des longues mèches de la frange du ventre,
 coupé au bas du fond de la toison ; chez l'Ouessant, les mèches bouclées qui
 pendent du ventre, accrochées à leur racine ; trois mèches chacun, entre les
 pattes. Le Jacob, à la toison plus courte et sans frange, et le mouflon, à
-poil ras, n'en ont pas. Ce qui se voit encore : chez le Nez noir, les
-longues mèches de l'encolure tournent avec elle (une mèche se met à
-l'horizontale quand il broute) ; à leur taille habituelle, la laine et les
-annelures des cornes se fondent (on lit la silhouette, les taches et les
-cornes ; le détail paraît quand on les agrandit).
+poil ras, n'en ont pas. Le Nez noir porte aussi trois petites touffes
+d'encolure : leur racine suit le cou, tandis que les fibres pendent
+lorsqu'il baisse la tête pour brouter. Leur racine déborde sous la laine
+courte afin de garder la jonction couverte. À leur taille habituelle, la
+laine et les annelures des cornes se fondent (on lit la silhouette, les
+taches et les cornes ; le détail paraît quand on les agrandit).
 
 Les sources de ces fiches, par race :
 
@@ -492,40 +562,65 @@ Les sources de ces fiches, par race :
 
 ## 11. Ce qui reste à faire
 
-Fait à l'essai 18 : les regroupements, les jeux d'agneaux (sauts tordus,
-demi-tours en l'air, courses, coups de front), le bélier qui recule avant de
-charger, le sommeil la tête au sol et les pattes qui tressaillent,
-l'anticipation avant un saut. À l'essai 19 : le bélier qui se cabre, l'agneau
-qui invite au jeu, les queues qui ondulent, les pupilles horizontales, et
-quatre races dessinées d'après nature (§ 10). Au chantier des articulations
-(novembre 2026) : l'encolure qui porte la tête et broute le museau dans
-l'herbe, les pattes en deux segments (le carpe et le jarret qui plient, les
-pattes repliées sous l'animal couché), la lèvre et le flehmen, la toison qui
-bouge. Reste :
+Le chantier `moteur-suite` ajoute le sexe et l'âge, le flehmen contextualisé,
+le lien mère–agneau, le suivi et la tétée (§ 5), ainsi que les voix
+synthétiques décrites dans `CREDITS.md`. Les limites suivantes restent
+explicites.
 
-- **L'agneau qui tète**, la brebis qui l'appelle (un bêlement grave, bouche
-  fermée). Les tétées durent 41 ± 10 s à une ou deux semaines, 12 ± 1 s à six
-  ou sept semaines, 36 puis 14 par jour (Gordon & Siegmann 1991, Mérinos) ;
-  l'agneau se glisse sous le flanc de sa mère, la tête levée, et frétille de
-  la queue. Il faudrait un lien entre une mère et son agneau (le troupeau ne
-  connaît que des familles, pas des mères) et une rencontre qui place
-  l'agneau sous le ventre de l'autre, à l'envers de lui : pas fait.
-- **Le dos qui plie** (s'étirer, ruer, bondir, se coucher) : un arrière-train
-  coupé au milieu du dos a été essayé sur le Mannequin ; dès 7°, le ventre
-  s'ouvre ou se double à la coupe. Une toison est d'un seul tenant : il
-  faudrait déformer le dessin (un maillage), pas faire tourner des morceaux
-  cuits. Pas fait ; le corps s'incline d'un bloc.
-- **Les races** : des mèches d'encolure qui pendent au lieu de tourner
-  avec elle (le Nez noir).
-- Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
-  la tête au sol, ce que font nos moutons).
-- Pour les races : le cri d'alarme du mouflon (un sifflement bref par les
-  naseaux, souvent avec un coup de patte) et son grondement en rut ; les
-  brebis et les agneaux de chaque race (la brebis d'Ouessant n'a pas de
-  cornes, l'agneau Jacob naît avec sa tête de blaireau, le bélier Nez noir
-  porte des cornes bien plus fortes que la brebis) ; le flehmen devant une
-  brebis plutôt qu'après n'importe quel mouton (le moteur ne sait pas encore
-  qui est bélier ou brebis).
+### Le dos qui plie
+
+Le dos reste d'une pièce. Le rendu actuel cuit chaque morceau une seule
+fois (`bake::BakedRig`), puis transporte une image et une transformation
+affine (`display::Command::Image`, `pieces::Piece`) vers les calques Core
+Animation ou les quadrilatères du GPU. Une transformation affine peut
+incliner, étirer ou cisailler un corps ; elle ne peut pas courber une ligne
+du dos tout en gardant la toison continue.
+
+Une déformation continue par maillage demanderait une primitive d'image
+texturée avec sommets déformables et son implémentation dans les deux
+sorties de rendu. Les calques actuels ne portent pas ce maillage. Découper
+l'image en bandes multiplierait les morceaux et les calques par animal,
+avec des coutures à vérifier aux bords antialiasés ; cuire plusieurs
+courbures multiplierait les images et les états d'animation ; recalculer
+les pixels à chaque image réintroduirait la rasterisation sur le chemin
+d'affichage. Aucun de ces choix n'établit le coût inchangé demandé par ce
+chantier.
+
+Le précédent essai d'arrière-train articulé ouvrait ou doublait le ventre
+dès sept degrés. Il n'est pas réintroduit. Une future expérimentation doit
+comparer silhouette continue, jonctions avec les quatre pattes et
+l'encolure, mémoire et coût de composition sur le vrai Mac, au repos, en
+étirement, en ruade, en bond et pendant le coucher. Les bancs actuels ne
+suffisent pas à prouver le coût du compositeur Core Animation pour un
+maillage ou davantage de calques.
+
+### Dessins et biologie encore à compléter
+
+- **Variantes par sexe et par âge** (étape 7 facultative) : les quatre races
+  gardent leur dessin adulte actuel ; les métadonnées fixent son sexe
+  (brebis Nez noir, béliers mouflon, Jacob et Ouessant). Un agneau ajouté
+  utilise pour l'instant le même dessin réduit : ce n'est pas une anatomie
+  juvénile validée. Une vraie brebis d'Ouessant sans cornes, un jeune Jacob
+  à tête de blaireau et les différentes cornes du Nez noir demandent leur
+  propre travail de dessin, avec références et revue des générateurs.
+- **Vieillissement et reproduction** : l'âge reste fixe, pas de gestation,
+  de cycle reproductif ni d'odeur simulée. Les mesures Mérinos de tétée ne
+  sont pas généralisées comme données mesurées aux autres races. Il reste
+  à étudier jumeaux, changement des fréquences dans la journée et sevrage.
+- **Voix du mouflon** : l'alarme nasale brève est bien décrite (Valette
+  2010). Le grondement demandé est une évocation synthétique ; Cap et al.
+  2008 codent l'absence d'un cri propre au rut chez *Ovis gmelini*, d'après
+  une communication personnelle, contrairement à certaines descriptions
+  naturalistes. Le fichier ne prétend reproduire ni un enregistrement ni
+  un spectre mesuré.
+- **Autres mouvements** (étape 8) : le contact du museau et la stabilité
+  des sabots pendant la tétée sont les améliorations retenues. Des phases
+  de locomotion plus fines en virage, l'orientation de la tête sur le flanc
+  pendant le sommeil et les changements de silhouette du dos restent à
+  vérifier sur vidéos ; aucune donnée chiffrée n'est inventée pour eux.
+- **Validation sur le vrai Mac** : les bancs CPU et le contrôle Linux de
+  la cible macOS ne remplacent pas l'écoute, la composition Core Animation,
+  les essais de fenêtres réelles et les budgets de `tools/essai/analyse.py`.
 
 ## Sources
 
@@ -563,7 +658,9 @@ Comportement du mouton :
 - Suivre : <https://pmc.ncbi.nlm.nih.gov/articles/PMC3016320/> ; <https://ar5iv.arxiv.org/html/1712.05774> ; regroupements, Ginelli 2015 : <https://pmc.ncbi.nlm.nih.gov/articles/PMC4611628>
 - Jeux d'agneaux : <https://stud.epsilon.slu.se/13350/1/Augustsson_S_180314.pdf>
 - Le flehmen du bélier : durées (jeunes béliers Najdi, une brebis entravée, quatre séances de 15 min), Bahadi et al. 2023, *Animal Reproduction* 20:e20220051 : <https://doi.org/10.1590/1984-3143-AR2022-0051> ; la posture, ce qui le déclenche et sa durée (d'après Banks 1964 et Bland & Jubilan 1987), Blissitt 1989, thèse, Édimbourg : <http://hdl.handle.net/1842/34797> ; Bland & Jubilan 1987, *Animal Behaviour* 35:735 : <https://doi.org/10.1016/S0003-3472(87)80109-4> ; il suit l'urine de la brebis, Stevens, Perry & Long 1982, *Journal of Chemical Ecology* 8:23 : <https://doi.org/10.1007/BF00984002> ; Mirto et al. 2015, *Applied Animal Behaviour Science* 186:22 : <https://doi.org/10.1016/j.applanim.2015.09.001>
-- La tétée (durée et nombre par jour), Gordon & Siegmann 1991, *Physiology & Behavior* 50:1079 : <https://doi.org/10.1016/0031-9384(91)90442-q>
+- La tétée (durée et nombre par jour), Gordon & Siegmann 1991, *Physiology & Behavior* 50:1079 : <https://doi.org/10.1016/0031-9384(91)90442-q> ; résumé primaire <https://pubmed.ncbi.nlm.nih.gov/1805274/>.
+- Reconnaissance vocale mère–agneau, Sèbe et al. 2007 : <https://doi.org/10.1002/dev.20218> ; tétée préférentielle, Sèbe et al. 2008 : <https://pubmed.ncbi.nlm.nih.gov/18978219/>.
+- Voix des ongulés et divergence sur le rut du mouflon, Cap et al. 2008, *Cladistics* 24:917–931 : <https://people.it.tamu.edu/~j-packard/scienceinaction/prey_pdf/Cap.etal2008.vocal.deer.pdf>.
 - Sommeil : <https://www.pharma.uzh.ch/apps/sleepcd/demo/animals/chap8/is165.htm> ; postures couchées : <https://pmc.ncbi.nlm.nih.gov/articles/PMC12411910>
 - Respiration : <https://www.msdvetmanual.com/multimedia/table/resting-respiratory-rates>
 - Voix : <https://www.biorxiv.org/content/10.1101/2025.07.29.667358.full.pdf>
@@ -583,3 +680,8 @@ Techniques d'animation :
 - Eyes Alive : <https://www.cis.upenn.edu/~badler/papers/EyesAlive.pdf> ; dynamique des clignements : <https://frontiersin.org/journals/systems-neuroscience/articles/10.3389/fnsys.2023.1242654/full>
 - Les chevaux de Red Dead Redemption 2 : <https://www.gamedeveloper.com/design/rockstar-s-quest-for-the-ultimate-video-game-horse>
 - Peng 2020, imiter les animaux : <https://bair.berkeley.edu/blog/2020/04/03/laikago/>
+
+Repères photographiques du chantier `moteur-suite` (regardés, non copiés dans le dépôt) :
+
+- Tétée, Romane : <https://commons.wikimedia.org/wiki/File:Jielbeaumadier_brebis_et_agneau_romane_bn_rambouillet_2011.jpeg> ; Jacob : <https://commons.wikimedia.org/wiki/File:Jacob_ewe_nursing_a_lamb.jpg>.
+- Nez noir, fibres pendantes et recouvrement de leur racine : <https://commons.wikimedia.org/wiki/File:Valais_Blacknose_sheep.jpg>, <https://commons.wikimedia.org/wiki/File:Valais_Blacknose_sheep_2.jpg>, <https://commons.wikimedia.org/wiki/File:Valais_Blacknose_sheep_3.jpg>, <https://commons.wikimedia.org/wiki/File:Valais_Blacknose_sheep_in_Zermatt.jpg>, <https://commons.wikimedia.org/wiki/File:2021_07_09_Schafe_am_Matterhorn_02_Edelweisstrail_Zermatt.jpg>. Ces vues debout et couchées ne mesurent pas la dynamique de la laine.

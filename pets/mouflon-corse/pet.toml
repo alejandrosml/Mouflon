@@ -6,6 +6,8 @@
 # docs/animation-animale.md).
 
 [pet]
+# Sexe du dessin adulte actuel ; les variantes anatomiques restent à dessiner.
+sex = "male"
 id = "mouflon-corse"
 name = "Mouflon de Corse"
 author = "Alejandro San Martin Lamas"
@@ -22,12 +24,14 @@ height = 48.0          # tout le dessin, cornes comprises : 75 cm au garrot à 0
 width = 54.0           # du museau à la croupe, sans les cornes
 stride = 45.5          # pas d'un cycle de marche : 1,6 × la longueur des pattes (28,5 pt)
 
-# Les sons du Mannequin (domaine public, voir CREDITS.md). Le bélier sauvage
-# bêle peu.
+# Les sons du Mannequin et deux appels synthétiques originaux (domaine
+# public, voir CREDITS.md). Le bélier sauvage bêle peu.
 [sounds]
 bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3", "sons/mouton-3.mp3", "sons/mouton-4.mp3"], volume = 0.6, mouth = true }
 broute = { files = ["sons/broute-1.mp3", "sons/broute-2.mp3"], volume = 0.5 }
 pose = { files = ["sons/pose-1.mp3", "sons/pose-2.mp3"], volume = 0.5 }
+alarme = { files = ["sons/mouflon-alarme.wav"], volume = 0.5, mouth = false }
+grondement = { files = ["sons/mouflon-grondement.wav"], volume = 0.45, mouth = false }
 
 [reflexes]
 spawn = "fall"
@@ -385,6 +389,9 @@ next = [
 name = "flehmen"
 motion = "flehmen"
 duration = [7.0, 12.0]   # 7 à 19 s en moyenne chez de jeunes béliers (Bahadi 2023) : le bas, pour un bureau
+# Évocation de parade : ce lien sonore avec le flehmen est un choix de
+# présentation, pas une mesure zoologique (voir tools/audio/README.md).
+sound = "grondement"
 next = [{ to = "stand", weight = 2 }, { to = "walk", weight = 2 }, { to = "look", weight = 1 }]
 
 # L'alarme : tête haute, il tape d'un antérieur (et souffle par les naseaux),
@@ -393,6 +400,7 @@ next = [{ to = "stand", weight = 2 }, { to = "walk", weight = 2 }, { to = "look"
 name = "stamp"
 motion = "stamp"
 duration = 0.9
+sound = "alarme"
 next = [
     { to = "look", weight = 3 },
     { to = "run", weight = 2 },

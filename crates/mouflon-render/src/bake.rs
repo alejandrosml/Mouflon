@@ -135,10 +135,29 @@ fn bake_piece(rig: &Rig, items: &[usize], scale: f64, light: Option<f32>) -> Opt
                 style,
                 ..
             } => {
-                let grow = style.width * transform.determinant().abs().sqrt() * 2.0;
+                // Le déterminant donne l'échelle d'une aire, pas celle du
+                // trait : scale(10, 0.1) vaut 1 et couperait les côtés d'un
+                // trait vertical. Projeter son rayon sur les deux axes
+                // protège aussi les extrémités carrées et les longues
+                // pointes. On garde l'ancienne marge lorsqu'elle suffit,
+                // pour ne pas changer les images déjà cuites correctement.
+                let old = style.width * transform.determinant().abs().sqrt() * 2.0;
+                let join = match style.join {
+                    LineJoin::Miter => style.miter_limit.max(1.0),
+                    LineJoin::Round | LineJoin::Bevel => 1.0,
+                };
+                let cap = if style.cap == LineCap::Square {
+                    std::f64::consts::SQRT_2
+                } else {
+                    1.0
+                };
+                let radius = style.width * 0.5 * join.max(cap);
+                let [a, b, c, d, ..] = transform.as_coeffs();
+                let grow_x = old.max(radius * a.hypot(c));
+                let grow_y = old.max(radius * b.hypot(d));
                 transform
                     .transform_rect_bbox(path.bounding_box())
-                    .inflate(grow, grow)
+                    .inflate(grow_x, grow_y)
             }
             _ => continue,
         };

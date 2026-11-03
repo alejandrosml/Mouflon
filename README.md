@@ -47,7 +47,9 @@ throw them across the desktop.
   grazing one bite a second with a step to the next tuft, chewing the cud
   bolus after bolus; shaking off at 6 Hz, stretching on getting up,
   scratching, yawning, bleating mouth open, stamping, pawing, backing up and
-  rearing before a charge, the flehmen of a ram (upper lip curled); lambs at play (stiff and twisting leaps, spins in
+  rearing before a charge, the flehmen of a ram after sniffing a ewe (upper
+  lip curled); lambs that follow their own mother and nurse with their heads
+  raised, tails wagging and hooves planted; lambs at play (stiff and twisting leaps, spins in
   the air, races, head butts, inviting each other to play), a crouch before
   every leap; sleep with the head on the ground and twitching legs; slit
   pupils that stay level when the head bows to graze; tails that sway down
@@ -73,6 +75,11 @@ throw them across the desktop.
   Chinese).
 - **Written entirely in Rust**: `unsafe` code only at the boundary with macOS,
   in a single crate, each block justified.
+
+A native ewe's context menu can **Add her lamb** when she is free and
+grounded. The lamb keeps its mother, follows her and nurses; its age stays
+fixed. Its drawing is currently a smaller adult drawing, pending anatomical
+variants for each breed.
 
 ### Mascots
 
@@ -470,8 +477,9 @@ se laissent attraper et lancer à travers le bureau.
   par seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
   après bol ; l'ébrouement à 6 Hz, l'étirement en se relevant, le grattage,
   le bâillement, le bêlement bouche ouverte, le pied qui tape, le sol gratté
-  et le recul avant une charge, le bélier qui se cabre, le flehmen du bélier
-  (la lèvre retroussée) ; les jeux d'agneaux
+  et le recul avant une charge, le bélier qui se cabre, son flehmen après
+  avoir flairé une brebis (la lèvre retroussée) ; des agneaux qui suivent
+  leur propre mère et tètent tête levée, queue frétillante, sabots posés ; les jeux d'agneaux
   (sauts raides ou tordus, demi-tours en l'air, courses, coups de front,
   invitations à jouer), l'élan pris avant chaque saut ; le sommeil la tête
   au sol, les pattes qui tressaillent ; des pupilles en fente qui restent à
@@ -499,6 +507,11 @@ se laissent attraper et lancer à travers le bureau.
   japonais, coréen, chinois).
 - **Écrit entièrement en Rust** : du code `unsafe` seulement à la frontière
   avec macOS, dans un seul crate, chaque bloc justifié.
+
+Le menu d'une brebis native permet d'**Ajouter son agneau** lorsqu'elle est
+libre et posée. Le jeune garde sa mère, la suit et tète ; son âge reste
+fixe. Son dessin est actuellement celui de l'adulte réduit, en attendant
+les variantes anatomiques de chaque race.
 
 ### Les mascottes
 

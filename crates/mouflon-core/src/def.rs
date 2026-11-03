@@ -7,6 +7,56 @@ use std::sync::Arc;
 use crate::expr::Expr;
 use crate::math::Vec2;
 
+/// Sexe d'un animal, tiré une seule fois à son apparition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sex {
+    Male,
+    Female,
+}
+
+/// Proportion de mâles à l'apparition ; les tirages de mouvement restent
+/// indépendants. Les bornes fixent le sexe sans changer ce contrat.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SexRatio {
+    male: f32,
+}
+
+impl SexRatio {
+    pub const MALE: Self = Self { male: 1.0 };
+    pub const FEMALE: Self = Self { male: 0.0 };
+
+    pub fn new(male: f32) -> Result<Self, DefError> {
+        if !(0.0..=1.0).contains(&male) {
+            return Err(DefError::Invalid(
+                "la proportion de mâles doit être finie, entre 0 et 1".into(),
+            ));
+        }
+        Ok(Self { male })
+    }
+
+    #[must_use]
+    pub const fn male_probability(self) -> f32 {
+        self.male
+    }
+}
+
+impl Default for SexRatio {
+    fn default() -> Self {
+        Self { male: 0.5 }
+    }
+}
+
+/// Âge déclaré, fixe : le temps passé au bureau ne fait pas vieillir
+/// l'animal. Les semaines servent notamment au rythme des tétées.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Age {
+    #[default]
+    Adult,
+    Lamb {
+        weeks: f32,
+    },
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PetMeta {
     pub id: String,
@@ -522,10 +572,14 @@ pub enum Gesture {
     /// supérieure retroussée, il hume quelques secondes (après avoir flairé
     /// une brebis).
     Flehmen,
+    /// L'agneau tète, museau levé, queue frétillante.
+    Nurse,
+    /// Appel maternel grave, bouche fermée.
+    MaternalCall,
 }
 
 impl Gesture {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::Shake,
         Self::Stretch,
         Self::Paw,
@@ -539,6 +593,8 @@ impl Gesture {
         Self::Rear,
         Self::Invite,
         Self::Flehmen,
+        Self::Nurse,
+        Self::MaternalCall,
     ];
 
     /// Son nom dans un `pet.toml` (`motion = "shake"`…).
@@ -558,6 +614,8 @@ impl Gesture {
             Self::Rear => "rear",
             Self::Invite => "invite",
             Self::Flehmen => "flehmen",
+            Self::Nurse => "nurse",
+            Self::MaternalCall => "maternal_call",
         }
     }
 
@@ -692,6 +750,10 @@ pub enum Condition {
     Morning,
     /// De 18 h à 22 h, heure locale.
     Evening,
+    /// Le sexe, à tout âge.
+    Sex(Sex),
+    Adult,
+    Lamb,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -934,6 +996,9 @@ pub enum Rules {
 #[derive(Clone, Debug)]
 pub struct PetDef {
     pub meta: PetMeta,
+    /// Répartition du sexe à l'apparition, indépendante du comportement.
+    pub sex_ratio: SexRatio,
+    pub age: Age,
     pub appearance: Appearance,
     pub physics: Physics,
     pub behaviors: Vec<Behavior>,
@@ -1042,20 +1107,28 @@ impl PetDef {
             .iter()
             .position(|b| matches!(b.motion, Motion::Stand | Motion::Look))
             .or_else(|| {
-                behaviors
-                    .iter()
-                    .position(|b| !b.motion.is_airborne() && b.motion != Motion::Held)
+                behaviors.iter().position(|b| {
+                    !b.motion.is_airborne()
+                        && b.motion != Motion::Held
+                        && b.motion != Motion::Gesture(Gesture::Flehmen)
+                })
             })
             .ok_or(DefError::NoGroundBehavior)?;
         let default_air = behaviors.iter().position(|b| b.motion == Motion::Fall);
         let energies = behaviors.iter().map(crate::temper::Energy::of).collect();
-        if !(physics.width > 0.0 && physics.height > 0.0) {
+        if !(physics.width.is_finite()
+            && physics.width > 0.0
+            && physics.height.is_finite()
+            && physics.height > 0.0)
+        {
             return Err(DefError::Invalid(
-                "la taille de l'animal doit être positive".into(),
+                "la taille de l'animal doit être positive et finie".into(),
             ));
         }
         Ok(Self {
             meta,
+            sex_ratio: SexRatio::default(),
+            age: Age::default(),
             appearance,
             physics,
             behaviors,
@@ -1152,7 +1225,7 @@ impl PetDef {
     pub fn scaled(&self, k: f32) -> Self {
         let mut def = self.clone();
         // Pas de taille nulle, négative ou indéfinie ; 1 : rien à changer.
-        if k.is_nan() || k <= 0.0 || k == 1.0 {
+        if !k.is_finite() || k <= 0.0 || k == 1.0 {
             return def;
         }
         match &mut def.appearance {

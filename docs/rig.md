@@ -56,6 +56,7 @@ Toutes sont facultatives.
 | `leg-front-near-lower`… (dans sa patte) | le bas de chaque patte (le canon et le sabot) : il plie au carpe (devant) ou au jarret (derrière) | le carpe ou le jarret |
 | `lip` (dans `head`) | la lèvre supérieure : elle se retrousse pour le flehmen | son arrière, sous le naseau |
 | `sway-1`, `sway-2`, `sway-3` (dans `body`, ou juste avant lui) | des mèches de la toison : elles traînent quand il court, balancent au rythme des pas, penchent dans le vent, suivent la secousse quand il s'ébroue | le milieu de leur attache, en haut |
+| `neck-sway-1`, `neck-sway-2`, `neck-sway-3` (dans `neck`, avant sa laine courte) | de petites touffes d'encolure : leur racine suit le cou, leurs fibres pendent quand il broute et balancent avec la toison | un point à la racine de chaque touffe, recouvert par la laine courte |
 
 Et un point qui n'est pas une partie : `pivot-muzzle`, ce qui touche l'herbe
 quand il broute (le bout du museau, sous les naseaux). Sans lui, le moteur
@@ -146,6 +147,22 @@ d'un creux du contour au suivant, et pose son pivot au milieu de la corde
 entre les deux creux : seuls les creux touchent les voisins, et ils bougent
 à peine ; un bord coupé au milieu d'un feston s'ouvrirait en encoche dès
 que la mèche penche. Elles sont éclairées comme le corps.
+
+**Les touffes d'encolure** (`neck-sway-1`, `neck-sway-2`,
+`neck-sway-3`) ont une attache ponctuelle, étroite et cachée sous la laine
+du cou. Cette racine suit l'encolure ; le moteur compense sa rotation et
+son étirement pour que les fibres pendent dans le repère du corps, puis
+leur applique le même balancement qu'aux mèches du ventre. Le miroir et
+les rotations de l'animal entier restent communs à tout le dessin. Ces
+parties sont facultatives ; sans `neck`, leur attache suit `body`.
+
+Dessine plusieurs petites touffes, avec un recouvrement généreux sous la
+laine courte. Une large frange cousue sur toute sa largeur ne convient
+pas : lorsque le cou passe à l'horizontale, conserver cette ligne
+d'attache tout en faisant pendre les fibres aplatirait l'image. Le Nez
+noir utilise trois touffes et 3 unités de recouvrement dans son
+générateur. Les mèches du ventre conservent leur attache horizontale et
+leur mouvement existant.
 
 Un exemple, réduit à l'essentiel :
 
@@ -255,3 +272,21 @@ de bureau à 60 i/s (à assembler avec ffmpeg).
 
 Pour l'utiliser dans l'app : menu de la barre des menus → « Ouvrir le dossier
 des animaux », copie ton dossier dedans, puis relance Mouflon.
+
+## La tétée et l'appel maternel
+
+La rencontre familiale du moteur n'exige pas de nouvelle partie dessinée.
+Le rendu fournit au cœur deux repères normalisés par la hauteur : la région
+mammaire implicite sous le flanc près des postérieurs, et le museau dans la
+pose de tétée. Le jeune rejoint sa place en marchant, puis `nurse` plie
+l'encolure et relève la tête vers la cible, tandis que ses quatre sabots
+restent fixes. La queue frétille ; `maternal_call` garde la bouche de la
+mère fermée. Ces gestes viennent de l'état familial, qui s'interrompt si
+les partenaires perdent leur support ou sont pris.
+
+Le repère mammaire est une convention graphique pour les dessins actuels,
+pas une mesure vétérinaire ni une mamelle ajoutée au dessin. La frange de
+laine peut descendre sous ce repère. Un dessin sans encolure conserve un
+simple geste de tête ; ses autres poses et ses images cuites restent
+inchangées. L'aperçu `famille` montre la vraie simulation à deux âges et
+dans les deux sens, accompagné de sa légende `famille.md`.

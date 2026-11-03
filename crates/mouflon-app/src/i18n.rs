@@ -75,6 +75,8 @@ pub struct Texts {
     pub add_named: String,
     /// Sous-menu des autres espèces (« Ajouter un autre animal »).
     pub add_pet: String,
+    /// Dans le menu d’une brebis adulte.
+    pub add_lamb: String,
     /// Son premier article, qui ouvre la galerie des animaux.
     pub gallery: String,
     /// Sous-menu « Dire au revoir », et son premier article (« À tous »).

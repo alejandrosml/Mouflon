@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use mouflon_core::{BonePose, BoneRole, PoseSignals, Shown, Skeleton};
+use mouflon_core::{BonePose, BoneRole, Gesture, PoseSignals, Shown, Skeleton};
 use peniko::kurbo::{Affine, Point, Rect, Vec2};
 
 use crate::animate::{
@@ -381,6 +381,42 @@ impl SkeletonArt {
         Point::new(f64::from(g.x), f64::from(g.y))
     }
 
+    /// Les repères de tétée dans la toile : sous l'arrière du ventre,
+    /// puis la portée du museau relevé. Calculés au chargement.
+    pub(crate) fn nursing_points(&self) -> Option<(Point, Point)> {
+        let head = self.role(BoneRole::Head)?;
+        let body = self.fleece?;
+        let h = self.bounds.height().max(1.0);
+        let hip = self
+            .role(BoneRole::Leg {
+                front: false,
+                near: true,
+            })
+            .map_or(body.min_x() + body.width() * 0.2, |i| {
+                f64::from(self.skeleton.bones[i].at.x)
+            });
+        let udder = crate::joints::udder_point(body, hip, self.ground(), h, self.neck);
+        let muzzle = self
+            .neck
+            .map(|n| n.muzzle)
+            .or_else(|| self.carried[head].map(muzzle_of))?;
+        let posed = self.pose(
+            &PoseSignals {
+                gesture: Some(Gesture::Nurse),
+                gesture_amount: 1.0,
+                gesture_time: 1.0,
+                ..PoseSignals::default()
+            },
+            1.0,
+            0.0,
+        );
+        let muzzle = self.neck.map_or_else(
+            || posed.root * posed.bones[head] * muzzle,
+            |neck| neck.nursing_muzzle(),
+        );
+        Some((udder, muzzle))
+    }
+
     /// L'os qui a ce rôle (le premier), s'il y en a un.
     fn role(&self, wanted: BoneRole) -> Option<usize> {
         self.skeleton
@@ -458,7 +494,27 @@ impl SkeletonArt {
             };
             // Ramené à son parent, puis l'animation à clés, autour de l'articulation.
             let engine_local = parent_free.inverse() * free[i];
-            let clip = clips[i];
+            // La tétée pose le museau et les appuis en coordonnées précises.
+            // Les clés structurelles s'effacent avec l'entrée du geste et
+            // reviennent avec sa sortie, sans déplacer les appuis en pleine
+            // tétée. Les petites parties libres gardent toutes leurs clés.
+            let clip = if s.gesture == Some(Gesture::Nurse)
+                && !matches!(
+                    bone.role,
+                    Some(
+                        BoneRole::Ear
+                            | BoneRole::Eye
+                            | BoneRole::Pupil
+                            | BoneRole::Tail
+                            | BoneRole::Jaw
+                            | BoneRole::Lip
+                            | BoneRole::Sway
+                    )
+                ) {
+                clips[i].lerp(BonePose::default(), s.gesture_amount.clamp(0.0, 1.0))
+            } else {
+                clips[i]
+            };
             let keyed = about(
                 at,
                 Affine::translate((f64::from(clip.moves.x), f64::from(clip.moves.y)))
@@ -545,6 +601,22 @@ impl SkeletonArt {
         let rise = f(s.rise);
         // Un agneau qui saute garde les pattes raides.
         let loose = 1.0 - f(s.stiff);
+        let nursing = s.gesture == Some(Gesture::Nurse);
+        let nursing_unroot = if nursing {
+            let hold_x = self
+                .role(BoneRole::Body)
+                .map_or(g.x, |i| f64::from(self.skeleton.bones[i].at.x));
+            root_transform(
+                s,
+                1.0,
+                g,
+                h,
+                Point::new(hold_x, self.bounds.min_y() + h * 0.12),
+            )
+            .inverse()
+        } else {
+            Affine::IDENTITY
+        };
         let mut engine = Engine {
             signals: *p,
             all: *s,
@@ -588,6 +660,12 @@ impl SkeletonArt {
                 nibble: f(p.nibble),
                 graze_at: Point::new(self.fore_hoof.x, g.y - 0.3 * u),
                 sleep_low,
+                nursing: s.nursing_target.filter(|_| nursing).map(|target| {
+                    (
+                        nursing_unroot * (g + Vec2::new(f(target.x), f(target.y)) * h),
+                        f(s.gesture_amount),
+                    )
+                }),
                 ground: g.y,
                 u,
                 squash: engine.act.head_squash,
@@ -611,7 +689,11 @@ impl SkeletonArt {
             front_down,
             back_down,
             act: engine.act,
-            untilt: untilt(s, g, h),
+            untilt: if nursing {
+                nursing_unroot
+            } else {
+                untilt(s, g, h)
+            },
         };
         for (slot, leg) in self.legs.iter().enumerate() {
             if let Some((_, _, rest)) = leg {
@@ -1025,6 +1107,96 @@ mod tests {
         let swing = angles.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
             - angles.iter().cloned().fold(f64::INFINITY, f64::min);
         assert!(swing > 0.2, "{swing}");
+    }
+
+    #[test]
+    fn a_nursing_skeleton_keeps_all_four_hooves_planted_while_breathing() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pets/aquarelle/pet.toml");
+        let pet = crate::PetArt::load(&mouflon_core::load_pet(&path).unwrap()).unwrap();
+        let (udder, muzzle) = pet.nursing_points().unwrap();
+        let crate::Look::Skeleton(art) = pet.look else {
+            panic!("squelette peint");
+        };
+        assert_eq!(art.legs.iter().flatten().count(), 4);
+        for facing in [-1.0, 1.0] {
+            let resting = art.pose(&PoseSignals::default(), facing, 0.0);
+            for i in 0..24 {
+                let signals = PoseSignals {
+                    gesture: Some(Gesture::Nurse),
+                    gesture_amount: 1.0,
+                    gesture_time: 1.0 + i as f32 / 60.0,
+                    nursing_target: Some(mouflon_core::Vec2::new(muzzle.x, udder.y / 0.58)),
+                    breath: (i as f32 * 0.2).sin(),
+                    ..PoseSignals::default()
+                };
+                let posed = art.pose(&signals, facing, 0.0);
+                for (_, lower, leg) in art.legs.iter().flatten() {
+                    let rest = resting.root * resting.bones[*lower] * leg.chain.tip;
+                    let at = posed.root * posed.bones[*lower] * leg.chain.tip;
+                    assert!(
+                        (at - rest).hypot() < 0.03,
+                        "sabot {lower}, sens {facing} : {at:?} au lieu de {rest:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn structural_keyframes_return_smoothly_when_nursing_ends() {
+        let toml = format!(
+            r#"{TOML}
+            [[clip]]
+            name = "calme"
+            length = 2.0
+            [clip.bones.racine]
+            move = [[0, 12, -8]]
+            scale = [[0, 1.1, 0.95]]
+            [clip.bones.corps]
+            rotate = [[0, 20]]
+            [motions]
+            idle = "calme"
+            "#
+        );
+        let keyed = art(&toml);
+        let plain = art(TOML);
+        let point = Point::new(250.0, 200.0);
+        for facing in [-1.0, 1.0] {
+            let signals = PoseSignals {
+                gesture: Some(Gesture::Nurse),
+                gesture_amount: 1.0,
+                gesture_time: 2.0,
+                ..PoseSignals::default()
+            };
+            let full = keyed.pose(&signals, facing, 0.0);
+            let no_keys = plain.pose(&signals, facing, 0.0);
+            let mut previous = full.root * full.bones[1] * point;
+            assert!((previous - no_keys.root * no_keys.bones[1] * point).hypot() < 1e-6);
+            let resting = keyed.pose(&PoseSignals::default(), facing, 0.0);
+            let rest = resting.root * resting.bones[1] * point;
+            assert!(
+                (rest - previous).hypot() > 5.0,
+                "les clés déplacent le corps"
+            );
+            for step in 1..=100 {
+                let pose = keyed.pose(
+                    &PoseSignals {
+                        gesture_amount: 1.0 - step as f32 / 100.0,
+                        ..signals
+                    },
+                    facing,
+                    0.0,
+                );
+                let at = pose.root * pose.bones[1] * point;
+                assert!((at - previous).hypot() < 2.0, "sortie {step}");
+                previous = at;
+            }
+            assert!(
+                (previous - rest).hypot() < 1e-6,
+                "aucun saut à la fin du geste"
+            );
+        }
     }
 
     #[test]

@@ -68,6 +68,14 @@ Ce qu'il faut savoir :
   bout balance (`sway-1` à `sway-3`), le haut reste. L'Ouessant range ses
   mèches pendantes du ventre dans trois groupes `sway-*`, accrochés à leur
   racine (le pivot, la racine moyenne).
+- Le Nez noir marque aussi trois étroites colonnes de mèches d'encolure
+  (`neck-fringe-*`), y compris les fibres qui en dessinent le bord avant.
+  Une fois le cou découpé, `hang_strands` en détache le bas dans
+  `neck-sway-1` à `neck-sway-3`, sous la laine courte, avec 3 unités de
+  recouvrement. Chaque pivot est placé dans cette racine : le moteur fait
+  suivre ce point au cou et laisse pendre les fibres quand il broute. Ces
+  groupes sont distincts des trois mèches du ventre ; aucune autre race
+  n'est redessinée pour cette correction.
 - Le mouflon a son cou à part (le collier) : il devient l'encolure (`neck`),
   qui porte la tête ; la corne et l'oreille du fond, peintes derrière le
   collier, sont rognées de ce qu'il cachait (`articulations.clip_away`).

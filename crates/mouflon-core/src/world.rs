@@ -635,19 +635,33 @@ pub fn visible_ledges_among(
             continue;
         }
         let y = window.frame.top();
-        let Some(screen) = screens.iter().find(|s| {
-            s.frame
-                .contains(Vec2::new(window.frame.center().x, y + 1.0))
-        }) else {
-            continue;
-        };
-        if y < screen.usable.top() + options.headroom || y >= screen.usable.bottom() - 1.0 {
-            continue;
+        // Le centre de la fenêtre peut être hors écran, et son rebord
+        // traverser plusieurs écrans. Chaque zone utile contribue sa part.
+        let mut spans: Vec<(f32, f32)> = screens
+            .iter()
+            .filter(|screen| {
+                y >= screen.usable.top() + options.headroom && y < screen.usable.bottom() - 1.0
+            })
+            .filter_map(|screen| {
+                let x0 = window.frame.left().max(screen.usable.left());
+                let x1 = window.frame.right().min(screen.usable.right());
+                (x0 < x1).then_some((x0, x1))
+            })
+            .collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        // Deux écrans contigus ne créent pas un faux bord où se retourner ;
+        // deux écrans en miroir ne créent pas deux surfaces superposées.
+        let mut merged = 0;
+        for i in 0..spans.len() {
+            let span = spans[i];
+            if merged > 0 && span.0 <= spans[merged - 1].1 {
+                spans[merged - 1].1 = spans[merged - 1].1.max(span.1);
+            } else {
+                spans[merged] = span;
+                merged += 1;
+            }
         }
-        let mut spans = vec![(
-            window.frame.left().max(screen.usable.left()),
-            window.frame.right().min(screen.usable.right()),
-        )];
+        spans.truncate(merged);
         for front in &windows[..index] {
             let f = front.frame;
             // On masque aussi un peu au-dessus du rebord : l'animal s'y tient debout.
@@ -846,6 +860,86 @@ mod tests {
             frame: Rect::new(0.0, 25.0, 1440.0, 800.0),
         }];
         assert!(visible_ledges(&windows, &[screen()], LedgeOptions::default()).is_empty());
+    }
+
+    #[test]
+    fn a_window_keeps_its_visible_ledge_when_its_center_is_off_screen() {
+        let windows = [WindowRect {
+            id: 7,
+            frame: Rect::new(-600.0, 300.0, 800.0, 300.0),
+        }];
+        let ledges = visible_ledges(&windows, &[screen()], LedgeOptions::default());
+        assert_eq!(ledges.len(), 1);
+        assert_eq!((ledges[0].x0, ledges[0].x1), (0.0, 200.0));
+    }
+
+    #[test]
+    fn a_ledge_crosses_adjacent_screens_without_an_artificial_edge() {
+        let right = Screen {
+            frame: Rect::new(1440.0, 0.0, 1440.0, 900.0),
+            usable: Rect::new(1440.0, 25.0, 1440.0, 800.0),
+            ..screen()
+        };
+        let windows = [WindowRect {
+            id: 8,
+            frame: Rect::new(1300.0, 300.0, 500.0, 300.0),
+        }];
+        for screens in [[screen(), right], [right, screen()]] {
+            let ledges = visible_ledges(&windows, &screens, LedgeOptions::default());
+            assert_eq!(ledges.len(), 1);
+            assert_eq!((ledges[0].x0, ledges[0].x1), (1300.0, 1800.0));
+        }
+    }
+
+    #[test]
+    fn ledges_preserve_screen_gaps_and_check_headroom_on_each_screen() {
+        let right = Screen {
+            frame: Rect::new(1600.0, 260.0, 1440.0, 900.0),
+            usable: Rect::new(1600.0, 285.0, 1440.0, 800.0),
+            ..screen()
+        };
+        let mut windows = [WindowRect {
+            id: 9,
+            frame: Rect::new(1300.0, 300.0, 500.0, 300.0),
+        }];
+        let spans = |windows: &[WindowRect]| {
+            visible_ledges(windows, &[screen(), right], LedgeOptions::default())
+                .into_iter()
+                .map(|s| (s.x0, s.x1))
+                .collect::<Vec<_>>()
+        };
+        // Sur l'écran de droite, 15 pt sous la barre ne suffisent pas.
+        assert_eq!(spans(&windows), vec![(1300.0, 1440.0)]);
+        windows[0].frame.y = 400.0;
+        assert_eq!(spans(&windows), vec![(1300.0, 1440.0), (1600.0, 1800.0)]);
+    }
+
+    #[test]
+    fn a_foreground_window_hides_a_ledge_across_the_screen_boundary() {
+        let right = Screen {
+            frame: Rect::new(1440.0, 0.0, 1440.0, 900.0),
+            usable: Rect::new(1440.0, 25.0, 1440.0, 800.0),
+            ..screen()
+        };
+        let windows = [
+            WindowRect {
+                id: 10,
+                frame: Rect::new(1400.0, 200.0, 100.0, 300.0),
+            },
+            WindowRect {
+                id: 11,
+                frame: Rect::new(1300.0, 300.0, 500.0, 300.0),
+            },
+        ];
+        let ledges = visible_ledges_among(
+            &windows,
+            &[false, true],
+            &[screen(), right],
+            LedgeOptions::default(),
+        );
+        let spans: Vec<_> = ledges.iter().map(|s| (s.x0, s.x1)).collect();
+        assert_eq!(spans, vec![(1300.0, 1400.0), (1500.0, 1800.0)]);
+        assert_ne!(ledges[0].id, ledges[1].id);
     }
 
     #[test]

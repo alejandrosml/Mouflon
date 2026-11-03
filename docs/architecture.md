@@ -176,6 +176,18 @@ cuits d'un rig sont désormais rangés dans des tableaux : une image coûte
 articulé (`tests/cout.rs`) ; mille animaux en tas, 1,37 ms par pas.
 `tools/races/articulations.py` coupe un dessin généré à ses articulations.
 
+La relecture du cœur (chantier `moteur-suite`, novembre 2026) garde le pas
+fixe : un délai négatif ou non fini n'empoisonne plus son
+accumulateur ; les rapports d'échelle non finis sont refusés. Un animal
+plus large que l'arène reste centré, sans recevoir alternativement les
+corrections des deux bords, en physique classique comme réaliste. Les
+rebords de fenêtres sont découpés sur **tous** les écrans : leur centre
+peut être hors écran, deux écrans contigus ne créent pas un faux bord, et
+les espaces entre écrans ainsi que les fenêtres au premier plan continuent
+de les couper. Ce découpage n'est refait qu'au changement du relevé, pas
+pour chaque animal. Les tests `limites` et ceux de `world` couvrent ces cas,
+les cadences irrégulières et des tailles de 0,01 à 8 fois l'original.
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
 plus d'animaux.
@@ -434,3 +446,28 @@ Rust ; le cœur déterministe et ses tests ; les formats (`pet.toml`,
 desktopPet, squelettes) ; la compression BC7 et le cache sur disque ; les
 outils (aperçu, peintre, images intermédiaires) ; les essais et leur
 analyse, qui ont trouvé chacun des problèmes ci-dessus.
+
+## 7. Les liens mère–agneau (3 novembre 2026)
+
+`pet/family.rs` garde les liens par identifiants stables. Les indices des
+partenaires sont mis en cache et vérifiés ; la table est reconstruite après
+une apparition, un retrait ou un réordonnement. Le travail ordinaire est
+proportionnel au nombre de liens, avec un retour immédiat quand il n'y en
+a aucun. L'état de rencontre se superpose aux comportements sans ajouter
+ni déplacer leurs indices : le contrat de redimensionnement reste valable.
+La physique continue pendant le rendez-vous et la perte du support
+l'interrompt. Les tirages du sexe sont séparés de ceux des mouvements.
+
+Dans l'app, le menu demande un jeune, puis un fil de travail prépare son
+dessin. Les demandes simultanées pour la même définition partagent cette
+préparation. Le fil de l'affichage revalide la mère avant de créer le lien,
+et acquitte aussi les demandes refusées. Le fil principal conserve les
+sources des animaux vivants et des redimensionnements en cours lors du
+rechargement de la bibliothèque ; les rapports partiels ne font pas perdre
+la taille demandée aux autres naissances encore en attente.
+
+Le rendu fournit les deux repères de tétée au chargement du dessin ; le
+cœur ne lit ni SVG ni pixels pendant la simulation. L'appel maternel est
+un petit WAV intégré, déjà en mémoire avant le premier pas, transmis au
+fil sonore avec le même réglage de silence et le même quota que les autres
+sons. La synthèse se fait dans l'outil Python, jamais pendant l'affichage.

@@ -84,7 +84,9 @@ impl Energy {
                 | Gesture::Bleat
                 | Gesture::Rear
                 | Gesture::Invite
-                | Gesture::Flehmen => Self::Neutral,
+                | Gesture::Flehmen
+                | Gesture::Nurse
+                | Gesture::MaternalCall => Self::Neutral,
             },
             Motion::Script(script) => {
                 Self::by_name(&behavior.name).unwrap_or_else(|| Self::by_steps(script))

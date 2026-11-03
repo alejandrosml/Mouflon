@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use mouflon_core::{
-    Appearance, Drawn, Facings, Particle, ParticleKind, PetDef, PetView, Shadow, Support,
-    Vec2 as CoreVec2,
+    Appearance, Drawn, Facings, Gesture, Particle, ParticleKind, PetDef, PetView, PoseSignals,
+    Shadow, Support, Vec2 as CoreVec2,
 };
 use peniko::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use peniko::{Color, Extend, Fill, Mix};
@@ -211,6 +211,69 @@ impl PetArt {
             Look::Sprites(frames) => frames.reach(),
             Look::Rig(_) | Look::Skeleton(_) => None,
         }
+    }
+
+    /// Sous le flanc de la mère, puis portée du museau de l'agneau qui tète.
+    /// Coordonnées relatives au point d'appui, en fractions de hauteur du
+    /// dessin (x vers la tête, y vers le bas). L'app les transmet au cœur
+    /// une fois chargé ; aucune lecture d'image pendant la simulation.
+    /// La mamelle est un repère implicite sous l'arrière du ventre, pas un
+    /// détail ajouté au dessin. Les planches de sprites n'ont pas ce geste.
+    #[must_use]
+    pub fn nursing_points(&self) -> Option<(CoreVec2, CoreVec2)> {
+        let (ground, height, udder, muzzle) = match &self.look {
+            Look::Rig(rig) => {
+                if !rig.has_part(Part::Body) || !rig.has_part(Part::Head) {
+                    return None;
+                }
+                let body = rig.body_extent();
+                let h = rig.bounds.height().max(1.0);
+                let hip = if rig.has_part(Part::LegBackNear) {
+                    rig.pivot(Part::LegBackNear).x
+                } else {
+                    body.min_x() + body.width() * 0.2
+                };
+                let udder = crate::joints::udder_point(body, hip, rig.ground, h, rig.joints.neck);
+                let muzzle = rig
+                    .muzzle
+                    .unwrap_or_else(|| crate::animate::muzzle_of(rig.part_bounds(Part::Head)));
+                let posed = pose(
+                    rig,
+                    &PoseSignals {
+                        gesture: Some(Gesture::Nurse),
+                        gesture_amount: 1.0,
+                        gesture_time: 1.0,
+                        ..PoseSignals::default()
+                    },
+                    1.0,
+                    0.0,
+                );
+                let mut transform = posed.part(Part::Head);
+                let mut parent = rig.parent(Part::Head);
+                for _ in 0..Part::ALL.len() {
+                    let Some(part) = parent else {
+                        break;
+                    };
+                    transform = posed.part(part) * transform;
+                    parent = rig.parent(part);
+                }
+                let muzzle = rig.joints.neck.map_or_else(
+                    || posed.root * transform * muzzle,
+                    |neck| neck.nursing_muzzle(),
+                );
+                (rig.ground, h, udder, muzzle)
+            }
+            Look::Skeleton(art) => {
+                let (udder, muzzle) = art.nursing_points()?;
+                (art.ground(), art.bounds.height().max(1.0), udder, muzzle)
+            }
+            Look::Sprites(_) => return None,
+        };
+        let normalized = |point: Point| {
+            let v = (point - ground) / height;
+            CoreVec2::new(v.x as f32, v.y as f32)
+        };
+        Some((normalized(udder), normalized(muzzle)))
     }
 
     /// Fenêtre assez grande pour l'écrasement, les oreilles, les bulles,

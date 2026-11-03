@@ -48,6 +48,9 @@
 //! `toison` : les mèches (`sway`) d'un mouton simulé, à dix instants : au
 //! repos, au galop, après un arrêt net, quand il s'ébroue, puis dans un coup
 //! de vent qui le prend de dos.
+//!
+//! `famille` : une brebis et son agneau, de l'approche à la fin de la tétée,
+//! à deux et sept semaines, dans les deux sens (planche et légende Markdown).
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -66,6 +69,8 @@ use mouflon_render::{Frame, PetArt, Style, paint_pet};
 use resvg::{tiny_skia, usvg};
 
 type Error = Box<dyn std::error::Error>;
+
+mod family;
 
 const SCREEN_W: f32 = 960.0;
 const SCREEN_H: f32 = 600.0;
@@ -115,6 +120,13 @@ fn main() -> Result<(), Error> {
         let path = out_dir.join("toison.png");
         render_fleece(&def, &art, &path)?;
         println!("planche de la toison : {}", path.display());
+    }
+    if mode == "famille" {
+        family::render(&def, &out_dir)?;
+        println!(
+            "planche mère–agneau : {}",
+            out_dir.join("famille.png").display()
+        );
     }
     if mode == "video" || mode == "all" || mode == "troupeau" {
         let frames = out_dir.join("frames");
@@ -357,9 +369,17 @@ fn render_play(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> Res
     let mut world = World::new(vec![screen()]);
     world.set_windows(&[], LedgeOptions::default());
     let mut flock = Flock::new();
-    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
-    let b = flock.spawn(Arc::clone(def), 5, &world, Some(420.0));
-    let c = flock.spawn(Arc::clone(def), 7, &world, Some(780.0));
+    // Les rôles de la scène sont explicites ; les trois conservent le
+    // gabarit du dessin chargé pour montrer les gestes à la même échelle.
+    let mut young = (**def).clone();
+    young.age = mouflon_core::Age::Lamb { weeks: 8.0 };
+    let young = Arc::new(young);
+    let mut ram = (**def).clone();
+    ram.age = mouflon_core::Age::Adult;
+    ram.sex_ratio = mouflon_core::SexRatio::MALE;
+    let a = flock.spawn(Arc::clone(&young), 3, &world, Some(330.0));
+    let b = flock.spawn(young, 5, &world, Some(420.0));
+    let c = flock.spawn(Arc::new(ram), 7, &world, Some(780.0));
     give_reach(&mut flock, art);
     let duration = 8.0;
     let frames = (duration * RATE as f32) as u32;
