@@ -6,6 +6,12 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Plusieurs sessions poussent sur la même branche : un nouveau passage remplace
+# celui qui tournait encore pour la même branche (seul le dernier compte).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
