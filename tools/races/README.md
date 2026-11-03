@@ -46,7 +46,11 @@ Ce qu'il faut savoir :
   (`poll`), et `muzzle` dit ce qui touche l'herbe. Chaque coupe suit un
   cercle autour du pivot (rien ne s'ouvre quand l'articulation tourne) ; au
   repos, le dessin ne change pas, à l'anticrénelage près. Une nouvelle race
-  fait de même : `carpus_y`, `hock_y`, et la zone de l'encolure.
+  fait de même : `carpus_y`, `hock_y`, et la zone de l'encolure. Place la
+  base de l'encolure (`pivot`) assez bas dans l'épaule pour que l'encolure
+  et la tête atteignent l'herbe devant les antérieurs (le test `troupeau`
+  le vérifie) ; `filler` ajoute au fond de l'encolure une épaisseur de
+  laine, cachée au repos, qui comble l'espace quand la tête descend.
 - Le mouflon a son cou à part (le collier) : il devient l'encolure (`neck`),
   qui porte la tête ; la corne et l'oreille du fond, peintes derrière le
   collier, sont rognées de ce qu'il cachait (`articulations.clip_away`).
