@@ -10,12 +10,13 @@ rien sur le mouton — et sur ce que font de mieux les jeux et les films.
 
 Ce document rassemble ces connaissances (recherche de novembre 2026), dit
 pour chacune ce que Mouflon en fait, avec ses valeurs, et ce qui reste à
-faire. Les longueurs du moteur sont en **u**, le centième de la hauteur du
+faire (§ 11). Les longueurs du moteur sont en **u**, le centième de la hauteur du
 dessin de l'animal ; les instants d'une foulée, en fractions de la foulée
 comptées depuis le poser du postérieur qu'on voit.
 
 Le code : `crates/mouflon-render/src/animate.rs` (les allures),
-`crates/mouflon-render/src/gesture.rs` (les gestes et la posture),
+`crates/mouflon-render/src/joints.rs` (l'encolure et les pattes en deux
+segments), `crates/mouflon-render/src/gesture.rs` (les gestes et la posture),
 `crates/mouflon-core/src/pet.rs` (les signaux : vitesses, gestes, mâchoire,
 oreilles, respiration, clignements, imitation entre voisins).
 
@@ -111,6 +112,44 @@ l'antérieur au plus haut à 38 % de son vol ; le balayage vient de la foulée
 et de la longueur des pattes (≈ 22° pour le Mannequin au pas), et la patte
 d'appui s'allonge juste ce qu'il faut pour rester au sol en s'inclinant.
 
+### Le carpe et le jarret
+
+Les mesures sur le mouton au pas (environ 1,2 m/s) :
+
+- **Le carpe** a la plus grande amplitude de toute la patte : de 176° (presque
+  droit, à l'appui) à 105–117° au plus plié, en vol (60 à 70° de flexion ;
+  Faria 2014, brebis Santa Inês). Le coude bouge de 42 à 44°, l'épaule de
+  9 à 12° seulement. Les auteurs disent que le mouton marche « raide » des
+  postérieurs et « souple » des antérieurs.
+- **Le jarret** plie de 30 à 35° (de 155° à 119–126°) ; le grasset de 40 à
+  50°, au plus plié en vol (86 à 94°) ; le boulet reste presque droit à
+  l'appui (164 à 178°) et plie en vol (144 à 156° ; Diogo 2021, brebis
+  Churra sur tapis roulant). Chez le Mérinos, le genou et la cheville sont
+  au plus pliés **au milieu du vol** (80,6° et 80,7° de flexion depuis la
+  station debout) ; l'appui dure 60 % de la foulée (Silva 2024).
+- Le cheval au trot plie davantage en vol qu'au pas (coude, carpe, grasset,
+  jarret) et tend le carpe et le boulet à l'appui.
+
+**Dans Mouflon** (avec des pattes en deux segments, voir
+[rig.md](rig.md#les-articulations)) : le haut de la patte va de l'épaule ou
+de la hanche au carpe ou au jarret, le bas porte le canon et le sabot. Le
+moteur ne fait plus tourner une patte raide : il pose le sabot là où il doit
+être et plie le genou par une cinématique inverse à deux os. **À l'appui**,
+le sabot recule exactement de ce que le corps avance (il ne glisse pas :
+moins de 5 % de la vitesse mesurés au pas, au trot et au galop, contre 15 %
+admis avant) et la patte reste droite : elle se tasse de 7 % avant de plier,
+comme le carpe et le boulet tendus d'un vrai mouton ; au bout de l'appui,
+elle s'étire jusqu'à 25 % (au galop). **En vol**, la levée mesurée du sabot
+(3,4 u au pas) suffit à plier le carpe d'une cinquantaine de degrés au plus
+haut (au milieu du vol, comme chez le Mérinos), un quart de radian de plus
+pour l'antérieur, dont le canon part vers l'arrière ; le jarret plie dans
+l'autre sens, le canon vers l'avant. Le sabot posé reste sur le sol de
+l'écran même quand l'élan incline l'animal. En l'air, les pattes se
+replient en montant (le carpe et le jarret pliés à fond) et se tendent vers
+le sol en descendant ; à l'atterrissage, le corps descend de 6 % de sa
+hauteur et les genoux amortissent, les sabots glissant un peu vers
+l'extérieur.
+
 ### Le saut d'agneau
 
 Le « stotting » ou « pronking » : des bonds droits en l'air, les quatre
@@ -156,7 +195,13 @@ l'arrière) et se relève l'arrière d'abord ; le mouton aussi (WikiVet). Chez
 le veau, 3,4 à 4,4 s pour se coucher, 2,4 s pour se relever.
 
 **Dans Mouflon** : c'est l'ordre du moteur depuis le début ; en se relevant,
-nos moutons s'étirent souvent (voir plus bas).
+nos moutons s'étirent souvent (voir plus bas). Avec des pattes en deux
+segments, un mouton couché les replie comme un vrai mouton couché sur le
+sternum : les antérieurs sous le poitrail (le carpe posé au sol, plié à
+fond, le canon à plat vers l'arrière), les postérieurs le long du ventre (le
+jarret derrière, le canon vers l'avant) ; il plie les antérieurs d'abord et
+se relève par l'arrière. Aucune mesure publiée de ces angles chez le mouton
+couché : ce sont les postures décrites et photographiées.
 
 ## 2. Une journée de mouton
 
@@ -175,6 +220,30 @@ un pas d'une seconde vers l'herbe suivante, tête au sol, sans jamais passer
 le bord d'une fenêtre. Couché, `chew = true` : il rumine bol après bol
 (9 à 16 s de mastication, 1,6 à 3 s de pause : raccourcis pour un bureau).
 
+### L'encolure qui broute
+
+Rien de mesuré sur l'angle de l'encolure d'un mouton qui broute. Chez le
+cheval, l'angle entre la tête et l'encolure s'**ouvre** quand il mange au
+sol (153°, de 146 à 161°) : c'est l'encolure qui descend, la tête se tend
+dans son prolongement au lieu de se replier (113° l'encolure 15° sous le
+garrot, 98° 15° au-dessus ; étude de morphométrie géométrique, *Animals*
+2021). Les photographies de moutons qui broutent montrent la même chose :
+l'encolure part vers l'avant et le bas, le museau dans l'herbe à peu près
+une longueur de tête devant les antérieurs. Aux aguets, la tête est levée
+au-dessus du dos (§ 4).
+
+**Dans Mouflon**, avec une encolure : la tête ne descend plus d'un bloc. Une
+cinématique inverse à deux articulations (la base de l'encolure dans
+l'épaule, la nuque) pose le museau au sol, 0,85 longueur de tête devant les
+sabots des antérieurs (plus près si l'encolure ne va pas si loin) ; c'est
+surtout l'encolure qui descend (la nuque descend de plus de la moitié de ce
+que descend le museau), et seule elle s'étire, jusqu'à 12 %. Aux aguets,
+l'encolure se redresse (0,24 rad) ; quand il fonce, elle se tend vers le bas
+(0,3 rad) ; à moitié endormi, elle s'affaisse ; endormi la tête au sol, elle
+s'allonge vers l'avant (8 %) et la tête se pose presque à plat. Le regard
+(le curseur) reste à la tête. Le test `troupeau` vérifie que chaque mouton
+dessiné du dépôt broute le museau dans l'herbe.
+
 ## 3. Les gestes
 
 | Geste | Ce qu'en disent les études | Dans Mouflon |
@@ -190,6 +259,7 @@ le bord d'une fenêtre. Couché, `chew = true` : il rumine bol après bol
 | Bêler | aigu bouche ouverte : isolement, stress ; grave bouche fermée : brebis et agneau proches ; sinon rare | `bleat` et les sons `mouth = true` : la bouche s'ouvre en 0,1 s, un léger vibrato |
 | Renifler | le museau tendu vers l'autre | `sniff` : quand deux moutons se croisent |
 | Sonné | — | `daze` : la tête décrit de petits cercles, les yeux mi-clos, les oreilles pendantes ; après un atterrissage rude, puis il s'ébroue |
+| Flehmen | le bélier flaire l'urine ou la région ano-génitale d'une brebis, puis relève la tête, lèvre supérieure retroussée, et hume ; surtout la veille des chaleurs, à la saison du rut (l'automne). Durée moyenne d'un flehmen : 7,3 à 19 s selon les groupes (12,1 s pour un bélier seul avec la brebis ; Bahadi 2023, béliers Najdi) | `flehmen` : l'encolure tendue vers l'avant et le haut, le nez relevé, puis la lèvre retroussée (la gencive rose apparaît, le mouton n'a pas d'incisives en haut), la bouche entrouverte, les yeux mi-clos, la tête qui balance à peine ; 6 à 10 s (raccourci pour un bureau) ; après avoir reniflé un autre mouton, plus souvent chez un énervé et chez les béliers des races |
 
 ## 4. Les émotions : oreilles, tête, queue
 
@@ -326,10 +396,11 @@ l'écran restent fluides).
 | Roue d'arpenteur (Rosen, GDC) | la phase avance avec la distance parcourue, pas avec le temps | oui : les sabots ne glissent jamais |
 | Ajuster la foulée (« stride warping », Unreal) | la foulée suit la vitesse | oui : par allure (×1,15 au trot, ×1,9 au galop) |
 | Pied planté | le point de pose reste fixe pendant l'appui (Trico, Coros 2011) | oui, à sa façon : la patte rigide balaie exactement le chemin du corps et s'allonge pour rester au sol |
-| IK à deux os, FABRIK | genoux et cous articulés | non : nos pattes sont d'une pièce, et le profil n'en a pas besoin |
+| IK à deux os, FABRIK | genoux et cous articulés | oui (depuis novembre 2026) : une IK analytique à deux os pour l'encolure (le museau au sol) et chaque patte (le sabot posé, le genou plié du bon côté) ; la patte d'appui se tasse avant de plier, l'encolure s'étire seule (la tête reste rigide) |
 | Le corps d'après les pieds | hauteur = min √(L² − Δx²) des pattes d'appui ; tangage d'après l'avant et l'arrière | approché : garrot et croupe calés sur les mi-appuis (le même résultat, sans calcul) |
 | Dynamique du second ordre (t3ssel8r) | un ressort réglé par une fréquence, un amortissement et une « réponse » (dépassement, anticipation) | oui : oreilles, queue, inclinaison, écrasement, balancement sont des ressorts amortis |
 | Ressorts à amortissement critique, inertialisation (Holden) | passer d'une pose à l'autre sans à-coup, en amortissant l'écart | oui : tous les poids (allures, poses, gestes, posture) s'approchent de leur cible en douceur |
+| Mouvement secondaire (la toison) | les parties molles suivent le corps avec retard | des mèches (`sway`) en ressorts amortis (2 et 1,6 Hz) : elles traînent avec la vitesse (0,0016 rad par pt/s), suivent l'élan et le vent, sautillent à chaque appui, suivent la secousse quand il s'ébroue ; aucune étude n'en parle, réglé à l'œil |
 | Chaînes de Verlet (Jakobsen) | queues et oreilles en points reliés | à notre façon (essai 19) : une queue en deux ou trois morceaux est une chaîne de ressorts amortis, chacun suivant le précédent avec un temps de retard (2,2 puis 1,8 Hz) : un coup de queue descend jusqu'au bout, elle ondule |
 | Bruit de Perlin au repos (Improv) | de petits mouvements qui ne se répètent pas | en partie : regards, oreilles, queue et clignements tirés au hasard, respiration |
 | Clignements et regard (Eyes Alive) | clignements asymétriques, liés aux tours de tête | oui (voir plus haut) |
@@ -364,12 +435,19 @@ nombre de longueurs de patte par seconde (§ 1) ; les sauts de l'Ouessant sont
 réduits comme la racine de sa taille, pour garder la même hauteur rapportée
 au corps.
 
-Ce que le moteur ne permet pas encore, et qui se voit sur ces races : le cou
-ne se plie pas (la tête qui broute descend d'un bloc ; le mouflon a son
-encolure dans la tête pour la suivre) ; les pattes restent raides, si bien
-qu'un animal couché les cache sous lui ; à leur taille habituelle, la laine
-et les annelures des cornes se fondent (on lit la silhouette, les taches et
-les cornes ; le détail paraît quand on les agrandit).
+Depuis le chantier des articulations (novembre 2026), chaque race a une
+encolure qui porte la tête (le collier du mouflon ; ailleurs l'avant du haut
+de la toison, posé sous le corps, avec une épaisseur de laine cachée qui
+comble l'espace quand la tête descend) et des pattes en deux segments,
+coupées au carpe et au jarret : les quatre broutent le museau dans l'herbe
+(le mouflon s'arrêtait à 5 cm), se couchent les pattes repliées, plient le
+carpe et le jarret en marchant. Leurs générateurs font la coupe eux-mêmes
+(`tools/races/articulations.py`). Ce qui se voit encore : chez le Nez noir,
+les longues mèches de l'encolure tournent avec elle (une mèche se met à
+l'horizontale quand il broute) ; à leur taille habituelle, la laine et les
+annelures des cornes se fondent (on lit la silhouette, les taches et les
+cornes ; le détail paraît quand on les agrandit) ; les races n'ont pas
+encore de lèvre ni de mèches qui bougent.
 
 Les sources de ces fiches, par race :
 
@@ -412,22 +490,35 @@ demi-tours en l'air, courses, coups de front), le bélier qui recule avant de
 charger, le sommeil la tête au sol et les pattes qui tressaillent,
 l'anticipation avant un saut. À l'essai 19 : le bélier qui se cabre, l'agneau
 qui invite au jeu, les queues qui ondulent, les pupilles horizontales, et
-quatre races dessinées d'après nature (§ 10). Reste :
+quatre races dessinées d'après nature (§ 10). Au chantier des articulations
+(novembre 2026) : l'encolure qui porte la tête et broute le museau dans
+l'herbe, les pattes en deux segments (le carpe et le jarret qui plient, les
+pattes repliées sous l'animal couché), la lèvre et le flehmen, la toison qui
+bouge. Reste :
 
-- La toison qui bouge au vent et quand il court (des mèches qui traînent).
-- Le bélier en rut : le flehmen (lèvre retroussée), le cou tendu vers la
-  brebis.
-- L'agneau qui tète, la brebis qui l'appelle (un bêlement grave, bouche
-  fermée).
+- **L'agneau qui tète**, la brebis qui l'appelle (un bêlement grave, bouche
+  fermée). Les tétées durent 41 ± 10 s à une ou deux semaines, 12 ± 1 s à six
+  ou sept semaines, 36 puis 14 par jour (Gordon & Siegmann 1991, Mérinos) ;
+  l'agneau se glisse sous le flanc de sa mère, la tête levée, et frétille de
+  la queue. Il faudrait un lien entre une mère et son agneau (le troupeau ne
+  connaît que des familles, pas des mères) et une rencontre qui place
+  l'agneau sous le ventre de l'autre, à l'envers de lui : pas fait.
+- **Le dos qui plie** (s'étirer, ruer, bondir, se coucher) : un arrière-train
+  coupé au milieu du dos a été essayé sur le Mannequin ; dès 7°, le ventre
+  s'ouvre ou se double à la coupe. Une toison est d'un seul tenant : il
+  faudrait déformer le dessin (un maillage), pas faire tourner des morceaux
+  cuits. Pas fait ; le corps s'incline d'un bloc.
+- **Les races** : une lèvre et des mèches qui bougent (le Nez noir, aux
+  longues mèches, en profiterait le plus), des mèches d'encolure qui pendent
+  au lieu de tourner avec elle.
 - Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
   la tête au sol, ce que font nos moutons).
-- Un cou qui se plie, et des pattes qui se replient vraiment sous l'animal
-  couché (voir § 10).
 - Pour les races : le cri d'alarme du mouflon (un sifflement bref par les
   naseaux, souvent avec un coup de patte) et son grondement en rut ; les
   brebis et les agneaux de chaque race (la brebis d'Ouessant n'a pas de
   cornes, l'agneau Jacob naît avec sa tête de blaireau, le bélier Nez noir
-  porte des cornes bien plus fortes que la brebis).
+  porte des cornes bien plus fortes que la brebis) ; le flehmen réservé à la
+  saison du rut (le moteur ne connaît pas encore la date).
 
 ## Sources
 
@@ -446,6 +537,10 @@ Allures et biomécanique :
 - Le hochement de tête : <https://doi.org/10.1098/rspb.2016.1908>
 - Usherwood 2007, l'angle des pattes : <https://cob.silverchair.com/jeb/article-pdf/210/3/533/1538679/533.pdf>
 - Le stotting : <https://en.wikipedia.org/wiki/Stotting>
+- Le carpe, le coude, le jarret au pas, Faria et al. 2014, *BMC Veterinary Research* 10:294 : <https://doi.org/10.1186/s12917-014-0294-4>
+- Le grasset, le jarret, le boulet au pas (2D et 3D), Diogo et al. 2021, *Frontiers in Veterinary Science* 8:545708 : <https://doi.org/10.3389/fvets.2021.545708>
+- Le Mérinos au pas, flexion au milieu du vol, Silva et al. 2024, *Frontiers in Bioengineering and Biotechnology* 12:1370101 : <https://doi.org/10.3389/fbioe.2024.1370101>
+- L'angle de la tête et de l'encolure du cheval qui mange au sol (morphométrie géométrique), *Animals* 2021, 11:763 : <https://doi.org/10.3390/ani11030763>
 
 Comportement du mouton :
 
@@ -460,6 +555,8 @@ Comportement du mouton :
 - Taper du pied : <https://pmc.ncbi.nlm.nih.gov/articles/PMC7070376>
 - Suivre : <https://pmc.ncbi.nlm.nih.gov/articles/PMC3016320/> ; <https://ar5iv.arxiv.org/html/1712.05774> ; regroupements, Ginelli 2015 : <https://pmc.ncbi.nlm.nih.gov/articles/PMC4611628>
 - Jeux d'agneaux : <https://stud.epsilon.slu.se/13350/1/Augustsson_S_180314.pdf>
+- Le flehmen du bélier (durées), Bahadi et al. 2023, *Animal Reproduction* 20:e20220051 : <https://doi.org/10.1590/1984-3143-AR2022-0051> ; après le flairage ano-génital, Lacuesta & Ungerfeld 2012 : <https://doi.org/10.1016/j.anireprosci.2012.08.021>
+- La tétée (durée et nombre par jour), Gordon & Siegmann 1991, *Physiology & Behavior* 50:1079 : <https://doi.org/10.1016/0031-9384(91)90442-q>
 - Sommeil : <https://www.pharma.uzh.ch/apps/sleepcd/demo/animals/chap8/is165.htm> ; postures couchées : <https://pmc.ncbi.nlm.nih.gov/articles/PMC12411910>
 - Respiration : <https://www.msdvetmanual.com/multimedia/table/resting-respiratory-rates>
 - Voix : <https://www.biorxiv.org/content/10.1101/2025.07.29.667358.full.pdf>

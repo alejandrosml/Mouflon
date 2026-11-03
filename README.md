@@ -40,11 +40,14 @@ throw them across the desktop.
   after a broad review of the studies on sheep and quadrupeds (gaits,
   behavior, emotions) and of the best animation techniques: a walk in
   lateral sequence, a trot in diagonal pairs and the transverse gallop of
-  sheep, chosen by speed relative to leg length, hooves that never slide;
+  sheep, chosen by speed relative to leg length, hooves that never slide,
+  knees and hocks that bend in flight and fold under a lying sheep; a neck
+  that lowers the muzzle into the grass, rises on the alert and stretches
+  forward in sleep; a fleece that trails and sways;
   grazing one bite a second with a step to the next tuft, chewing the cud
   bolus after bolus; shaking off at 6 Hz, stretching on getting up,
   scratching, yawning, bleating mouth open, stamping, pawing, backing up and
-  rearing before a charge; lambs at play (stiff and twisting leaps, spins in
+  rearing before a charge, the flehmen of a ram (upper lip curled); lambs at play (stiff and twisting leaps, spins in
   the air, races, head butts, inviting each other to play), a crouch before
   every leap; sleep with the head on the ground and twitching legs; slit
   pupils that stay level when the head bows to graze; tails that sway down
@@ -377,6 +380,9 @@ cargo run -p mouflon-preview --release -- pets/pelote/pet.toml apercu troupeau 3
 # The gaits and every gesture of a drawn or painted pet, on one sheet:
 cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
 
+# The gaits phase by phase, lying down and jumping (the knees and hocks):
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures
+
 # Lambs at play: two butt heads, a ram backs up and charges, then twisting
 # leaps and a spin in the air:
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu jeux
@@ -453,11 +459,15 @@ se laissent attraper et lancer à travers le bureau.
   quadrupèdes (allures, comportement, émotions) et des meilleures techniques
   d'animation : un pas en séquence latérale, un trot par paires diagonales et
   le galop transverse des moutons, choisis d'après la vitesse rapportée à la
-  longueur des pattes, des sabots qui ne glissent jamais ; une bouchée par
-  seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
+  longueur des pattes, des sabots qui ne glissent jamais, le carpe et le
+  jarret qui plient en vol et se replient sous le mouton couché ; une
+  encolure qui pose le museau dans l'herbe, se redresse aux aguets et
+  s'allonge dans le sommeil ; une toison qui traîne et balance ; une bouchée
+  par seconde en broutant, et un pas vers l'herbe suivante, la rumination bol
   après bol ; l'ébrouement à 6 Hz, l'étirement en se relevant, le grattage,
   le bâillement, le bêlement bouche ouverte, le pied qui tape, le sol gratté
-  et le recul avant une charge, le bélier qui se cabre ; les jeux d'agneaux
+  et le recul avant une charge, le bélier qui se cabre, le flehmen du bélier
+  (la lèvre retroussée) ; les jeux d'agneaux
   (sauts raides ou tordus, demi-tours en l'air, courses, coups de front,
   invitations à jouer), l'élan pris avant chaque saut ; le sommeil la tête
   au sol, les pattes qui tressaillent ; des pupilles en fente qui restent à
@@ -811,6 +821,9 @@ cargo run -p mouflon-preview --release -- pets/pelote/pet.toml apercu troupeau 3
 
 # Les allures et tous les gestes d'un animal dessiné ou peint, sur une planche :
 cargo run -p mouflon-preview --release -- pets/aquarelle/pet.toml apercu gestes
+
+# Les allures phase par phase, le coucher et le saut (le carpe et le jarret) :
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures
 
 # Les jeux d'agneaux : deux qui se cognent le front, un bélier qui recule puis
 # charge, puis des sauts tordus et un demi-tour en l'air :

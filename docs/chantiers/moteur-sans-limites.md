@@ -4,6 +4,13 @@
 ait plus de limites dans les mouvements des moutons ». Ce chantier se fait
 dans une session cloud de Claude Code, sur la branche `fenetres-dock`.*
 
+> **Fait le 3 novembre 2026** : l'encolure, les pattes en deux segments, la
+> lèvre et le flehmen, la toison qui bouge ; le Mannequin, Aquarelle et les
+> quatre races articulés. Le contrat des nouvelles parties est dans
+> `docs/rig.md` et `docs/squelette.md` ; ce que disent les études et ce qui
+> reste (la tétée, le dos qui plie : essayé, pas propre), dans
+> `docs/animation-animale.md` (§ 1, 2, 3, 10, 11).
+
 Lis d'abord `CLAUDE.md` (les consignes du dépôt : vérifications avant
 chaque commit, conventions, auteur des commits), puis `docs/rig.md`,
 `docs/squelette.md`, `docs/animation-animale.md` (surtout le § 10, les

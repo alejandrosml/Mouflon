@@ -162,6 +162,20 @@ cuisson réduit à moins de vingt images chacun. Le test
 les animaux du dépôt, et vérifie que chaque mouton dessiné a ses parties, se
 cuit et pose ses sabots au sol.
 
+Le 3 novembre 2026, **les articulations** (chantier
+`docs/chantiers/moteur-sans-limites.md`) : de nouvelles parties facultatives
+(`neck`, les quatre `leg-*-lower`, `lip`, `sway-*` ; les rôles d'os du même
+nom), une cinématique inverse à deux os partagée par les rigs et les
+squelettes (`mouflon_render::joints`), le geste `flehmen`, deux ressorts de
+toison dans le cœur. Un dessin sans ces parties bouge et se cuit exactement
+comme avant (`tests/sans_changement.rs`). Le moteur accepte aussi des parties
+rangées autrement que le contrat (l'encolure sous le corps, la tête à part) :
+il les ramène à leur vrai parent. Les pivots, les boîtes et les morceaux
+cuits d'un rig sont désormais rangés dans des tableaux : une image coûte
+1,8 µs par mouton d'une pièce (3,2 µs avant), 3,8 µs pour un mouton
+articulé (`tests/cout.rs`) ; mille animaux en tas, 1,37 ms par pas.
+`tools/races/articulations.py` coupe un dessin généré à ses articulations.
+
 Ce qui reste : des tests pour les parties de l'app qui n'en ont pas encore
 (la barre des menus, la galerie), un essai sur le vrai Mac avec beaucoup
 plus d'animaux.

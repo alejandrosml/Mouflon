@@ -17,7 +17,7 @@ tutoie.
 | `pets/` | les animaux du dépôt (Pelote, Lainou, le Mannequin, Aquarelle, et quatre races réelles : `mouflon-corse`, `nez-noir`, `jacob`, `ouessant`) |
 | `tools/mouflon-preview` | aperçu hors écran (poses, gestes, jeux, rencontre, vidéo…) |
 | `tools/mouflon-peintre` | peint les morceaux d'Aquarelle |
-| `tools/races` | les scripts Python qui écrivent les SVG des quatre races : pour retoucher une race, change son script et relance-le (voir son README), ne modifie pas le SVG à la main |
+| `tools/races` | les scripts Python qui écrivent les SVG des quatre races : pour retoucher une race, change son script et relance-le (voir son README), ne modifie pas le SVG à la main ; `articulations.py` coupe un dessin à ses articulations (encolure, bas des pattes, lèvre, mèches), `mannequin/articule.py` écrit le Mannequin |
 | `tools/essai` | scripts d'essai sur le vrai Mac et `analyse.py` (lecture des journaux) |
 | `docs/` | `format.md` (le format `pet.toml`), `rig.md` (dessiner un rig SVG), `squelette.md`, `animation-animale.md` (ce que disent les études sur les moutons, et ce qu'en fait le moteur), `architecture.md` |
 
@@ -39,7 +39,14 @@ cargo test --release -p mouflon-core --test charge -- --ignored --nocapture --ex
 ```
 
 Mille animaux en tas : environ 1,4 ms par pas. Une nouveauté ne doit pas
-le faire monter sensiblement.
+le faire monter sensiblement, ni le coût du dessin d'une image :
+
+```sh
+cargo test --release -p mouflon-render --test cout -- --ignored --nocapture
+```
+
+Un dessin sans les nouvelles parties doit bouger et se cuire exactement
+comme avant : le test `sans_changement` le garde.
 
 ## Voir ce qu'on dessine
 
@@ -47,6 +54,7 @@ le faire monter sensiblement.
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu gestes   # allures et gestes
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu poses
 cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu jeux     # jeux d'agneaux
+cargo run -p mouflon-preview --release -- pets/mannequin/pet.toml apercu allures  # pas, trot, galop phase par phase, coucher, saut
 ```
 
 Regarde toujours les images produites avant de dire qu'un dessin ou une

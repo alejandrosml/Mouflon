@@ -5,7 +5,11 @@ chaque patte, chaque oreille, la queue, l'œil…) posés sur des **os**. Le
 moteur les anime lui-même : il marche au pas et galope (un pied après
 l'autre, les sabots posés sans glisser), se couche, dort, broute la tête au
 sol, saute les pattes repliées, se balance quand on le tient, regarde le
-curseur, cligne des yeux, respire, bat des oreilles et de la queue. Tu
+curseur, cligne des yeux, respire, bat des oreilles et de la queue. Avec une
+encolure, des pattes en deux segments, une lèvre et des mèches (voir « Les
+articulations »), l'encolure descend pour brouter, le carpe et le jarret
+plient, les pattes se replient sous l'animal couché, la lèvre se retrousse
+pour le flehmen, la toison traîne et balance. Tu
 peins une seule pose de profil, il fait le reste ; des animations à clés
 peuvent s'y ajouter ou le remplacer.
 
@@ -71,6 +75,7 @@ le bas).
 ```toml
 size = [1200, 900]     # la toile
 ground = [560, 820]    # le point d'appui : entre les sabots, au sol
+muzzle = [944, 538]    # facultatif : ce qui touche l'herbe (le bout du museau)
 ```
 
 ### Les os
@@ -104,6 +109,10 @@ Un `role` dit ce que le moteur fait de l'os de lui-même :
 | `tail` | se balance, bat de temps en temps ; plusieurs os `tail` à la suite (chacun enfant du précédent) font une queue en chaîne : chacun suit le précédent avec un temps de retard, elle ondule | base de la queue (puis l'attache de chaque morceau) |
 | `leg-front-near`, `leg-back-near` | pas, trot, galop, sauts, gestes (gratter le sol, taper du pied, se gratter), pattes repliées couché | hanche ou épaule |
 | `leg-front-far`, `leg-back-far` | idem, décalées dans le cycle | hanche ou épaule |
+| `neck` | l'encolure (la tête est son enfant) : elle descend pour brouter, se redresse aux aguets, se tend quand il fonce, s'allonge vers l'avant quand il dort la tête au sol | la base de l'encolure, dans l'épaule |
+| `leg-front-near-lower`… | le bas d'une patte (enfant de sa patte) : il plie au carpe (devant) ou au jarret (derrière) | le carpe ou le jarret |
+| `lip` | la lèvre supérieure (enfant de la tête) : elle se retrousse pour le flehmen | son arrière, sous le naseau |
+| `sway` | une mèche de la toison (enfant du corps) : elle traîne quand il court, balance à chaque pas, suit la secousse ; plusieurs os `sway`, les suivants un peu plus en retard | son attache, en haut |
 
 La mâchoire d'Aquarelle est un morceau posé **derrière** la tête : le bas du
 museau, peint comme la tête l'aurait peint, et au-dessus, cachés tant que la
@@ -121,6 +130,74 @@ Les mouvements du moteur sont calculés comme si chaque os avec un rôle était
 libre, puis ramenés à son parent : tu peux ranger les os comme tu veux (les
 pattes sous le corps, par exemple), les sabots restent posés quand le corps
 monte et descend.
+
+### Les articulations
+
+Toutes sont facultatives : un squelette qui ne les a pas bouge exactement
+comme avant. `pets/aquarelle` les a toutes.
+
+```toml
+[[bone]]
+name = "encolure"
+parent = "corps"
+at = [690, 560]          # la base de l'encolure, dans l'épaule
+role = "neck"
+
+[[bone]]
+name = "tete"
+parent = "encolure"
+at = [782, 470]          # la nuque : la tête y tourne
+role = "head"
+
+[[bone]]
+name = "patte-avant-pres"
+parent = "corps"
+at = [742, 668]
+role = "leg-front-near"
+
+[[bone]]
+name = "patte-avant-pres-bas"
+parent = "patte-avant-pres"
+at = [750, 744]          # le carpe
+role = "leg-front-near-lower"
+
+[[bone]]
+name = "levre"
+parent = "tete"
+at = [910, 522]
+role = "lip"
+
+[[bone]]
+name = "meche-1"
+parent = "corps"
+at = [644, 686]
+role = "sway"
+```
+
+- **L'encolure** : sa base assez bas dans l'épaule pour que l'encolure et
+  la tête, bout à bout, atteignent le sol devant les antérieurs ; la tête
+  tourne à la nuque. Peins-la en entier (aussi ce qui est caché sous le
+  corps et la tête au repos) et pose son morceau **avant** celui du corps :
+  le corps la recouvre à sa base, et elle se découvre en descendant. Pour
+  brouter, le moteur pose le museau (`muzzle`) au sol, à peu près une
+  longueur de tête devant les antérieurs ; seule l'encolure s'étire, la tête
+  reste d'une pièce.
+- **Les bas de pattes** : le haut va de l'épaule ou de la hanche au carpe ou
+  au jarret et se termine en demi-disque autour de l'articulation ; le bas
+  (le canon et le sabot), posé **avant** le haut (dessous), commence par
+  l'arc du même cercle. Le moteur pose le sabot et plie le genou : droite à
+  l'appui, pliée en vol, repliée sous l'animal couché.
+- **La lèvre** : le morceau de la tête qui la peint, posé par-dessus la
+  tête, et juste avant lui (sur l'os de la tête) la gencive qu'elle découvre.
+- **Les mèches** : des festons du bas de la toison, détachés du corps et
+  posés juste avant lui, dessous : au repos, rien ne change.
+
+Voir `tools/mouflon-peintre` : `split_joint` coupe une patte peinte à son
+articulation, `split_lock` détache une mèche, `paint_neck` peint l'encolure
+(les boucles de l'avant de la toison), `paint_lip` et `paint_gum` la lèvre.
+
+Le dos ne plie pas : coupé en deux au milieu du dos, la toison s'ouvre ou se
+double dès qu'on la plie (voir [rig.md](rig.md#les-articulations)).
 
 ### Les morceaux
 
@@ -213,5 +290,6 @@ cargo run --release -p mouflon-preview -- pets/aquarelle/pet.toml apercu poses
 ```
 
 donne une planche de poses (debout, au pas, au galop, en l'air, tenu,
-couché, endormi, en broutant). `video` à la place de `poses` donne une
+couché, endormi, en broutant) ; `gestes` et `allures` (les allures phase
+par phase, le coucher, le saut) montrent les articulations. `video` à la place de `poses` donne une
 scène de 18 secondes, image par image.
