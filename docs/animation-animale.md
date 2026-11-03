@@ -442,12 +442,19 @@ comble l'espace quand la tête descend) et des pattes en deux segments,
 coupées au carpe et au jarret : les quatre broutent le museau dans l'herbe
 (le mouflon s'arrêtait à 5 cm), se couchent les pattes repliées, plient le
 carpe et le jarret en marchant. Leurs générateurs font la coupe eux-mêmes
-(`tools/races/articulations.py`). Ce qui se voit encore : chez le Nez noir,
-les longues mèches de l'encolure tournent avec elle (une mèche se met à
+(`tools/races/articulations.py`). Chacune a aussi sa lèvre supérieure,
+détachée de la tête au-dessus de la bouche, avec la gencive qu'elle cache
+(rose sombre sous la peau noire, rose sous le museau blanc du mouflon) :
+les béliers retroussent la lèvre dans leur flehmen. La toison bouge où elle
+pend : chez le Nez noir, le bout des longues mèches de la frange du ventre,
+coupé au bas du fond de la toison ; chez l'Ouessant, les mèches bouclées qui
+pendent du ventre, accrochées à leur racine ; trois mèches chacun, entre les
+pattes. Le Jacob, à la toison plus courte et sans frange, et le mouflon, à
+poil ras, n'en ont pas. Ce qui se voit encore : chez le Nez noir, les
+longues mèches de l'encolure tournent avec elle (une mèche se met à
 l'horizontale quand il broute) ; à leur taille habituelle, la laine et les
 annelures des cornes se fondent (on lit la silhouette, les taches et les
-cornes ; le détail paraît quand on les agrandit) ; les races n'ont pas
-encore de lèvre ni de mèches qui bougent.
+cornes ; le détail paraît quand on les agrandit).
 
 Les sources de ces fiches, par race :
 
@@ -508,9 +515,8 @@ bouge. Reste :
   s'ouvre ou se double à la coupe. Une toison est d'un seul tenant : il
   faudrait déformer le dessin (un maillage), pas faire tourner des morceaux
   cuits. Pas fait ; le corps s'incline d'un bloc.
-- **Les races** : une lèvre et des mèches qui bougent (le Nez noir, aux
-  longues mèches, en profiterait le plus), des mèches d'encolure qui pendent
-  au lieu de tourner avec elle.
+- **Les races** : des mèches d'encolure qui pendent au lieu de tourner
+  avec elle (le Nez noir).
 - Le sommeil la tête tournée sur le flanc (plutôt la vache ; le mouton pose
   la tête au sol, ce que font nos moutons).
 - Pour les races : le cri d'alarme du mouflon (un sifflement bref par les

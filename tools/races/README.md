@@ -51,6 +51,23 @@ Ce qu'il faut savoir :
   et la tête atteignent l'herbe devant les antérieurs (le test `troupeau`
   le vérifie) ; `filler` ajoute au fond de l'encolure une épaisseur de
   laine, cachée au repos, qui comble l'espace quand la tête descend.
+- La lèvre : chaque générateur donne, dans le repère de sa tête, la zone de
+  la lèvre supérieure (sous la narine, du bout du nez vers la commissure,
+  jusque sous la ligne de la bouche ; environ 15 % de la longueur de la
+  tête, sinon, retroussée, elle monterait jusqu'au chanfrein) et la gencive
+  qu'elle cache (`articulations.gum`, bien au-dessus de la ligne de la
+  bouche pour rester cachée au repos). `articulations.lift_part` la détache
+  de la tête, groupes sans nom compris ; elle laisse de côté ce que la
+  lèvre recouvre entièrement (le fond clair du crâne sous le masque noir
+  laisserait un liseré), et un dégradé en partie transparent reste entier
+  dans la tête là où il est opaque (le museau blanc du mouflon reste blanc
+  sous la lèvre retroussée).
+- Les mèches : le Nez noir marque les mèches du bas de chaque colonne qui
+  pendent sous le ventre, entre les pattes (`class="frange-1"`…), et
+  `articulations.hang_strands` les coupe au bas du fond de la toison : le
+  bout balance (`sway-1` à `sway-3`), le haut reste. L'Ouessant range ses
+  mèches pendantes du ventre dans trois groupes `sway-*`, accrochés à leur
+  racine (le pivot, la racine moyenne).
 - Le mouflon a son cou à part (le collier) : il devient l'encolure (`neck`),
   qui porte la tête ; la corne et l'oreille du fond, peintes derrière le
   collier, sont rognées de ce qu'il cachait (`articulations.clip_away`).

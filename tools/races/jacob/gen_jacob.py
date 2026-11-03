@@ -690,6 +690,18 @@ TOP_LINE = [(-3.2, -0.6), (-1.0, -1.0), (2.0, -0.95), (5.0, -0.85), (8.0, -0.7),
 NOSE = [(20.5, 1.65), (21.4, 2.1), (22.0, 2.75), (22.65, 4.0), (22.85, 5.35), (22.7, 6.55), (22.25, 7.4), (21.3, 7.85),
         (20.6, 6.6), (20.2, 4.9), (20.15, 3.1)]
 
+# La lèvre supérieure (repère de la tête) : sous la narine, du bout de la
+# truffe à la commissure, jusque sous la ligne de la bouche ; elle se
+# retrousse autour de son arrière pour le flehmen et découvre la gencive (le
+# bourrelet du haut, sans incisives), d'un rose sombre sous la peau noire.
+LIP = [(18.8, 6.95), (20.4, 6.75), (21.3, 6.7), (22.0, 6.65), (23.6, 6.4), (23.6, 8.5), (22.0, 8.3),
+       (21.1, 8.3), (19.3, 8.55), (18.8, 8.6)]
+LIP_PIVOT = (19.0, 7.15)
+GUM = [(19.3, 7.4), (20.3, 7.2), (21.2, 6.98), (22.0, 6.75), (22.35, 7.05), (21.9, 7.3), (21.0, 7.62),
+       (20.0, 7.85), (19.3, 7.95)]
+GUM_RIDGE = [(19.6, 7.75), (20.6, 7.58), (21.4, 7.4), (21.95, 7.1)]
+GUM_FILL, GUM_CREASE = "#a86f7b", "#7d4a57"
+
 # Cornes, oreilles, nuque (repère du dessin, tête relevée de HDY)
 def crescent(base, length, a0, radius, n=80):
     """Ligne médiane d'une corne en croissant : elle part de `a0` (degrés) et
@@ -983,7 +995,12 @@ def articule(svg):
     chaque patte au carpe ou au jarret (les taches noires du genou et du
     jarret) ; l'encolure, l'avant noir du haut de la toison, devant une
     épaule arrondie qui descend du garrot vers le poitrail, posée sous le
-    corps ; la tête tourne à la nuque, sous les cornes."""
+    corps ; la tête tourne à la nuque, sous les cornes ; la lèvre
+    supérieure, détachée de la tête, avec la gencive qu'elle cache."""
+    def lip(root, paints):
+        articulations.lift_part(root, paints, "head", Ls(LIP), "lip", L(*LIP_PIVOT),
+                                under=articulations.gum(Ls(GUM), Ls(GUM_RIDGE), GUM_FILL, GUM_CREASE, 0.25))
+
     return articulations.articulate_breed(
         svg,
         carpus_y=181.3,
@@ -997,6 +1014,7 @@ def articule(svg):
             margin=6.0,
             filler=(1.0, 9.0),
         ),
+        extra=lip,
     )
 
 

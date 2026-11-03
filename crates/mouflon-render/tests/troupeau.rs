@@ -111,9 +111,13 @@ fn every_drawn_sheep_has_its_parts_bakes_and_stands_on_its_hooves() {
             Part::LegFrontFarLower,
             Part::LegBackNearLower,
             Part::LegBackFarLower,
+            Part::Lip,
         ] {
             assert!(rig.has_part(part), "{name} : pas de « {} »", part.name());
         }
+        // Les mèches de la toison vont par trois.
+        let sways = Part::SWAYS.map(|p| rig.has_part(p));
+        assert!(sways.iter().all(|&s| s == sways[0]), "{name} : {sways:?}");
         // Il broute le museau dans l'herbe (à 2 % de sa hauteur près), devant
         // ses antérieurs.
         let muzzle = rig

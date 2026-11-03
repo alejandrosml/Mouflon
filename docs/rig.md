@@ -176,8 +176,8 @@ Un exemple, réduit à l'essentiel :
 un SVG généré par un script (voir `tools/races/README.md`) : chaque patte
 coupée au carpe et au jarret, l'encolure prise dans le corps devant une
 épaule arrondie, la lèvre détachée de la tête avec sa gencive, des festons
-détachés en mèches ; au repos, le dessin reste le même, à l'anticrénelage
-près.
+détachés en mèches, ou le bout de mèches qui pendent coupé sous la toison ;
+au repos, le dessin reste le même, à l'anticrénelage près.
 
 **Le dos ne plie pas.** Un arrière-train (`rump`) coupé au milieu du dos et
 tournant autour de lui a été essayé sur le Mannequin : dès 0,12 rad (7°), le

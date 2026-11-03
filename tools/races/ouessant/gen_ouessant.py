@@ -5,6 +5,7 @@ Unités : H = 100 unités = hauteur au garrot (47 cm). Sol en y = GY.
 Les formes sont décrites en (x, h), h = hauteur au-dessus du sol ;
 y = GY - h dans le SVG.
 """
+import itertools
 import math
 import os
 import random
@@ -288,6 +289,17 @@ HIND_PIVOT = hp(50.0, 70.0)
 FAR_FORE_DX = -6.6
 FAR_HIND_DX = 6.4
 BELLY = 45.0
+# Les mèches pendantes du ventre qui balancent, de x0 à x1, entre les pattes
+# (`sway-1` à l'avant) ; les autres, vers les jarrets et le bréchet, restent.
+BELLY_SWAYS = [(112.0, 130.0), (94.0, 112.0), (76.0, 94.0)]
+
+
+def belly_sway(x):
+    for k, (x0, x1) in enumerate(BELLY_SWAYS):
+        if x0 <= x < x1:
+            return k + 1
+    return 0
+
 
 # ================================================================ texture de toison
 
@@ -461,15 +473,29 @@ def body_group():
         width=(2.3, 3.3),
         bias=0.9,
     )
-    # mèches pendantes du ventre, les plus longues
+    # mèches pendantes du ventre, les plus longues ; celles d'entre les pattes
+    # balancent, accrochées à leur racine (trois mèches, `sway-1` à l'avant)
+    hanging = []
     for i in range(26):
         x = 76 + i * 2.65 + rng.uniform(-0.8, 0.8)
         # elles suivent la ligne du dessous : le ventre, puis le bréchet
         h = BELLY + 2.4 + rng.uniform(-0.5, 0.9) + (0.12 * (x - 128) if x > 128 else 0) + (0.25 * (84 - x) if x < 84 else 0)
         d, edge, _ = curl_lock(x, Y(h), math.radians(rng.uniform(84, 104)), rng.uniform(5.0, 8.0), rng.uniform(2.3, 3.2), curl=math.radians(rng.choice([-1, 1]) * rng.uniform(30, 80)))
-        g.append(path(d, fill=rng.choice(G_LOCK)))
+        out = [path(d, fill=rng.choice(G_LOCK))]
         if rng.random() < 0.5:
-            g.append(path(edge, stroke="#2e2925", sw=0.4, sop=0.7))
+            out.append(path(edge, stroke="#2e2925", sw=0.4, sop=0.7))
+        hanging.append((belly_sway(x), x, h, out))
+    for k, group in itertools.groupby(hanging, key=lambda m: m[0]):
+        group = list(group)
+        if k:
+            g.append(f'<g id="sway-{k}">')
+        for _, _, _, out in group:
+            g += out
+        if k:
+            # l'attache : la racine moyenne des mèches du groupe
+            g.append(pivot(f"sway-{k}", hp(sum(m[1] for m in group) / len(group),
+                                            sum(m[2] for m in group) / len(group))))
+            g.append("</g>")
     # crinière rude sur la nuque, de la base du cou vers la tête
     def crest(x):
         # hauteur de la ligne du dessus du corps en x (interpolée)
@@ -839,6 +865,25 @@ def horn(far=False):
     return g
 
 
+# La lèvre supérieure (monde) : sous la narine, du bout du nez à la
+# commissure, jusque sous la ligne de la bouche ; elle se retrousse autour de
+# son arrière pour le flehmen et découvre la gencive (le bourrelet du haut,
+# sans incisives), d'un rose sombre sous la peau noire.
+LIP = [(181.2, 98.0), (183.4, 98.4), (185.2, 98.75), (186.2, 98.85), (188.6, 98.9), (188.6, 95.4),
+       (185.0, 95.1), (182.4, 94.9), (181.2, 94.9)]
+LIP_PIVOT = (181.4, 97.8)
+GUM = [(181.9, 96.55), (183.6, 96.85), (185.0, 97.2), (185.95, 97.65), (186.3, 97.2), (185.9, 96.95),
+       (184.8, 96.05), (183.4, 95.85), (181.9, 95.8)]
+GUM_RIDGE = [(182.3, 96.2), (183.8, 96.4), (185.1, 96.65), (185.9, 97.25)]
+GUM_FILL, GUM_CREASE = "#a86f7b", "#7d4a57"
+
+
+def lip(root, paints):
+    """La lèvre supérieure, détachée de la tête, avec la gencive qu'elle cache."""
+    articulations.lift_part(root, paints, "head", H(LIP), "lip", hp(*LIP_PIVOT),
+                            under=articulations.gum(H(GUM), H(GUM_RIDGE), GUM_FILL, GUM_CREASE, 0.3))
+
+
 def head_shape_points():
     return H(
         [
@@ -1087,7 +1132,8 @@ svg = [
 # chaque patte au carpe (devant du genou) ou au jarret (sa pointe) ;
 # l'encolure, le haut de l'avant de la toison et la cravate, devant une
 # épaule arrondie qui descend du garrot vers le poitrail, posée sous le
-# corps ; la tête tourne à la nuque, derrière la spirale de la corne.
+# corps ; la tête tourne à la nuque, derrière la spirale de la corne ; la
+# lèvre supérieure, détachée de la tête, avec la gencive qu'elle cache.
 text = articulations.articulate_breed(
     "\n".join(svg) + "\n",
     carpus_y=Y(26.0),
@@ -1101,6 +1147,7 @@ text = articulations.articulate_breed(
         margin=6.0,
         filler=(1.0, 12.0),
     ),
+    extra=lip,
 )
 with open(OUT, "w") as fh:
     fh.write(text)

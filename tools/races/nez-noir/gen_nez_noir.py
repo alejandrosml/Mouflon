@@ -415,6 +415,29 @@ FORE_NEAR, FORE_FAR = 101.0, 90.5
 HIND_NEAR, HIND_FAR = 18.5, 29.5
 
 
+# La frange du ventre, entre les pattes : le bout des mèches du bas de chaque
+# colonne, sous l'ourlet, balance (trois mèches, `sway-1` à l'avant), de x0 à
+# x1 (monde) ; le haut de ces mèches reste à sa place (voir `articule`).
+FRINGE = [(68.0, 84.0), (52.0, 68.0), (36.0, 52.0)]
+
+
+def fringe_group(x):
+    for k, (x0, x1) in enumerate(FRINGE):
+        if x0 <= x < x1:
+            return k + 1
+    return None
+
+
+def fringe_cut(k):
+    """Le milieu de la ligne où la `k`-ième mèche de la frange est coupée
+    (monde) : au bas du fond de la toison, 2,4 cm au-dessus de l'ourlet ;
+    plus bas, il n'y a que le bout des mèches du bas de chaque colonne."""
+    x0, x1 = FRINGE[k - 1]
+    xs = [x0 + (x1 - x0) * i / 8 for i in range(9)]
+    hb = sum(vspan(BODY_D, x)[0] for x in xs) / len(xs)
+    return (x0 + x1) / 2, hb + 2.4
+
+
 def fringe(x):
     """Longueur de la frange sous l'ourlet (cm) : des touffes qui pendent
     plus bas que leurs voisines ; moins devant les genoux et les jarrets,
@@ -488,9 +511,15 @@ def body():
         c = wool_color(d["x"], d["h"] - d["L"] * 0.5, rng.uniform(-0.07, 0.07))
         if d["last"]:
             c = mix(c, W_TIP, 0.18)
+        start = len(OUT)
         lock(d["x"], d["h"], d["L"], d["w"], d["ang"], c,
              turn=rng.uniform(2.8, 4.2) if d["last"] else rng.uniform(1.4, 3.2),
              step=1.45 if d["last"] else 2.05)
+        # Les mèches de la frange, marquées pour `articule`.
+        k = fringe_group(d["x"]) if d["last"] else None
+        if k:
+            for i in range(start, len(OUT)):
+                OUT[i] = OUT[i].replace("<path ", f'<path class="frange-{k}" ', 1)
 
     # Mèches du bord : la silhouette effilochée de la culotte et du poitrail,
     # en touffes.
@@ -815,6 +844,18 @@ EYE_L = (11.9, 4.35)
 EAR_L = (2.2, 5.6)
 HORN_L = (3.9, -0.7)
 
+# La lèvre supérieure (repère de la tête) : sous la narine, du bout du nez à
+# la commissure, jusque sous la ligne de la bouche ; elle se retrousse autour
+# de son arrière pour le flehmen et découvre la gencive (le bourrelet du
+# haut, sans incisives), d'un rose sombre sous la peau noire.
+LIP = [(21.6, 9.4), (23.3, 9.15), (24.4, 9.1), (25.5, 8.95), (27.2, 8.7), (27.2, 11.4), (25.0, 11.1),
+       (23.4, 11.2), (21.6, 11.4)]
+LIP_PIVOT = (21.8, 9.6)
+GUM = [(22.1, 10.25), (23.4, 10.0), (24.6, 9.75), (25.35, 9.5), (25.65, 9.85), (25.1, 10.12), (24.0, 10.4),
+       (22.9, 10.6), (22.1, 10.7)]
+GUM_RIDGE = [(22.5, 10.45), (23.6, 10.25), (24.6, 10.02), (25.25, 9.82)]
+GUM_FILL, GUM_CREASE = "#a86f7b", "#7d4a57"
+
 # Le capuchon (monde) : la nuque qui descend en pente douce jusqu'au garrot,
 # le derrière de la tête et la gorge ; son bas reste dans la toison du corps.
 NAPE = [(112.0, 107.2), (108.6, 105.6), (105.3, 102.7), (102.1, 99.0), (98.9, 95.4), (95.6, 92.4), (92.2, 90.4),
@@ -1132,8 +1173,21 @@ def articule(svg):
     chaque patte au carpe ou au jarret (le milieu de la tache noire du genou,
     la pointe du jarret) ; l'encolure, l'avant du haut de la toison, devant
     la droite qui descend du garrot vers le poitrail, posée sous le corps ; la
-    tête tourne à la nuque, derrière les cornes."""
+    tête tourne à la nuque, derrière les cornes ; la lèvre supérieure,
+    détachée de la tête, avec la gencive qu'elle cache ; le bout des
+    mèches de la frange du ventre, coupé au bas du fond de la toison, en
+    trois mèches qui balancent."""
     withers, chest = S(99.0, 90.0), S(127.0, 66.0)
+
+    def lip(root, paints):
+        def w(pts):
+            return [S(*HL(*p)) for p in pts]
+        articulations.lift_part(root, paints, "head", w(LIP), "lip", S(*HL(*LIP_PIVOT)),
+                                under=articulations.gum(w(GUM), w(GUM_RIDGE), GUM_FILL, GUM_CREASE, 0.3))
+        for k in range(1, len(FRINGE) + 1):
+            cut = S(*fringe_cut(k))
+            articulations.hang_strands(root, paints, f"frange-{k}", cut[1], f"sway-{k}", cut)
+
     return articulations.articulate_breed(
         svg,
         carpus_y=S(0, 20.0)[1],
@@ -1147,6 +1201,7 @@ def articule(svg):
             margin=6.0,
             filler=(1.0, 10.0),
         ),
+        extra=lip,
     )
 
 

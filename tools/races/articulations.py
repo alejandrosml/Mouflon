@@ -370,6 +370,60 @@ class Paints:
                 return True
         return False
 
+    def opaque_region(self, paint):
+        """Là où le dégradé `paint` est tout à fait opaque (une géométrie, en
+        coordonnées absolues) : pour un dégradé linéaire en `userSpaceOnUse`,
+        sans transformation, opaque à l'un de ses bouts ; None sinon."""
+        m = re.match(r"url\(#([^)]+)\)", paint or "")
+        g = self.byid.get(m.group(1)) if m else None
+        if (g is None or g.tag != Q + "linearGradient" or g.get("gradientUnits") != "userSpaceOnUse"
+                or g.get("gradientTransform")):
+            return None
+        stops = g.findall(Q + "stop")
+        while not stops and g.get("{http://www.w3.org/1999/xlink}href"):
+            g = self.byid.get(g.get("{http://www.w3.org/1999/xlink}href")[1:])
+            stops = g.findall(Q + "stop") if g is not None else []
+        if not stops:
+            return None
+
+        def offset(st):
+            v = st.get("offset", "0").strip()
+            return float(v[:-1]) / 100 if v.endswith("%") else float(v)
+
+        def opacity(st):
+            mm = re.search(r"stop-opacity:\s*([\d.]+)", st.get("style", ""))
+            return float(st.get("stop-opacity", mm.group(1) if mm else 1.0))
+
+        marks = [(offset(st), opacity(st) >= 0.999) for st in stops]
+        x1, y1, x2, y2 = (float(g.get(k, "0")) for k in ("x1", "y1", "x2", "y2"))
+        dx, dy = x2 - x1, y2 - y1
+        n = math.hypot(dx, dy)
+        if n < 1e-9:
+            return None
+        ux, uy = dx / n, dy / n
+        far = 1000.0
+
+        def side(t, forward):
+            # Le demi-plan au-delà de la position t du dégradé, vers son bout.
+            px, py = x1 + dx * t, y1 + dy * t
+            sgn = 1.0 if forward else -1.0
+            return Polygon([(px - uy * far, py + ux * far), (px + uy * far, py - ux * far),
+                            (px + uy * far + sgn * ux * far, py - ux * far + sgn * uy * far),
+                            (px - uy * far + sgn * ux * far, py + ux * far + sgn * uy * far)])
+
+        parts = []
+        if marks[-1][1]:
+            k = len(marks) - 1
+            while k > 0 and marks[k - 1][1]:
+                k -= 1
+            parts.append(side(marks[k][0], True))
+        if marks[0][1]:
+            k = 0
+            while k < len(marks) - 1 and marks[k + 1][1]:
+                k += 1
+            parts.append(side(marks[k][0], False))
+        return unary_union(parts) if parts else None
+
     def absolute(self, el, attr):
         """Une copie en `userSpaceOnUse` du dégradé de `el` (s'il est en
         `objectBoundingBox`), calée sur la boîte de l'élément entier."""
@@ -480,7 +534,7 @@ def region(pivot, normal, radius, far=1000.0):
     return top, bottom, disc
 
 
-def _clip_element(el, area, paints, opaque_extra=None, inherited=None):
+def _clip_element(el, area, paints, opaque_extra=None, inherited=None, fill_extra=None):
     """Les éléments qui dessinent `el` dans `area` (une liste, peut-être
     vide) ; `opaque_extra` : ce qu'un remplissage opaque peut déborder ;
     `inherited` : le style que `el` hérite de ses groupes."""
@@ -494,6 +548,8 @@ def _clip_element(el, area, paints, opaque_extra=None, inherited=None):
     opaque = (_opacity(el, inherited) > 0.999 and not paints.translucent(paint)
               and paint not in ("transparent",))
     a = area.union(opaque_extra) if (opaque and opaque_extra is not None) else area
+    if fill_extra is not None and not fill_extra.is_empty:
+        a = a.union(fill_extra)
     shape = _fill_shape(el) if fill else GeometryCollection()
     lines = _stroke_lines(el) if stroke else []
     geom = unary_union(lines) if lines else GeometryCollection()
@@ -580,6 +636,9 @@ def _clip_tree(el, area, paints, opaque_extra=None, skip_ids=(), inherited=None)
         if tag == "g":
             sub = _clip_tree(child, area, paints, opaque_extra, skip_ids, inner)
             if len(sub):
+                # Une partie imbriquée (une mèche dans le corps) garde son pivot.
+                if child.get("id"):
+                    sub.extend(c for c in child if c.get("id", "").startswith("pivot-"))
                 out.append(sub)
         else:
             for piece in _clip_element(child, area, paints, opaque_extra, inner):
@@ -685,6 +744,50 @@ def cut_under(root, paints, source, area, name, pivot, margin=2.0, skip_ids=()):
     sparent.insert(sindex, rest)
     sparent.insert(sindex, piece)
     return piece
+
+
+def hang_strands(root, paints, cls, cut_y, name, pivot, margin=1.0):
+    """Des mèches qui pendent (les tracés de classe `cls`), coupées à la
+    hauteur `cut_y` : ce qui pend plus bas devient la partie `name`, qui
+    balance autour de `pivot` (sur la ligne de coupe : en se cisaillant, la
+    mèche ne la quitte pas). La partie se pose au début du groupe de la
+    première mèche, sous les autres ; son remplissage déborde de `margin`
+    au-dessus de la coupe, sous le haut de chaque mèche, resté à sa place.
+    Au repos, rien ne change (sauf l'ordre des bouts de mèches sous la coupe,
+    s'ils croisent des mèches qui ne balancent pas)."""
+    below = box(-1000, cut_y, 1000, 1000)
+    above = box(-1000, -1000, 1000, cut_y)
+    band = box(-1000, cut_y - margin, 1000, cut_y)
+    styles = {}
+
+    def walk(g, inherited):
+        inner = _inherit(g, inherited)
+        styles[id(g)] = inner
+        for child in g:
+            if _tag(child) == "g":
+                walk(child, inner)
+
+    walk(root, None)
+    members = [(parent, el) for parent in root.iter() for el in parent if el.get("class") == cls]
+    if not members:
+        raise KeyError(cls)
+    host = members[0][0]
+    group = ET.Element(Q + "g", {"id": name})
+    for parent, el in members:
+        inherited = styles[id(parent)]
+        index = list(parent).index(el)
+        upper = _clip_element(el, above, paints, inherited=inherited)
+        lower = _clip_element(el, below, paints, opaque_extra=band, inherited=inherited)
+        parent.remove(el)
+        for k, piece in enumerate(upper):
+            piece.attrib.pop("class", None)
+            parent.insert(index + k, piece)
+        for piece in lower:
+            piece.attrib.pop("class", None)
+            group.append(piece)
+    group.append(_pivot(name, pivot))
+    host.insert(0, group)
+    return group
 
 
 def split_neck_under(root, paints, source, area, pivot, poll, head="head", muzzle=None,
@@ -803,6 +906,7 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
     keep, lifted = _split_tree(src, area, outside, paints, None)
     lifted.attrib.clear()
     lifted.set("id", name)
+    _cull_hidden(lifted, paints)
     lifted.append(_pivot(name, pivot))
     for child in list(src):
         src.remove(child)
@@ -816,6 +920,60 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
     for c in pivots:
         src.append(c)
     return lifted
+
+
+def _opaque_gradient(el, inherited, paints):
+    """Là où le remplissage de `el`, un dégradé en partie transparent, est
+    tout à fait opaque (voir `Paints.opaque_region`) ; None si ce n'est pas
+    le cas, ou si l'élément est transformé."""
+    if not _has_fill(el, inherited) or el.get("transform") or _opacity(el, inherited) < 0.999:
+        return None
+    paint = _style(el, inherited).get("fill", "black")
+    if not paints.translucent(paint):
+        return None
+    return paints.opaque_region(paint)
+
+
+def _cull_hidden(group, paints):
+    """Ôte d'un groupe les remplissages opaques (sans contour) entièrement
+    recouverts par des remplissages opaques posés après eux : ils ne se
+    voient pas, et sous une autre couleur, leurs bords laisseraient un liseré
+    à l'anticrénelage (le fond clair du crâne sous le masque noir, sur le bord
+    d'une lèvre). Le groupe bouge d'un bloc : rien n'y change à l'œil."""
+    items = []
+
+    def walk(g, inherited, moved):
+        inner = _inherit(g, inherited)
+        for child in list(g):
+            tag = _tag(child)
+            if tag == "g":
+                walk(child, inner, moved or child.get("transform") is not None)
+            elif tag in DRAWN:
+                items.append((g, child, inner, moved or child.get("transform") is not None))
+
+    walk(group, None, False)
+    cover = None
+    for parent, el, inh, moved in reversed(items):
+        if moved or not _has_fill(el, inh):
+            continue
+        paint = _style(el, inh).get("fill", "black")
+        if _opacity(el, inh) < 0.999 or paint == "transparent":
+            continue
+        shape = _fill_shape(el)
+        if shape.is_empty:
+            continue
+        if paints.translucent(paint):
+            region = _opaque_gradient(el, inh, paints)
+            if region is not None:
+                part = shape.intersection(region)
+                if not part.is_empty:
+                    cover = part if cover is None else unary_union([cover, part])
+            continue
+        if (cover is not None and not _has_stroke(el, inh)
+                and shape.difference(cover.buffer(0.05)).area < 1e-3):
+            parent.remove(el)
+            continue
+        cover = shape if cover is None else unary_union([cover, shape])
 
 
 def _split_tree(group, area, outside, paints, inherited):
@@ -837,11 +995,47 @@ def _split_tree(group, area, outside, paints, inherited):
             if len(l):
                 lift.append(l)
         elif tag in DRAWN:
-            keep.extend(_clip_element(child, outside, paints, opaque_extra=area, inherited=inner))
+            region = _opaque_gradient(child, inner, paints)
+            keep.extend(_clip_element(child, outside, paints, opaque_extra=area, inherited=inner,
+                                      fill_extra=area.intersection(region) if region is not None else None))
             lift.extend(_clip_element(child, area, paints, inherited=inner))
         else:
             keep.append(child)
     return keep, lift
+
+
+def smooth_d(points, closed=True):
+    """Un tracé lisse passant près de `points` (des quadratiques entre les
+    milieux des côtés)."""
+    pts = list(points)
+    if closed:
+        mids = [((pts[i][0] + pts[(i + 1) % len(pts)][0]) / 2, (pts[i][1] + pts[(i + 1) % len(pts)][1]) / 2)
+                for i in range(len(pts))]
+        d = f"M{_f(mids[-1][0])} {_f(mids[-1][1])}"
+        for i, p in enumerate(pts):
+            d += f"Q{_f(p[0])} {_f(p[1])} {_f(mids[i][0])} {_f(mids[i][1])}"
+        return d + "Z"
+    d = f"M{_f(pts[0][0])} {_f(pts[0][1])}"
+    for i in range(1, len(pts) - 1):
+        m = ((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2)
+        if i == len(pts) - 2:
+            m = pts[-1]
+        d += f"Q{_f(pts[i][0])} {_f(pts[i][1])} {_f(m[0])} {_f(m[1])}"
+    if len(pts) == 2:
+        d += f"L{_f(pts[1][0])} {_f(pts[1][1])}"
+    return d
+
+
+def gum(pad, ridge, fill, crease, width=0.35):
+    """La gencive qu'une lèvre découvre en se retroussant (le bourrelet du
+    haut : le mouton n'a pas d'incisives en haut) : le bourrelet `pad` (un
+    polygone, lissé) de couleur `fill`, et son pli `ridge` (une ligne) de
+    couleur `crease`. À poser sous la lèvre (`lift_part(..., under=...)`)."""
+    return [
+        ET.Element(Q + "path", {"d": smooth_d(pad), "fill": fill}),
+        ET.Element(Q + "path", {"d": smooth_d(ridge, closed=False), "fill": "none", "stroke": crease,
+                                "stroke-width": _f(width), "stroke-linecap": "round"}),
+    ]
 
 
 def clip_away(root, paints, gid, polygon):

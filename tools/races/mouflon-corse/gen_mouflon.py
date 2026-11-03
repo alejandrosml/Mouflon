@@ -908,14 +908,31 @@ def main():
         f.write(articule(svg.render(170, 116, comment)))
 
 
+# La lèvre supérieure (repère de la tête) : sous la narine et le bas de la
+# truffe, jusque sous la ligne de la bouche ; elle se retrousse autour de son
+# arrière pour le flehmen et découvre la gencive (le bourrelet du haut, sans
+# incisives), rose sous le museau blanc.
+LIP = [(12.4, 3.6), (13.6, 3.35), (14.8, 3.1), (15.6, 2.95), (17.2, 2.8), (17.2, 5.0), (15.3, 4.75),
+       (13.6, 4.95), (12.4, 5.05)]
+LIP_PIVOT = (12.6, 3.8)
+GUM = [(12.7, 3.95), (14.0, 3.75), (15.0, 3.55), (15.6, 3.5), (15.85, 3.85), (15.2, 4.02), (14.0, 4.22),
+       (12.8, 4.33)]
+GUM_RIDGE = [(13.0, 4.15), (14.1, 4.0), (15.0, 3.85), (15.5, 3.75)]
+GUM_FILL, GUM_CREASE = "#c98a94", "#a0606e"
+
+
 def articule(text):
     """Les pattes coupées au carpe (la bosse du genou) et au jarret (sa
     pointe) ; la corne et l'oreille du fond rognées de ce que le collier
-    cachait quand il était peint par-dessus elles : au repos, rien ne change."""
-    def behind_collar(root, paints):
+    cachait quand il était peint par-dessus elles ; la lèvre supérieure,
+    détachée de la tête, avec la gencive qu'elle cache : au repos, rien ne
+    change."""
+    def extra(root, paints):
         for gid in ("horn-far", "ear-far"):
             articulations.clip_away(root, paints, gid, NECK_POLY)
-    return articulations.articulate_breed(text, carpus_y=89.0, hock_y=84.0, extra=behind_collar)
+        articulations.lift_part(root, paints, "head", HL(LIP), "lip", H(*LIP_PIVOT),
+                                under=articulations.gum(HL(GUM), HL(GUM_RIDGE), GUM_FILL, GUM_CREASE, 0.22))
+    return articulations.articulate_breed(text, carpus_y=89.0, hock_y=84.0, extra=extra)
 
 
 if __name__ == "__main__":
