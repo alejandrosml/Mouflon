@@ -11,6 +11,10 @@
 //!
 //! `cargo run --release -p mouflon-peintre -- pets/aquarelle` repeint les
 //! morceaux (et un aperçu de l'ensemble, `apercu.png`, qui n'est pas livré).
+//! `--solognote pets/solognote/morceaux` peint la Solognote d'après nature ;
+//! son dessin et sa palette sont séparés pour préserver cet exemple.
+
+mod solognote;
 
 use std::path::{Path, PathBuf};
 
@@ -1166,6 +1170,19 @@ fn leg_joint(hip: (f32, f32), hoof_x: f32, front: bool) -> ((f32, f32), f32) {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--solognote") {
+        let mut args = std::env::args().skip(2);
+        let out = args
+            .next()
+            .map_or_else(|| PathBuf::from("pets/solognote/morceaux"), PathBuf::from);
+        let preview = args.next().map(|flag| {
+            assert_eq!(flag, "--apercu", "option attendue : --apercu <image.png>");
+            PathBuf::from(args.next().expect("chemin de la planche de travail"))
+        });
+        assert!(args.next().is_none(), "trop d'arguments");
+        solognote::paint(&out, preview.as_deref());
+        return;
+    }
     let out: PathBuf = std::env::args()
         .nth(1)
         .map_or_else(|| PathBuf::from("pets/aquarelle"), PathBuf::from);
