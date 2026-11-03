@@ -98,23 +98,23 @@ def wool(light):
 
 
 def bucket(light, n=12):
-    """La lumière ramenée à quelques niveaux : les paquets d'un même niveau
-    sont écrits dans un seul tracé."""
+    """La lumière ramenée à quelques niveaux : les brins et les boucles
+    voisins partagent leurs teintes, sans bandes franches sur le flanc."""
     return round(max(0.0, min(1.0, light)) * (n - 1)) / (n - 1)
 
 
-def pack_shape(c, R, rng, squash=0.84, n=12):
-    """Le contour d'un paquet de laine bouclé en surface : un petit chou-fleur
-    de cinq à sept lobes, un peu plus large que haut."""
-    lobes = rng.choice((5, 6, 6, 7))
+def pack_shape(c, R, rng, squash=1.1, n=20):
+    """Un paquet de laine de contour irrégulier et de volume inégal : des
+    lobes arrondis et des bouts un peu allongés, sans forme répétée."""
+    lobes = rng.choice((3, 4, 5, 6))
     ph = rng.uniform(0, 2 * math.pi)
     ph2 = rng.uniform(0, 2 * math.pi)
-    tilt = rng.uniform(-0.4, 0.4)
+    tilt = rng.uniform(-0.45, 0.45)
     ct, st = math.cos(tilt), math.sin(tilt)
     pts = []
     for k in range(n):
         a = 2 * math.pi * k / n
-        r = R * (1.0 + 0.1 * math.cos(lobes * a + ph) + 0.06 * math.cos(2 * a + ph2)) * rng.uniform(0.95, 1.04)
+        r = R * (1.0 + 0.09 * math.cos(lobes * a + ph) + 0.1 * math.cos(2 * a + ph2)) * rng.uniform(0.97, 1.03)
         ex, eh = r * math.cos(a), r * math.sin(a) * squash
         pts.append((c[0] + ex * ct - eh * st, c[1] + ex * st + eh * ct))
     return pts
@@ -123,35 +123,67 @@ def pack_shape(c, R, rng, squash=0.84, n=12):
 class Fleece:
     """Une couche de toison d'automne : des paquets de 2 à 4 cm, serrés, au
     bout bouclé, séparés par des sillons sombres (§ 3.3). Les paquets sont
-    groupés par lumière (un tracé par niveau), leur dessus éclairé aussi,
-    leurs plis et leurs boucles par style."""
+    peints du bas vers le haut avec un léger modelé local ; leurs brins,
+    sillons et boucles sont groupés par style."""
 
     def __init__(self):
-        self.packs = {}
         self.tops = {}
+        self.order = []
         self.marks = Marks()
 
     def pack(self, c, R, light, rng, far=False, curls=True):
         b = bucket(light)
-        self.packs.setdefault(b, []).append(cr(pack_shape(c, R, rng), nd=1))
+        shape = cr(pack_shape(c, R, rng, rng.uniform(0.9, 1.45)), nd=2)
+        self.order.append((b, shape, c, R))
         k = 0.62 if far else 1.0
         base = wool(b)
         # le dessus du paquet, tourné vers la lumière (en haut, à gauche)
         top = (c[0] - 0.16 * R, c[1] + 0.2 * R)
-        self.tops.setdefault(b, []).append(cr(pack_shape(top, R * 0.6, rng, 0.75, n=9), nd=1, t=0.9))
-        # le pli sous le paquet (le sillon qui le sépare du suivant)
-        a0 = math.radians(rng.uniform(-165, -140))
-        a1 = math.radians(rng.uniform(-45, -15))
-        self._arc(c, R * 0.86, a0, a1, (shade(base, 0.7 * k), 0.17, 0.45))
+        self.tops.setdefault(b, []).append(cr(pack_shape(top, R * rng.uniform(0.5, 0.8), rng, 1.15), nd=2, t=0.9))
+        # Un sillon interrompu, de biais : jamais un U identique sous chaque
+        # paquet. Les mèches d'automne s'entremêlent au lieu de faire un pavage.
+        if rng.random() < 0.55:
+            a0 = math.radians(rng.uniform(-185, -135))
+            a1 = a0 + rng.uniform(1.2, 2.3)
+            r = R * rng.uniform(0.62, 0.92)
+            self._arc(c, r, a0, a1, (shade(base, 0.58 * k), 0.14, 0.55))
+            self._arc((c[0] - 0.04, c[1] + 0.14), r, a0 + 0.1, a1 - 0.1,
+                      (mix(base, WOOL_LIGHT, 0.7), 0.07, 0.55))
+        # Quelques séparations plus longues entre les mèches, surtout sur
+        # l'épaule et le col (p1, p5) : une fente courte inclinée vers le bas,
+        # avec une lèvre claire, jamais un quadrillage du flanc.
+        if 71.0 < c[0] < 94.0 and c[1] > 45.0 and rng.random() < 0.2:
+            p0 = (c[0] + 0.2 * R, c[1] + 0.7 * R)
+            pm = (c[0] - 0.15 * R, c[1])
+            p1 = (c[0] - 0.1 * R, c[1] - 0.85 * R)
+            self.marks.add((shade(base, 0.64), 0.16, 0.45), p0, (c[0] - 0.45 * R, c[1] + 0.2 * R), pm)
+            self.marks.add((shade(base, 0.64), 0.13, 0.4), pm, (c[0] - 0.05 * R, c[1] - 0.35 * R), p1)
+            self.marks.add((mix(base, WOOL_LIGHT, 0.65), 0.09, 0.5),
+                           (p0[0] - 0.16, p0[1]), (pm[0] - 0.3, pm[1] + 0.2), (p1[0] - 0.16, p1[1]))
+        # Fins brins ondulés qui traversent le paquet, avec des longueurs
+        # différentes : le grain de la laine doit rester fibreux en grand.
+        for j in range(rng.randint(6, 10)):
+            x = c[0] + rng.uniform(-0.8, 0.8) * R
+            h = c[1] + rng.uniform(-0.55, 0.75) * R
+            length = R * rng.uniform(0.35, 0.8)
+            drift = rng.uniform(-0.4, 0.15) * length
+            bend = rng.uniform(0.08, 0.25) * R
+            p0 = (x, h)
+            pm = (x + drift * 0.5 + bend, h - length * 0.5)
+            p1 = (x + drift, h - length)
+            col = mix(base, WOOL_LIGHT, 0.6) if j % 3 else shade(base, 0.72)
+            style = (col, 0.055 if j % 3 else 0.045, 0.6 if j % 3 else 0.4)
+            self.marks.add(style, p0, (x + bend, h - length * 0.2), pm)
+            self.marks.add(style, pm, (p1[0] - bend * 0.5, h - length * 0.8), p1)
         if curls:
             # des boucles : le bout frisé des petites mèches serrées
-            for j in range(rng.choice((1, 2, 2, 3))):
+            for j in range(rng.choice((2, 3, 3, 4))):
                 p = (c[0] + rng.uniform(-0.5, 0.5) * R, c[1] + rng.uniform(-0.35, 0.4) * R)
-                r = rng.uniform(0.16, 0.28)
+                r = rng.uniform(0.14, 0.32)
                 a = rng.uniform(0, 2 * math.pi)
                 sweep = rng.choice((-1, 1)) * rng.uniform(3.6, 4.8)
                 col = mix(base, "#FFFFFF", 0.35) if j % 2 == 0 else shade(base, 0.74)
-                self._curl(p, r, a, sweep, (col if not far else shade(col, 0.8), 0.08, 0.5))
+                self._curl(p, r, a, sweep, (col if not far else shade(col, 0.8), 0.065, 0.65))
 
     def _arc(self, c, r, a0, a1, style):
         p0 = (c[0] + r * math.cos(a0), c[1] + r * math.sin(a0))
@@ -174,12 +206,25 @@ class Fleece:
         self.marks.add(style, pm, c2, p1)
 
     def emit(self, cls=None):
-        for b in sorted(self.packs):
-            D.el("".join(self.packs[b]), fill=wool(b), cls=cls)
+        # L'ordre par bandes de 3 cm conserve le recouvrement du bas vers
+        # le haut ; les mèches voisines d'une même teinte partagent un
+        # tracé et son modelé. Le moteur parcourt ainsi quelques centaines
+        # de remplissages, pas un remplissage pour chaque mèche.
+        bands = {}
+        for b, shape, c, R in self.order:
+            row = math.floor(c[1] / 3.0)
+            bands.setdefault((row, b), []).append(shape)
+        for (row, b), shapes in sorted(bands.items()):
+            gid = f"meche-{len(D.defs)}"
+            base = wool(b)
+            h = row * 3.0 + 1.5
+            g = D.lin(gid, (0, h + 2.0), (0, h - 2.0),
+                      [(0, mix(base, WOOL_LIGHT, 0.13)), (0.5, base), (1, shade(base, 0.86))])
+            D.el("".join(shapes), fill=g, cls=cls)
         for b in sorted(self.tops):
-            D.el("".join(self.tops[b]), fill=mix(wool(b), WOOL_LIGHT, 0.45), fo=0.32, cls=cls)
-        self.packs = {}
+            D.el("".join(self.tops[b]), fill=mix(wool(b), WOOL_LIGHT, 0.35), fo=0.12, cls=cls)
         self.tops = {}
+        self.order = []
         self.marks.emit(D)
 
 
@@ -188,19 +233,21 @@ def fill_fleece(fl, region, rng, light_of, r=2.15, R=1.55, far=False, edge=None,
     """Sème des paquets dans `region` (un polygone du monde) ; `edge` : le
     contour (fermé) dont les paquets du bord dessinent les festons, sauf là
     où `skip(x, h)` le dit."""
-    pts = poisson(region.buffer(-0.45), r, rng)
+    pts = poisson(region.buffer(-0.45), r * 0.85, rng)
     pts.sort(key=lambda p: (p[1], p[0]))
     for p in pts:
-        light = light_of(*p) + rng.uniform(-0.04, 0.04)
-        fl.pack(p, R * rng.uniform(0.85, 1.15), light, rng, far=far)
+        light = light_of(*p) + rng.uniform(-0.025, 0.025)
+        fl.pack(p, R * rng.uniform(0.8, 1.4), light, rng, far=far)
     if edge is not None:
-        ring = resample(edge, edge_step, closed=True)
+        ring = resample(edge, edge_step * 0.7, closed=True)
         ns = outward(ring)
         for p, n in zip(ring, ns):
             if skip and skip(*p):
                 continue
-            c = (p[0] - n[0] * 0.55 * edge_R, p[1] - n[1] * 0.55 * edge_R)
-            fl.pack(c, edge_R * rng.uniform(0.85, 1.15), light_of(*c) + rng.uniform(-0.04, 0.04), rng, far=far,
+            size = edge_R * rng.uniform(0.5, 1.25)
+            inset = rng.uniform(0.3, 0.75) * size
+            c = (p[0] - n[0] * inset, p[1] - n[1] * inset)
+            fl.pack(c, size, light_of(*c) + rng.uniform(-0.04, 0.04), rng, far=far,
                     curls=rng.random() < 0.7)
 
 
@@ -239,7 +286,7 @@ def body_light(x, h):
     hb = sp[0] if sp else 32.0
     ht = 72.0 if 6.0 < x < 72.0 else (sp[1] if sp and x <= 6.0 else 72.0)
     tv = max(0.0, min(1.0, (h - hb) / max(1.0, ht - hb)))
-    light = 0.16 + 0.8 * tv ** 0.85 + staples(x, h)
+    light = 0.27 + 0.64 * tv ** 0.85 + staples(x, h)
     # le poitrail et l'avant de l'épaule, tournés vers l'avant, dans l'ombre ;
     # l'arrière de la culotte aussi, un peu
     if x > 80:
@@ -272,7 +319,7 @@ def body():
     rng = random.Random(1920)  # le premier livre généalogique de la race (S3)
     D.comment("Corps : la toison d'automne, paquets serrés bouclés en surface ; la base de l'encolure dessous")
     D.open("body")
-    fond = D.lin("fond", (0, 73), (0, 31), [(0, "#B1A599"), (0.5, "#978B81"), (1, "#6E645C")])
+    fond = D.lin("fond", (0, 73), (0, 31), [(0, wool(0.95)), (0.5, wool(0.62)), (1, wool(0.16))])
     # le fond (les creux entre les paquets) ; sur le devant, en retrait du
     # bord, pour que ce soient les paquets qui le dessinent
     front = BODY_POLY.difference(BODY_POLY.buffer(-1.2)).intersection(
@@ -288,9 +335,6 @@ def body():
     # bord la chevauchent, comme un pli de la toison
     fill_fleece(fl, BODY_POLY, rng, body_light, edge=BODY_D, skip=lambda x, h: x > 71.0 and h > 43.0)
     fl.emit()
-    # l'ombre du ventre et du poitrail (la toison tournée vers le sol)
-    D.line([(24.0, 35.4), (34.0, 32.6), (46.0, 31.9), (58.0, 32.3), (70.0, 33.5), (80.0, 33.7), (87.0, 34.8)],
-           "#3E3530", 1.6, so=0.22)
     D.pivot("body", 50.0, 31.5)
     D.close()
 
@@ -356,7 +400,7 @@ def hoof(cx, far, name):
     # l'autre doigt, un peu plus bas et en avant, dans l'ombre
     other = [(cx + 3.9, 3.3), (cx + 4.7, 2.0), (cx + 5.55, 0.5), (cx + 5.8, 0.0), (cx + 2.6, 0.0), (cx + 2.4, 1.6)]
     D.el(cr(other, nd=2, t=0.7), fill=shade(HOOF_DEEP, k))
-    wall = [(cx + 3.95, 3.75), (cx + 4.45, 2.75), (cx + 4.95, 1.55), (cx + 5.4, 0.45), (cx + 5.32, 0.0)]
+    wall = [(cx + 3.95, 3.75), (cx + 5.32, 0.0)]
     sole = [(cx + 5.32, 0.0), (cx - 1.25, 0.0)]
     heel = [(cx - 1.25, 0.0), (cx - 1.6, 0.6), (cx - 1.65, 1.6), (cx - 1.35, 2.6), (cx - 0.65, 3.25), (cx + 1.6, 3.7),
             (cx + 3.95, 3.75)]
@@ -404,17 +448,17 @@ def leg_hair(leg, black, rng, far, top, marks):
     for p in poisson(zone, 0.5, rng):
         if p[1] > top:
             continue
-        L = rng.uniform(0.5, 0.95)
+        L = rng.uniform(0.35, 0.7)
         ang = math.radians(-90 + rng.uniform(-12, 8))
         e = (p[0] + L * math.cos(ang), p[1] + L * math.sin(ang))
         c = ((p[0] + e[0]) / 2 + rng.uniform(-0.08, 0.08), (p[1] + e[1]) / 2)
         if black is not None and black.contains(Point(p)):
-            marks.add(("#0B0B0F" if far else "#3B3E46", 0.11, 0.55), p, c, e)
+            marks.add(("#0B0B0F" if far else "#33363C", 0.055, 0.4), p, c, e)
         else:
             if rng.random() < 0.3 and not far:
-                marks.add(("#FFFFFF", 0.11, 0.6), p, c, e)
+                marks.add(("#FFFFFF", 0.07, 0.5), p, c, e)
             else:
-                marks.add(("#8D8C93" if far else "#C2C1C7", 0.11, 0.5), p, c, e)
+                marks.add(("#8D8C93" if far else "#C2C1C7", 0.065, 0.4), p, c, e)
 
 
 def shaggy(points, rng, far, marks, n=14, back=True):
@@ -718,8 +762,8 @@ def HWs(pts):
 # au-dessus du mufle ; front large et plat sans toupet ; mâchoire profonde ;
 # museau large, arrondi. Le haut de l'arrière reste sous la corne (la laine du
 # cou s'arrête derrière elle, § 3.2).
-DORSAL = [(0.5, 1.8), (0.8, 0.0), (1.8, -1.3), (3.4, -2.1), (5.6, -2.45), (8.2, -2.35), (11.0, -2.0),
-          (13.8, -1.5), (16.4, -0.85), (18.8, 0.0), (20.9, 1.0), (22.6, 2.3), (23.8, 3.8), (24.45, 5.45),
+DORSAL = [(0.5, 1.8), (0.9, 0.0), (2.0, -1.6), (4.0, -2.7), (6.5, -3.4), (8.8, -3.3), (11.0, -2.6),
+          (13.8, -1.8), (16.4, -0.85), (18.8, 0.0), (20.9, 1.0), (22.6, 2.3), (23.8, 3.8), (24.45, 5.45),
           (24.55, 7.0), (24.15, 8.25)]
 MOUTH = [(24.15, 8.25), (23.1, 8.9), (21.5, 9.3), (19.8, 9.6), (18.2, 9.85)]
 NOTCH = [(18.2, 9.85), (18.05, 11.15), (17.7, 12.4)]
@@ -940,23 +984,23 @@ def face_items(rng):
     nose = to_poly(HWs(nose_l))
     zone = head.buffer(-0.3).difference(Point(eye_c).buffer(1.7)).difference(nose.buffer(0.2))
     for p in poisson(zone, 0.33, rng):
-        L = rng.uniform(0.28, 0.55)
+        L = rng.uniform(0.12, 0.28)
         loc_b = -(p[0] - NUQUE[0]) * math.sin(THETA) - (p[1] - NUQUE[1]) * math.cos(THETA)
-        ang = hair + rng.uniform(-0.3, 0.2) + (0.25 if loc_b > 8 else 0.0)
+        ang = hair + rng.uniform(-0.55, 0.5) + (0.25 if loc_b > 8 else 0.0)
         e = (p[0] + L * math.cos(ang), p[1] + L * math.sin(ang))
         c = ((p[0] + e[0]) / 2 + rng.uniform(-0.06, 0.06), (p[1] + e[1]) / 2 + rng.uniform(-0.06, 0.06))
         if not (keep(p) and keep(e)):
             continue
         if whites.contains(Point(p)):
             if rng.random() < 0.35:
-                hm.add(("#FFFFFF", 0.06, 0.75), p, c, e)
+                hm.add(("#FFFFFF", 0.04, 0.55), p, c, e)
             else:
-                hm.add(("#B4B3B9", 0.06, 0.55), p, c, e)
+                hm.add(("#B4B3B9", 0.04, 0.4), p, c, e)
         else:
             if rng.random() < 0.3:
-                hm.add(("#4A4D56", 0.065, 0.6), p, c, e)
+                hm.add(("#3B3D45", 0.045, 0.4), p, c, e)
             else:
-                hm.add(("#2C2E35", 0.065, 0.65), p, c, e)
+                hm.add(("#2C2E35", 0.045, 0.45), p, c, e)
     F.marks(hm)
     F.marks(bm)
     F.marks(wm)
@@ -1007,8 +1051,8 @@ def jaw():
         if not inner.contains(Point(HW(a, b))):
             continue
         p = HW(a, b)
-        e = HW(a - rng.uniform(0.4, 0.7), b + rng.uniform(-0.05, 0.2))
-        m.add(("#B4B3B9", 0.1, 0.5), p, ((p[0] + e[0]) / 2, (p[1] + e[1]) / 2), e)
+        e = HW(a - rng.uniform(0.15, 0.35), b + rng.uniform(-0.05, 0.1))
+        m.add(("#B4B3B9", 0.045, 0.4), p, ((p[0] + e[0]) / 2, (p[1] + e[1]) / 2), e)
     m.emit(D)
     D.pivot("jaw", *HW(*JAW_PIVOT_L))
     D.close()
@@ -1230,19 +1274,19 @@ def horn_root_hair(F, rng):
     na, nb = -tb, ta
     half = HORN_W[0] / 2 + 0.3
     edge = []
-    for i in range(15):
-        u = -half + 2 * half * i / 14
-        back = 0.55 + 0.25 * math.sin(i * 2.3) + rng.uniform(-0.1, 0.1)
+    for i in range(31):
+        u = -half + 2 * half * i / 30
+        back = 0.3 + 0.07 * math.sin(i * 2.3) + rng.uniform(-0.04, 0.04)
         edge.append((a0 + na * u + ta * back, b0 + nb * u + tb * back))
     front = [(a0 - na * half - ta * 0.8, b0 - nb * half - tb * 0.8), (a0 + na * half - ta * 0.8, b0 + nb * half - tb * 0.8)]
     cap = to_poly(HWs(edge + front))
     F.emit(clip=cap)
     m = Marks()
     for (a, b) in resample(edge, 0.1):
-        L = rng.uniform(0.25, 0.5)
+        L = rng.uniform(0.12, 0.24)
         p = HW(a - ta * 0.15, b - tb * 0.15)
         e = HW(a + ta * L / HK, b + tb * L / HK)
-        m.add((BLACK if rng.random() < 0.7 else "#33363D", 0.06, 0.9), p, ((p[0] + e[0]) / 2, (p[1] + e[1]) / 2), e)
+        m.add((BLACK if rng.random() < 0.7 else "#33363D", 0.045, 0.75), p, ((p[0] + e[0]) / 2, (p[1] + e[1]) / 2), e)
     m.emit(D)
 
 
@@ -1313,10 +1357,14 @@ def closed_lid():
 
 
 def far_horn():
-    """La corne de l'autre côté : cachée derrière la tête, sauf le haut de son
-    arc, qui dépasse un peu de la nôtre."""
+    """La corne de l'autre côté, presque cachée par la tête : le haut de son
+    arc dépasse un peu du nôtre, et sa pointe écartée reparaît devant le
+    chanfrein (p1, p14, fiche § 6.2), un petit croissant plus sombre."""
     h = Horn(HORN_L[:9], HORN_W[:9], 23, offset=(0.9, 1.1), dim=0.62, gid="corne-loin")
     h.draw(0.0, h.total, details=True)
+    tip = Horn([(18.8, 1.5), (18.8, -1.0), (19.5, -3.2), (20.7, -3.9), (21.9, -2.5), (22.5, -0.1)],
+               [2.2, 1.8, 1.4, 1.0, 0.6, 0.22], 24, dim=0.7, gid="corne-loin-pointe")
+    tip.draw(0.0, tip.total, details=True)
 
 
 def head():

@@ -1,6 +1,7 @@
 > Fiche de la race « Swaledale », préparée le 3 novembre 2026 pour dessiner
-> `pets/swaledale` dans Mouflon. Le dessin viendra ensuite
-> (`docs/chantiers/races-dessins.md`).
+> `pets/swaledale` dans Mouflon. Le dessin est généré par
+> `tools/races/swaledale/gen_swaledale.py` ; sa relecture est décrite dans
+> `tools/races/swaledale/README.md`.
 
 # Swaledale : fiche pour un dessin de profil
 
@@ -23,7 +24,7 @@
 | Individu | **un bélier (« tup ») de 2 à 3 ans**, en automne (octobre, saison des ventes de béliers de Kirkby Stephen, Hawes, Middleton, St John's Chapel) |
 | Vue | profil strict, **tourné vers la droite** (on voit son flanc gauche et sa corne gauche) |
 | Toison | repousse de 3 à 4 mois après la tonte de juillet : **5 à 8 cm**, serrée, bouclée en surface ; pas la toison longue et pendante d'une brebis de lande au printemps |
-| Taille | **H ≈ 72 cm [EST]** (aucune mesure publiée, § 2.1) ; poids ≈ 70–80 kg [EST] |
+| Taille | **H ≈ 72 cm [EST]** (aucune hauteur publiée trouvée, § 2.1) ; poids 70–80 kg [SRC S26] |
 | Silhouette | mouton de colline **moyen, haut sur pattes pour un mouton de montagne**, tronc rectangulaire, dos droit, cou moyen porté haut, tête de taille moyenne, **grosses cornes rondes et basses** enroulées autour de l'oreille, queue **longue et laineuse** |
 | Signature | **face noire au museau blanc** (le blanc remonte sur le chanfrein jusqu'à mi-hauteur) et **un anneau blanc autour de chaque œil**, séparés par une bande noire ; **pattes blanches marbrées de noir** ; toison gris-blanc |
 
@@ -50,7 +51,7 @@
 - « Un mouton hardi et rustique, bien fait pour endurer les rigueurs des lieux exposés et élevés » ; « de nature vive » ; les brebis sont « d'excellentes mères » [STD S1, SRC S2].
 - Son rôle économique : les brebis Swaledale, croisées avec un bélier Bluefaced Leicester, donnent la **North of England Mule**, la brebis la plus répandue des basses terres [SRC S2, S6]. Environ 1 100 à 1 200 élevages inscrits ; la SSBA enregistre environ 70 000 agnelles de race pure par an [SRC S6, S9].
 - C'est l'emblème du parc national des Yorkshire Dales (une tête de bélier Swaledale, logo déposé) [SRC S16].
-- Non menacée : je n'ai trouvé aucune fiche du Rare Breeds Survival Trust (RBST) pour elle, ce qui est normal pour une race aussi nombreuse.
+- Une fiche du Rare Breeds Survival Trust (RBST) a été retrouvée lors de la relecture : elle décrit la race et la présente comme « native » [SRC S27] ; sa présence ne suffit pas à en déduire une catégorie de menace.
 
 ### 1.2 Pourquoi un bélier
 
@@ -69,7 +70,7 @@ Ce choix a un coût : un troupeau est fait de brebis et d'agneaux. La brebis est
 
 ### 1.4 La brebis et l'agneau, en bref
 
-- **Brebis** : cornue elle aussi, mais à cornes minces, d'un demi-tour à trois quarts de tour (§ 6.4) ; tête plus fine ; même face ; pattes souvent plus sombres que celles des béliers de concours (p16, p19, p20) ; poids environ 45–55 kg [EST, § 2.1]. Sur la lande, au printemps, sa toison est longue (10–20 cm), ouverte, en mèches pendantes, gris-beige sale (p12, p20).
+- **Brebis** : cornue elle aussi, mais à cornes minces, d'un demi-tour à trois quarts de tour (§ 6.4) ; tête plus fine ; même face ; pattes souvent plus sombres que celles des béliers de concours (p16, p19, p20) ; poids 50–55 kg [SRC S26, § 2.1]. Sur la lande, au printemps, sa toison est longue (10–20 cm), ouverte, en mèches pendantes, gris-beige sale (p12, p20).
 - **Agneau** : né **la face presque entièrement noire**, avec deux petites taches blanches près des yeux et parfois un museau gris ; oreilles noires ou mouchetées ; pattes blanches à grosses taches noires aux genoux et aux boulets ; toison blanche frisée ; queue longue (p17, p18). Le museau blanc et les anneaux autour des yeux s'élargissent avec l'âge (p11, p16).
 - Le standard ajoute : « *This type of sheep grows greyer with age* » (ce mouton grisonne en vieillissant) [STD S1].
 
@@ -82,6 +83,7 @@ Ce choix a un coût : un troupeau est fait de brebis et d'agneaux. La brebis est
 | Mesure | Valeur | Source |
 |---|---|---|
 | Hauteur au garrot, longueur, tour de poitrine | **aucune mesure publiée** trouvée (standard, British Wool, Wikipédia EN/FR, FAO DAD-IS, études) | — |
+| Poids adulte, programme de sélection VDL (2021) | béliers **70–80 kg**, brebis **50–55 kg** | [SRC S26] |
 | Format | « *medium build* » ; « taille moyenne » | [SRC S6, S7] |
 | Évolution | « plus long et plus haut qu'autrefois » | [SRC S9] |
 | Par rapport au Blackface (même ferme, 10 ans) | Swaledale ≈ **5 % plus léger** à la lutte, **canons ≈ 2 % plus longs**, agneaux ≈ 5 % plus lourds à la naissance | [SRC S11] |
@@ -94,9 +96,9 @@ Ce choix a un coût : un troupeau est fait de brebis et d'agneaux. La brebis est
 
 | Mesure | Valeur | Étiquette et raisonnement |
 |---|---|---|
-| Poids | **≈ 75 kg** (70–80) | [EST] Blackface ≈ 80 kg, Swaledale ≈ 5 % plus léger [S19, S11] |
+| Poids | **≈ 75 kg** (70–80) | [EST] individu choisi au milieu de la plage publiée pour les béliers [SRC S26] ; choix initial inchangé |
 | **H** | **≈ 72 cm** (68–76) | [EST] même forme que le Jacob du dépôt (75 cm pour ≈ 75 kg, `docs/races/jacob.md`) ; un peu moins de laine et des canons un peu plus longs se compensent |
-| H de la brebis | ≈ 62 cm (58–66) | [EST] ≈ 48 kg, même raisonnement (racine cubique du poids) |
+| H de la brebis | ≈ 62 cm (58–66) | [EST] échelle de dessin conservée ; aucune hauteur publiée trouvée |
 | Longueur du tronc (pointe du poitrail → arrière de la culotte) | ≈ 1,30 H ≈ 94 cm | [PHOTO] tableau 2.3 |
 | Profondeur (garrot → sternum, toison comprise) | ≈ 0,54 H ≈ 39 cm | [PHOTO] 1 − 0,46 |
 | Dégagement sous le sternum | ≈ 0,46 H ≈ 33 cm | [PHOTO] |
@@ -471,6 +473,10 @@ Lu sur p1, p4, p5, p7, p14 (profils) et vérifié de face sur p15 [PHOTO] :
 - [S19] Wikipédia EN, *Scottish Blackface* (poids, cornes, laine, types) : <https://en.wikipedia.org/wiki/Scottish_Blackface>
 - [S20] Wikipédia EN, *Dalesbred* (poids) : <https://en.wikipedia.org/wiki/Dalesbred>
 
+**Compléments vérifiés lors de la relecture du dessin (3 novembre 2026)**
+- [S26] Landes-Schafzuchtverband Weser-Ems, *Zuchtprogramm Swaledale*, décision VDL 2021, adopté le 10 décembre 2021 et en vigueur le 1er janvier 2022 : poids des béliers 70–80 kg et des brebis 50–55 kg ; aucune hauteur donnée : <https://www.schafzucht-niedersachsen.de/Schafzucht-Verbaende-Niedersachsen/index.php?Itemid=916&catid=107%3Azuchtprogramm-weser-ems&id=722%3Aswaledale&lang=en&option=com_content&view=article>.
+- [S27] Rare Breeds Survival Trust, *Swaledale*, fiche consultée le 3 novembre 2026 (rubriques *Summary*, *Appearance*, *History of the breed* ; mention « Native ») : <https://www.rbst.org.uk/watchlist-breed/swaledale/>.
+
 **Presse agricole**
 - [S8] North West Nature and History, *The Swaledale Sheep, Queen of the Hills* (2026) : <https://northwestnatureandhistory.co.uk/2026/07/11/the-swaledale-sheep-queen-of-the-hills/>
 - [S9] Farmers Weekly, *Swaledale sheep breed gains popularity in the south* : <https://www.fwi.co.uk/livestock/livestock-breeding/swaledale-sheep-breed-gains-popularity-in-the-south>
@@ -493,7 +499,7 @@ Lu sur p1, p4, p5, p7, p14 (profils) et vérifié de face sur p15 [PHOTO] :
 - [S23] `docs/races/nez-noir.md` (le Nez noir du Valais).
 - `docs/animation-animale.md` § 3 (gestes) et § 5 (troupeau).
 
-**Non consultables** : Oklahoma State University, *Breeds of Livestock* (<https://breeds.okstate.edu/sheep/swaledale-sheep.html>) renvoie une erreur 403 au robot ; le RBST (<https://www.rbst.org.uk>) aussi, et la race n'a pas de fiche de race rare ; FAO DAD-IS : pas de fiche lisible sans navigateur.
+**Non consultables** : Oklahoma State University, *Breeds of Livestock* (<https://breeds.okstate.edu/sheep/swaledale-sheep.html>) renvoie une erreur 403 au robot ; FAO DAD-IS : pas de fiche lisible sans navigateur. Le RBST avait aussi refusé le robot lors de la préparation ; sa fiche Swaledale a depuis été lue [S27].
 
 ### 10.2 Photos regardées
 
@@ -540,5 +546,5 @@ Téléchargées hors du dépôt, jamais copiées dedans. Pour les photos de la S
 | Date de la société | 1919 [S2, S6] ; « *Established: 1920* » [S3] (le premier livre généalogique date de 1920) |
 | Nombre d'élevages | ≈ 1 200 troupeaux inscrits [S6] ; 1 100 membres [S9] |
 | Origine | Trow-Smith supposait un lien avec l'argali ; la génétique et le nombre de chromosomes le contredisent [S6, S7] |
-| Tailles et poids | **aucune source n'en donne** ; tous les chiffres du § 2.2 sont des estimations [EST] tirées du Blackface et du Dalesbred [S19, S20, S11] |
+| Tailles et poids | Le programme VDL donne **70–80 kg pour les béliers et 50–55 kg pour les brebis** [S26] ; les hauteurs et le choix individuel de 75 kg au § 2.2 restent des estimations [EST], sans changer l'échelle du dessin |
 | Nombre de tours de corne | aucune source ; de ¾ de tour (jeune bélier) à 1 tour ½ (vieux bélier) sur les photos |
