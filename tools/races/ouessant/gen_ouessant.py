@@ -6,8 +6,12 @@ Les formes sont décrites en (x, h), h = hauteur au-dessus du sol ;
 y = GY - h dans le SVG.
 """
 import math
+import os
 import random
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import articulations  # noqa: E402  (tools/races/articulations.py)
 
 GY = 160.0
 OUT = sys.argv[1] if len(sys.argv) > 1 else "ouessant.svg"
@@ -1079,7 +1083,25 @@ svg = [
     pivot("ground", ground),
     "</svg>",
 ]
+# Le dessin coupé à ses articulations (voir tools/races/articulations.py) :
+# chaque patte au carpe (devant du genou) ou au jarret (sa pointe) ;
+# l'encolure, le haut de l'avant de la toison et la cravate, devant une
+# épaule arrondie qui descend du garrot vers le poitrail, posée sous le
+# corps ; la tête tourne à la nuque, derrière la spirale de la corne.
+text = articulations.articulate_breed(
+    "\n".join(svg) + "\n",
+    carpus_y=Y(26.0),
+    hock_y=Y(31.6),
+    neck=dict(
+        source="body",
+        area=articulations.shoulder((122.0, 48.6), (162.0, 86.0), bulge=6.0, far=230.0, top=0.0),
+        pivot=(134.0, 70.0),
+        poll=(146.0, 44.0),
+        muzzle=(183.0, 66.5),
+        margin=6.0,
+    ),
+)
 with open(OUT, "w") as fh:
-    fh.write("\n".join(svg) + "\n")
+    fh.write(text)
 n_paths = sum(s.count("<path") + s.count("<circle") + s.count("<rect") + s.count("<ellipse") for s in svg)
 print(f"écrit {OUT} ({n_paths} formes)")

@@ -2,8 +2,12 @@
 # Générateur du dessin du mouton de Jacob (bélier à quatre cornes), vu de profil,
 # tourné vers la droite. Unités : centimètres de l'animal réel ; sol à y = 200.
 import math
+import os
 import random
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import articulations  # noqa: E402  (tools/races/articulations.py)
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from geo import *  # noqa
@@ -973,6 +977,28 @@ def draw_head():
     D.close()
 
 
+# =============================================================== Articulations
+def articule(svg):
+    """Le dessin coupé à ses articulations (voir tools/races/articulations.py) :
+    chaque patte au carpe ou au jarret (les taches noires du genou et du
+    jarret) ; l'encolure, l'avant noir du haut de la toison, devant une
+    épaule arrondie qui descend du garrot vers le poitrail, posée sous le
+    corps ; la tête tourne à la nuque, sous les cornes."""
+    return articulations.articulate_breed(
+        svg,
+        carpus_y=181.3,
+        hock_y=178.4,
+        neck=dict(
+            source="body",
+            area=articulations.shoulder((100.0, 123.5), (131.5, 142.0), bulge=5.0, far=200.0, top=40.0),
+            pivot=(108.0, 138.0),
+            poll=(119.0, 113.0),
+            muzzle=(144.5, 135.0),
+            margin=6.0,
+        ),
+    )
+
+
 # =============================================================== Document
 def main():
     outline, body, black, white = build_body()
@@ -994,6 +1020,7 @@ def main():
             "    © 2026 Alejandro San Martin Lamas — MIT OR Apache-2.0\n"
             "  -->\n")
     svg = head + "<defs>" + "".join(D.defs) + "</defs>\n" + "\n".join(D.body) + "\n</svg>\n"
+    svg = articule(svg)
     with open(OUT, "w") as fh:
         fh.write(svg)
     print(f"{OUT} : {len(svg) / 1024:.0f} Ko")

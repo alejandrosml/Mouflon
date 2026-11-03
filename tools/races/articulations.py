@@ -39,8 +39,10 @@ SVG_NS = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG_NS)
 Q = "{%s}" % SVG_NS
 
-# Finesse de l'échantillonnage des courbes (unités du dessin).
+# Finesse de l'échantillonnage des courbes (unités du dessin), et de quoi
+# simplifier les morceaux coupés (0,03 unité : 0,3 mm de l'animal).
 STEP = 0.12
+SIMPLIFY = 0.03
 
 
 # ------------------------------------------------------------------ tracés
@@ -406,20 +408,53 @@ class Paints:
         el.set(attr, f"url(#{copy.get('id')})")
 
 
-def _opacity(el):
-    v = 1.0
-    for k in ("opacity", "fill-opacity"):
+# Les attributs de présentation qu'un élément hérite de ses groupes.
+INHERITED = ("fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-opacity",
+             "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray")
+STROKE_ATTRS = ("stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
+                "stroke-miterlimit", "stroke-dasharray")
+GEOMETRY = ("cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "points", "x1", "y1", "x2", "y2",
+            "transform", "d")
+
+
+def _inherit(el, inherited=None):
+    """Les attributs hérités par les enfants du groupe `el`."""
+    out = dict(inherited or {})
+    for k in INHERITED:
         if el.get(k) is not None:
-            v *= float(el.get(k))
+            out[k] = el.get(k)
+    return out
+
+
+def _style(el, inherited=None):
+    """Le style effectif d'un élément : le sien, et ce qu'il hérite."""
+    return _inherit(el, inherited)
+
+
+def _opacity(el, inherited=None):
+    v = float(el.get("opacity", 1.0))
+    fo = _style(el, inherited).get("fill-opacity")
+    if fo is not None:
+        v *= float(fo)
     return v
 
 
-def _has_fill(el):
-    return el.get("fill", "black") != "none"
+def _has_fill(el, inherited=None):
+    return _style(el, inherited).get("fill", "black") != "none"
 
 
-def _has_stroke(el):
-    return el.get("stroke") not in (None, "none")
+def _has_stroke(el, inherited=None):
+    return _style(el, inherited).get("stroke") not in (None, "none")
+
+
+def _drawn(group, inherited=None):
+    """Les éléments dessinés d'un groupe, avec leur style hérité."""
+    for child in group:
+        tag = _tag(child)
+        if tag == "g":
+            yield from _drawn(child, _inherit(child, inherited))
+        elif tag in DRAWN:
+            yield child, inherited or {}
 
 
 DRAWN = {"path", "circle", "ellipse", "rect", "polygon", "polyline", "line"}
@@ -445,48 +480,56 @@ def region(pivot, normal, radius, far=1000.0):
     return top, bottom, disc
 
 
-def _clip_element(el, area, paints, opaque_extra=None):
+def _clip_element(el, area, paints, opaque_extra=None, inherited=None):
     """Les éléments qui dessinent `el` dans `area` (une liste, peut-être
-    vide) ; `opaque_extra` : ce qu'un remplissage opaque peut déborder."""
+    vide) ; `opaque_extra` : ce qu'un remplissage opaque peut déborder ;
+    `inherited` : le style que `el` hérite de ses groupes."""
     tag = _tag(el)
     if tag not in DRAWN:
         return [el]
+    style = _style(el, inherited)
     out = []
-    fill, stroke = _has_fill(el), _has_stroke(el)
+    fill, stroke = _has_fill(el, inherited), _has_stroke(el, inherited)
+    paint = style.get("fill", "black")
+    opaque = (_opacity(el, inherited) > 0.999 and not paints.translucent(paint)
+              and paint not in ("transparent",))
+    a = area.union(opaque_extra) if (opaque and opaque_extra is not None) else area
+    shape = _fill_shape(el) if fill else GeometryCollection()
+    lines = _stroke_lines(el) if stroke else []
+    geom = unary_union(lines) if lines else GeometryCollection()
+    # Tout entier dedans : l'élément tel quel ; tout entier dehors : rien.
+    fill_in = shape.is_empty or shape.difference(a).is_empty
+    stroke_in = geom.is_empty or geom.difference(area).length < 1e-6
+    if fill_in and stroke_in:
+        return [_copy(el)]
+    if (shape.is_empty or shape.intersection(a).area < 1e-4) and (
+            geom.is_empty or geom.intersection(area).length < 1e-3):
+        return []
     if fill:
-        shape = _fill_shape(el)
-        a = area
-        opaque = _opacity(el) > 0.999 and not paints.translucent(el.get("fill")) and el.get("fill") not in ("transparent",)
-        if opaque and opaque_extra is not None:
-            a = area.union(opaque_extra)
         if not shape.is_empty:
-            inside = shape.difference(a).is_empty
-            if inside:
+            if fill_in:
                 piece = _copy(el)
                 if stroke:
-                    for k in ("stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
-                              "stroke-miterlimit", "stroke-dasharray"):
+                    for k in STROKE_ATTRS:
                         piece.attrib.pop(k, None)
+                    piece.set("stroke", "none")
                 out.append(piece)
             else:
-                cut = shape.intersection(a)
+                cut = shape.intersection(a).simplify(SIMPLIFY)
                 if not cut.is_empty and cut.area > 1e-4:
                     piece = _copy(el)
                     paints.absolute(piece, "fill")
-                    piece.attrib.pop("transform", None)
-                    for k in ("stroke", "stroke-width", "stroke-opacity", "stroke-linecap", "stroke-linejoin",
-                              "stroke-miterlimit", "stroke-dasharray", "fill-rule"):
-                        piece.attrib.pop(k, None)
-                    for k in ("cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "points", "x1", "y1", "x2", "y2"):
+                    for k in STROKE_ATTRS + GEOMETRY + ("fill-rule",):
                         piece.attrib.pop(k, None)
                     piece.tag = Q + "path"
                     piece.set("d", _poly_d(cut))
+                    piece.set("fill", piece.get("fill", paint))
+                    # Un contour hérité du groupe ne doit pas cerner la coupe.
+                    piece.set("stroke", "none")
                     out.append(piece)
     if stroke:
-        lines = _stroke_lines(el)
-        geom = unary_union(lines) if lines else GeometryCollection()
         if not geom.is_empty:
-            if geom.difference(area).length < 1e-6:
+            if stroke_in:
                 piece = _copy(el)
                 if fill:
                     piece.set("fill", "none")
@@ -494,15 +537,16 @@ def _clip_element(el, area, paints, opaque_extra=None):
                         piece.attrib.pop(k, None)
                 out.append(piece)
             else:
-                cut = [g.intersection(area) for g in lines]
+                cut = [g.intersection(area).simplify(SIMPLIFY) for g in lines]
                 cut = [g for g in cut if not g.is_empty and g.length > 1e-3]
                 if cut:
                     piece = _copy(el)
-                    paints.absolute(piece, "stroke")
-                    piece.attrib.pop("transform", None)
-                    for k in ("cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "points", "x1", "y1", "x2", "y2",
-                              "fill-opacity", "fill-rule"):
+                    for k in GEOMETRY + ("fill-opacity", "fill-rule"):
                         piece.attrib.pop(k, None)
+                    for k in STROKE_ATTRS:
+                        if k in style and piece.get(k) is None:
+                            piece.set(k, style[k])
+                    paints.absolute(piece, "stroke")
                     piece.tag = Q + "path"
                     piece.set("fill", "none")
                     piece.set("d", _line_d(cut))
@@ -523,20 +567,22 @@ def _copy(el):
     return c
 
 
-def _clip_tree(el, area, paints, opaque_extra=None, skip_ids=()):
+def _clip_tree(el, area, paints, opaque_extra=None, skip_ids=(), inherited=None):
     """`el` (un groupe) réduit à `area` : ses éléments coupés, ses sous-groupes
-    gardés s'ils dessinent encore quelque chose."""
+    gardés s'ils dessinent encore quelque chose. `inherited` : le style que
+    `el` hérite de ses parents (pas le sien : il garde ses attributs)."""
     out = ET.Element(el.tag, dict(el.attrib))
+    inner = _inherit(el, inherited)
     for child in el:
         tag = _tag(child)
         if child.get("id", "").startswith("pivot-") or child.get("id") in skip_ids:
             continue
         if tag == "g":
-            sub = _clip_tree(child, area, paints, opaque_extra, skip_ids)
+            sub = _clip_tree(child, area, paints, opaque_extra, skip_ids, inner)
             if len(sub):
                 out.append(sub)
         else:
-            for piece in _clip_element(child, area, paints, opaque_extra):
+            for piece in _clip_element(child, area, paints, opaque_extra, inner):
                 out.append(piece)
     return out
 
@@ -660,12 +706,31 @@ def split_neck_under(root, paints, source, area, pivot, poll, head="head", muzzl
     return neck
 
 
+def shoulder(withers, chest, bulge, n=16, far=170.0, top=-20.0):
+    """La zone de l'encolure, devant une épaule arrondie : un arc du garrot
+    (`withers`) au poitrail (`chest`), bombé de `bulge` vers l'avant et le
+    haut ; tout ce qui est devant et au-dessus, jusqu'à `far` et `top`.
+    Quand l'encolure descend, le corps finit par cet arc : une épaule."""
+    (ax, ay), (bx, by) = withers, chest
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    nx, ny = dy / length, -dx / length
+    if nx < 0:
+        nx, ny = -nx, -ny
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        k = 4.0 * bulge * t * (1.0 - t)
+        pts.append((ax + dx * t + nx * k, ay + dy * t + ny * k))
+    return pts + [(far, by), (far, top), (ax, top)]
+
+
 def cut_reach(svg_text, source, pivot, forward):
     """La plus grande distance du pivot aux bords du dessin de `source`, le
     long de la coupe : le rayon minimal du disque de l'encolure."""
     root = ET.fromstring(svg_text)
     _, _, body = _find(root, source)
-    shapes = [_fill_shape(el) for el in body.iter() if _tag(el) in DRAWN and _has_fill(el)]
+    shapes = [_fill_shape(el) for el, inh in _drawn(body, _inherit(body)) if _has_fill(el, inh)]
     shape = unary_union([s for s in shapes if not s.is_empty])
     nx, ny = forward
     n = math.hypot(nx, ny)
@@ -692,12 +757,13 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
         if tag == "g" or child.get("id", "").startswith("pivot-"):
             keep.append(child)
             continue
-        keep += _clip_element(child, outside, paints, opaque_extra=area)
+        keep += _clip_element(child, outside, paints, opaque_extra=area,
+                              inherited=_inherit(src, None))
     lifted = ET.Element(Q + "g", {"id": name})
     for child in list(src):
         if _tag(child) == "g" or child.get("id", "").startswith("pivot-"):
             continue
-        for piece in _clip_element(child, area, paints):
+        for piece in _clip_element(child, area, paints, inherited=_inherit(src, None)):
             lifted.append(piece)
     lifted.append(_pivot(name, pivot))
     for child in list(src):
@@ -712,6 +778,45 @@ def lift_part(root, paints, source, area, name, pivot, under=()):
     for c in pivots:
         src.append(c)
     return lifted
+
+
+def clip_away(root, paints, gid, polygon):
+    """Ôte du groupe `gid` ce qui est dans `polygon` (ce qu'une autre pièce,
+    peinte jusqu'ici par-dessus, cachait) : le groupe garde son id et ses
+    pivots."""
+    parent, index, group = _find(root, gid)
+    outside = box(-1000, -1000, 1000, 1000).difference(Polygon(polygon))
+    kept = _clip_tree(group, outside, paints)
+    for c in group:
+        if c.get("id", "").startswith("pivot-"):
+            kept.append(c)
+    parent.remove(group)
+    parent.insert(index, kept)
+    return kept
+
+
+def articulate_breed(svg_text, carpus_y, hock_y, neck=None, extra=None):
+    """Ce qu'un générateur de race appelle avant d'écrire son dessin : les
+    quatre pattes coupées au carpe (à la hauteur `carpus_y`) et au jarret
+    (`hock_y`) ; l'encolure, si `neck` est donné (les arguments de
+    `split_neck_under`, sans les deux premiers) ; `extra(root, paints)`
+    pour le reste (une découpe propre à la race)."""
+    legs = []
+    for name in ("leg-back-far", "leg-front-far", "leg-back-near", "leg-front-near"):
+        y = carpus_y if "front" in name else hock_y
+        joint, half = leg_joint(svg_text, name, y)
+        legs.append((name, joint, half + 0.4, (0.0, 1.0)))
+    parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
+    root = ET.fromstring(svg_text, parser=parser)
+    paints = Paints(root)
+    for name, joint, radius, axis in legs:
+        split_leg(root, paints, name, joint, radius, axis)
+    if neck:
+        split_neck_under(root, paints, **neck)
+    if extra:
+        extra(root, paints)
+    ET.indent(root, space="  ")
+    return ET.tostring(root, encoding="unicode") + "\n"
 
 
 def articulate(svg_text, legs=(), neck=None):
@@ -734,7 +839,7 @@ def leg_joint(svg_text, name, y):
     quoi placer une articulation au carpe ou au jarret."""
     root = ET.fromstring(svg_text)
     _, _, leg = _find(root, name)
-    shapes = [_fill_shape(el) for el in leg.iter() if _tag(el) in DRAWN and _has_fill(el)]
+    shapes = [_fill_shape(el) for el, inh in _drawn(leg, _inherit(leg)) if _has_fill(el, inh)]
     shape = unary_union([s for s in shapes if not s.is_empty])
     cut = shape.intersection(LineString([(-1000, y), (1000, y)]))
     xs = [x for g in getattr(cut, "geoms", [cut]) for x, _ in g.coords]

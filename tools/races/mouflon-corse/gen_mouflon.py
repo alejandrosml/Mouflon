@@ -6,7 +6,11 @@ vers la droite.
 Unités : 1 unité SVG = 1 cm de l'animal réel. Sol en y = 112. Garrot à 75 cm.
 """
 import math
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import articulations  # noqa: E402  (tools/races/articulations.py)
 
 from geom import (RNG, Svg, P, add, sub, mul, lerp, length, norm, perp, rot, f2, f1,
                   smooth_d, spline_pieces, sample_spline, sample_chains, poly_d,
@@ -65,7 +69,9 @@ def HL(pts):
 
 C = P(116.0, 32.0)            # centre de la spirale de la corne : à hauteur de l'œil, 0,46 HL en arrière
 
-PIV_HEAD = P(103.0, 46.0)     # base du cou : le cou est dessiné avec la tête
+PIV_NECK = P(96.0, 56.0)      # base de l'encolure, dans l'épaule : elle porte la tête
+PIV_HEAD = P(114.0, 31.0)     # la nuque, sous la base des cornes : la tête y tourne
+MUZZLE = P(138.5, 47.0)       # ce qui touche l'herbe : le bout du museau, sous les naseaux
 PIV_JAW = H(6.0, 5.7)
 PIV_EAR = H(-5.4, 1.2)
 PIV_EAR_FAR = add(PIV_EAR, (1.2, -1.4))
@@ -614,7 +620,7 @@ NECK_POLY = sample_chains([CREST, NECK_BASE, VENTRAL, NECK_TOP], n=8)
 
 
 def collar():
-    """Le cou, dessiné avec la tête pour la suivre quand elle descend brouter."""
+    """Le cou : l'encolure, qui porte la tête et descend avec elle pour brouter."""
     d = poly_d(NECK_POLY)
     g = svg.lin(112, 26, 115, 47, [(0, CHES), (0.3, mix(CHES, CHOC, 0.4)), (0.56, BLACK), (1, BLACK)])
     svg.path(d, fill=g)
@@ -662,8 +668,15 @@ def collar():
 
 
 def head_group():
+    # L'encolure (le collier) porte la tête. La corne et l'oreille du fond,
+    # peintes derrière le collier, viennent maintenant après lui (dans la
+    # tête) : elles sont rognées de ce qu'il cachait (voir `articule`).
+    svg.open("neck")
+    collar()
     svg.open("head")
+    svg.open("horn-far")
     horn(far=True)
+    svg.close()
     # oreille du fond : presque cachée, une fine bande dépasse au-dessus de l'oreille proche
     svg.open("ear-far")
     eb = PIV_EAR_FAR
@@ -672,7 +685,6 @@ def head_group():
     svg.path(smooth_d(ear_far, True), stroke=shade(EAR_RIM, 0.62), sw=0.28, sop=0.7)
     svg.circle_pivot("ear-far", eb)
     svg.close()
-    collar()
     jaw_group()
     horn(far=False, s0=0.0, s1=RINGS[2])      # la racine, derrière le poil du front
     face()
@@ -693,6 +705,9 @@ def head_group():
     svg.close()
     horn(far=False, s0=RINGS[2], s1=1.0)
     svg.circle_pivot("head", PIV_HEAD)
+    svg.circle_pivot("muzzle", MUZZLE)
+    svg.close()
+    svg.circle_pivot("neck", PIV_NECK)
     svg.close()
 
 
@@ -886,11 +901,21 @@ def main():
     svg.emit(f'<circle id="pivot-ground" cx="{f2(GROUND_X)}" cy="{f2(GROUND)}" r="0.8"/>')
     comment = ("    Mouflon de Corse : bélier adulte (environ huit ans) du Cinto, en pelage d'hiver,\n"
                "    vu de profil. 1 unité = 1 cm ; garrot à 75 cm, sol à y = 112.\n"
-               "    Le cou est dessiné avec la tête (pivot-head à la base du cou) : il la suit\n"
-               "    quand elle descend brouter.\n"
+               "    L'encolure (neck, le collier) porte la tête, qui tourne à la nuque ; les\n"
+               "    pattes sont coupées au carpe et au jarret (tools/races/articulations.py).\n"
                "    © 2026 Alejandro San Martin Lamas — MIT OR Apache-2.0")
     with open(OUT, "w") as f:
-        f.write(svg.render(170, 116, comment))
+        f.write(articule(svg.render(170, 116, comment)))
+
+
+def articule(text):
+    """Les pattes coupées au carpe (la bosse du genou) et au jarret (sa
+    pointe) ; la corne et l'oreille du fond rognées de ce que le collier
+    cachait quand il était peint par-dessus elles : au repos, rien ne change."""
+    def behind_collar(root, paints):
+        for gid in ("horn-far", "ear-far"):
+            articulations.clip_away(root, paints, gid, NECK_POLY)
+    return articulations.articulate_breed(text, carpus_y=89.0, hock_y=84.0, extra=behind_collar)
 
 
 if __name__ == "__main__":

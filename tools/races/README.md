@@ -9,10 +9,12 @@ un dessin (une corne plus épaisse, une tache déplacée), on change le script e
 on le relance, plutôt que de modifier le SVG.
 
 ```sh
+pip install shapely      # pour tous les générateurs (la découpe aux articulations)
 python3 tools/races/mouflon-corse/gen_mouflon.py pets/mouflon-corse/mouflon-corse.svg
 python3 tools/races/nez-noir/gen_nez_noir.py pets/nez-noir/nez-noir.svg
-python3 tools/races/jacob/gen_jacob.py pets/jacob/jacob.svg      # il faut shapely (pip install shapely)
+python3 tools/races/jacob/gen_jacob.py pets/jacob/jacob.svg
 python3 tools/races/ouessant/gen_ouessant.py pets/ouessant/ouessant.svg
+python3 tools/races/mannequin/articule.py      # le Mannequin, redécoupé (voir plus bas)
 ```
 
 Ensuite, regarder le résultat dans le moteur (voir le README) :
@@ -33,8 +35,27 @@ Ce qu'il faut savoir :
   de chaque `pet.toml`).
 - Les tirages au hasard (mèches, boucles, poils) ont une graine fixe : le même
   script donne toujours le même dessin.
-- Le mouflon met son encolure dans la tête (`pivot-head` à la base du cou),
-  pour qu'elle la suive quand il broute ; les autres la gardent dans le corps.
+- Les articulations (voir [docs/rig.md](../../docs/rig.md)) : chaque
+  générateur dessine ses pattes d'une pièce et son encolure dans le corps,
+  puis appelle `articulations.articulate_breed` avant d'écrire le SVG. Cet
+  outil commun coupe chaque patte au carpe et au jarret (à la hauteur
+  donnée : la tache du genou, la pointe du jarret), et prend l'encolure dans
+  le corps : ce qui est devant une épaule arrondie (`articulations.shoulder`,
+  un arc du garrot au poitrail), posé sous le corps, qui la recouvre à sa
+  base ; la tête, restée par-dessus, tourne désormais à la nuque
+  (`poll`), et `muzzle` dit ce qui touche l'herbe. Chaque coupe suit un
+  cercle autour du pivot (rien ne s'ouvre quand l'articulation tourne) ; au
+  repos, le dessin ne change pas, à l'anticrénelage près. Une nouvelle race
+  fait de même : `carpus_y`, `hock_y`, et la zone de l'encolure.
+- Le mouflon a son cou à part (le collier) : il devient l'encolure (`neck`),
+  qui porte la tête ; la corne et l'oreille du fond, peintes derrière le
+  collier, sont rognées de ce qu'il cachait (`articulations.clip_away`).
+- `tools/races/mannequin/articule.py` tire le Mannequin redécoupé
+  (`pets/mannequin/mannequin.svg`) de sa version d'avant les articulations,
+  gardée pour le test `sans_changement` : son lobe de laine de l'avant
+  devient l'encolure, trois festons du ventre deviennent des mèches
+  (`articulations.cut_under`), la lèvre est détachée de la tête avec la
+  gencive qu'elle cache (`articulations.lift_part`).
 - Seuls des tracés, des dégradés et l'opacité de chaque tracé : pas de
   groupe semi-transparent, de masque, de découpe ni de filtre (voir
   [docs/rig.md](../../docs/rig.md)).

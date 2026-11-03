@@ -9,8 +9,12 @@ l'avant (0 à l'arrière de la croupe), h vers le haut (0 au sol). Dans le SVG,
 Usage : gen_nez_noir.py <sortie.svg>
 """
 import math
+import os
 import random
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import articulations  # noqa: E402  (tools/races/articulations.py)
 
 OX, OY = 7.0, 112.0
 rng = random.Random(1962)  # l'année où la race fut reconnue
@@ -1121,6 +1125,30 @@ def horn_band(center, widths):
     el(cr([C[-10], C[-5], C[-1]], closed=False), stroke=HORN_LIGHT, sw=0.4, so=0.55, cap="round")
 
 
+# ================================================================== articulations
+
+def articule(svg):
+    """Le dessin coupé à ses articulations (voir tools/races/articulations.py) :
+    chaque patte au carpe ou au jarret (le milieu de la tache noire du genou,
+    la pointe du jarret) ; l'encolure, l'avant du haut de la toison, devant
+    la droite qui descend du garrot vers le poitrail, posée sous le corps ; la
+    tête tourne à la nuque, derrière les cornes."""
+    withers, chest = S(87.0, 90.0), S(126.0, 52.0)
+    return articulations.articulate_breed(
+        svg,
+        carpus_y=S(0, 20.0)[1],
+        hock_y=S(0, 22.0)[1],
+        neck=dict(
+            source="body",
+            area=articulations.shoulder(withers, chest, bulge=6.0),
+            pivot=S(95.0, 68.0),
+            poll=S(105.0, 90.0),
+            muzzle=S(127.0, 72.5),
+            margin=6.0,
+        ),
+    )
+
+
 # ================================================================== assemblage
 
 def main(path):
@@ -1149,6 +1177,7 @@ def main(path):
               "    © 2026 Alejandro San Martin Lamas — MIT OR Apache-2.0\n"
               "  -->\n")
     svg = head_s + "<defs>" + "".join(DEFS) + "</defs>\n" + "\n".join(OUT) + "\n</svg>\n"
+    svg = articule(svg)
     with open(path, "w") as f:
         f.write(svg)
     print(f"{path} : {len(svg) / 1024:.0f} Ko, {svg.count('<path')} tracés")
