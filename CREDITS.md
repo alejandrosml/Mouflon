@@ -24,6 +24,12 @@ Mouflon is a tribute to the “screen mates” that have lived on desktops since
 - **Baaaa** (pda): a macOS port whose notes on the pitfalls of
   `CGWindowListCopyWindowInfo` guided window detection (no code taken).
 
+- **RIFE** (Zhewei Huang et al., MIT License,
+  <https://github.com/hzwer/Practical-RIFE>): the in-between images of Lainou
+  and Pelote are computed with this frame interpolation network, in the ONNX
+  export `walterlow/RIFE_fp32_timestep` (MIT); the network is not part of the
+  app.
+
 The rights in the characters belong to their respective owners.
 
 ### Characters in this repository
@@ -36,12 +42,36 @@ The rights in the characters belong to their respective owners.
   Lamas: its drawings are under the same licenses as the code, and its
   behaviors are adapted from desktopPet (MIT License,
   `pets/pelote/NOTICE_desktopPet_MIT.txt`). The app icon is Pelote's head.
+- **Aquarelle** (`pets/aquarelle`) is an original character created for
+  Mouflon, painted by `tools/mouflon-peintre`, under the same licenses as the
+  code.
+- The four **breeds** (`pets/mouflon-corse`, `pets/nez-noir`, `pets/jacob`,
+  `pets/ouessant`) are original vector drawings made for Mouflon after the
+  published descriptions of real breeds (breed standards, field studies:
+  sources in [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature)),
+  under the same licenses as the code. Photographs were looked at, never
+  copied: no third-party image is part of them.
 - **Poete**, the mascot of Mouflon, is not part of this repository: it lives in
   its own repository, with its own notice.
 
+### Sounds
+
+The sounds of Lainou, Pelote, the Mannequin and Aquarelle (the four breeds use
+the Mannequin's) are cut from
+recordings given to the public domain (none requires credit; thanks to their
+authors all the same):
+
+- **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>): sheep
+  (#2343 to #2346), goat kids that lend their voice to Lainou the lamb (#1377
+  to #1379), a small goat bell (#0010), horses grazing and chewing hay (#0990,
+  #0497), jumps on grass (#1839, #1840), water stirred in a bathtub (#0192).
+- **OpenGameArt**: a lamb bleat from the *Baby Animals Sounds Pack*
+  (Technopeasant, CC0 1.0, <https://opengameart.org/content/baby-animals-sounds-pack>),
+  itself cut from recordings released under CC0 on Freesound.
+
 ### Libraries
 
-Vello, wgpu, kurbo and peniko (Linebender), winit, tray-icon and muda (Tauri),
+kurbo and peniko (Linebender), wgpu (gfx-rs), tiny-skia, winit, tray-icon and muda (Tauri),
 usvg and resvg, objc2 and its bindings, serde, toml, roxmltree, directories and
 their dependencies: permissive licenses, mostly MIT and Apache-2.0 (also Zlib,
 BSD, ISC, Unicode-3.0; option-ext is under MPL-2.0, used unmodified). Their
@@ -70,6 +100,12 @@ Mouflon est un hommage aux « screen mates » qui peuplent les bureaux depuis 19
 - **Baaaa** (pda) : portage macOS dont la description des pièges de
   `CGWindowListCopyWindowInfo` a guidé la détection des fenêtres (aucun code repris).
 
+- **RIFE** (Zhewei Huang et al., licence MIT,
+  <https://github.com/hzwer/Practical-RIFE>) : les images intermédiaires de
+  Lainou et de Pelote sont calculées avec ce réseau d'interpolation, dans
+  l'export ONNX `walterlow/RIFE_fp32_timestep` (MIT) ; le réseau ne fait pas
+  partie de l'app.
+
 Les droits sur les personnages appartiennent à leurs auteurs respectifs.
 
 ### Personnages de ce dépôt
@@ -82,12 +118,37 @@ Les droits sur les personnages appartiennent à leurs auteurs respectifs.
   Lamas : ses dessins sont sous les mêmes licences que le code, et ses
   comportements sont adaptés de desktopPet (licence MIT,
   `pets/pelote/NOTICE_desktopPet_MIT.txt`). L'icône de l'app est la tête de Pelote.
+- **Aquarelle** (`pets/aquarelle`) est un personnage original créé pour
+  Mouflon, peint par `tools/mouflon-peintre`, sous les mêmes licences que le
+  code.
+- Les quatre **races** (`pets/mouflon-corse`, `pets/nez-noir`, `pets/jacob`,
+  `pets/ouessant`) sont des dessins vectoriels originaux faits pour Mouflon
+  d'après les descriptions publiées de races réelles (standards des races,
+  études de terrain : sources dans [docs/animation-animale.md](docs/animation-animale.md#10-quatre-races-daprès-nature)),
+  sous les mêmes licences que le code. Les photographies ont été regardées,
+  jamais copiées : aucune image de tiers n'en fait partie.
 - **Poete**, la mascotte de Mouflon, ne fait pas partie de ce dépôt : il vit
   dans son propre dépôt, avec sa propre notice.
 
+### Sons
+
+Les sons de Lainou, de Pelote, du Mannequin et d'Aquarelle (les quatre races
+prennent ceux du Mannequin) sont découpés dans
+des enregistrements versés au domaine public (aucun n'exige de mention ; merci
+quand même à leurs auteurs) :
+
+- **BigSoundBank** (Joseph SARDIN, CC0 1.0, <https://bigsoundbank.com>) : des
+  moutons (n° 2343 à 2346), des chevreaux qui prêtent leur voix à Lainou
+  l'agneau (n° 1377 à 1379), une petite cloche de chèvre (n° 0010), des chevaux
+  qui broutent et mâchent du foin (n° 0990, 0497), des sauts dans l'herbe
+  (n° 1839, 1840), de l'eau remuée dans une baignoire (n° 0192).
+- **OpenGameArt** : un bêlement d'agneau du *Baby Animals Sounds Pack*
+  (Technopeasant, CC0 1.0, <https://opengameart.org/content/baby-animals-sounds-pack>),
+  lui-même découpé dans des enregistrements publiés sous CC0 sur Freesound.
+
 ### Bibliothèques
 
-Vello, wgpu, kurbo et peniko (Linebender), winit, tray-icon et muda (Tauri),
+kurbo et peniko (Linebender), wgpu (gfx-rs), tiny-skia, winit, tray-icon et muda (Tauri),
 usvg et resvg, objc2 et ses bindings, serde, toml, roxmltree, directories et
 leurs dépendances : licences permissives, surtout MIT et Apache-2.0 (aussi
 Zlib, BSD, ISC, Unicode-3.0 ; option-ext est sous MPL-2.0, utilisée telle quelle).

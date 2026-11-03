@@ -16,6 +16,15 @@ rig = "mouton.svg"            # dessin vectoriel découpé en calques (voir rig.
 height = 64.0                 # hauteur affichée, en points
 ```
 
+Ou des morceaux d'images peints posés sur un squelette (voir
+[squelette.md](squelette.md) et `pets/aquarelle`) :
+
+```toml
+[appearance]
+skeleton = "squelette.toml"   # les os, les morceaux, les animations
+height = 58.0
+```
+
 Une planche de sprites façon desktopPet marche aussi :
 
 ```toml
@@ -36,7 +45,19 @@ terminal_velocity = 1700.0
 bounce = 0.22                 # rebond à l'atterrissage
 hard_landing_speed = 1150.0   # au-delà : réflexe land_hard
 width = 64.0                  # largeur utilisée pour les bords et les murs
+stride = 29.0                 # distance d'un cycle de marche (défaut : 0,9 × la hauteur)
 ```
+
+Pour un dessin vectoriel ou un squelette, `stride` règle la cadence des pas :
+les pattes balaient juste ce qu'il faut pour que les sabots ne glissent pas,
+et une foulée d'environ 1,6 fois la longueur des pattes donne un pas naturel.
+L'allure se choisit d'elle-même d'après la vitesse rapportée à la longueur
+des pattes, comme chez les vrais quadrupèdes (voir
+[animation-animale.md](animation-animale.md)) : le pas jusqu'à 2,6 longueurs
+de patte par seconde, le trot (pattes par paires diagonales, foulée à peine
+plus longue) vers 3,4, le galop (le galop transverse des moutons, foulée
+presque deux fois plus longue) au-delà de 4,6. Un comportement `trot` n'est
+donc qu'un `walk` plus rapide.
 
 ## Comportements
 
@@ -60,15 +81,126 @@ on_meet = "surprise"          # en rencontrant un autre animal (sinon : réflexe
 on_window_side = "turn"       # le côté d'une fenêtre barre le chemin (sinon : réflexe window_side)
 ```
 
-Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit`, `sleep`,
-`look` (regarde autour de lui), `jump` (avec `jump = [vers l'avant, vers le haut]`
-en pt/s), `fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur).
+Mouvements : `stand`, `walk`, `run`, `turn` (demi-tour), `sit` (couché pour
+un dessin vectoriel), `sleep`, `look` (regarde autour de lui), `graze` (broute,
+la tête au sol, une bouchée par seconde, et de temps en temps un pas vers
+l'herbe suivante), `jump` (avec `jump = [vers l'avant, vers le haut]` en pt/s),
+`fall`, `land` (récupération après atterrissage), `held` (tenu par le curseur),
+`charge` (il fonce, tête basse, oreilles couchées ; `speed`, 175 pt/s par
+défaut), `pronk` (saut d'agneau : droit en l'air, les quatre pattes raides ;
+`jump`, `[25, 420]` par défaut) et `back` (il recule sans se retourner, le
+bélier qui prend son élan avant de charger ; `speed`, 28 pt/s par défaut ; il
+s'arrête au bout d'un rebord plutôt que d'en tomber à reculons, et ne réagit
+pas au bord de l'écran).
+
+Un animal dessiné (vecteurs ou squelette) se ramasse un dixième de seconde
+avant de sauter (`jump`, `pronk`) : l'anticipation. Endormi (`sleep`), il pose
+une fois sur deux la tête au sol, le cou tendu ; une oreille ou une patte
+tressaille de temps en temps. Un animal en images a ses propres images pour
+tout cela.
+
+Gestes sur place, que le moteur anime de lui-même pour un dessin vectoriel
+ou un squelette (`duration` dit combien de temps ils durent) : `shake`
+(s'ébroue : une secousse six fois par seconde, de la tête à la queue),
+`stretch` (s'étire : le cou tendu, puis une patte arrière ; 2,4 s),
+`rear` (se cabre : l'avant se dresse sur les pattes de derrière, celles de
+devant repliées, puis retombe d'un coup ; 1,15 s ; le bélier avant de
+charger), `invite` (l'invitation au jeu des agneaux : tête et avant
+baissés, il fixe l'autre en sautillant),
+`scratch` (se gratte d'un sabot arrière), `paw` (gratte le sol d'un sabot de
+devant, tête basse), `stamp` (tape du pied, tête haute : l'alarme), `sniff`
+(renifle, le museau tendu), `daze` (sonné : la tête tourne, les yeux
+mi-clos), `brace` (contre le vent : tête basse, oreilles couchées, serré sur
+ses pattes), `yawn` (bâille ; 1,6 s), `bleat` (bêle, la bouche ouverte),
+`flehmen` (le bélier qui a flairé une brebis : l'encolure tendue, la tête
+relevée, la lèvre supérieure retroussée, la bouche entrouverte ; 7 à 12 s
+dans les animaux du dépôt, 7 à 19 s en moyenne chez de jeunes béliers,
+parfois une minute ou deux).
+`pets/mannequin/pet.toml` les montre tous.
+
+D'autres clés d'un comportement :
+
+```toml
+[[behavior]]
+name = "ruminate"
+motion = "sit"
+chew = true                   # il mâche : couché, il rumine bol après bol
+duration = [10.0, 24.0]
+
+[[behavior]]
+name = "walk"
+motion = "walk"
+speed = 46.0
+contagious = 0.25             # un voisin de la même famille l'imite une fois sur quatre
+
+[[behavior]]
+name = "fonce"
+strip = "course"
+tilt = 0.12                   # penché en avant (radians) : un animal en images qui fonce
+
+[[behavior]]
+name = "gambol"
+motion = "pronk"
+twist = true                  # en l'air, le corps se tord et les pattes de derrière ruent
+jump = [40.0, 380.0]
+duration = "forever"
+on_land = [{ to = "land", weight = 3 }, { to = "gambol", weight = 2 }]   # il en enchaîne
+
+[[behavior]]
+name = "pivot"
+motion = "pronk"
+spin = true                   # il se retourne en l'air (un petit bond sur place)
+jump = [0.0, 300.0]
+duration = "forever"
+```
+
+`on_land` dit ce qu'il fait en se posant (sinon : réflexe `land`, ou
+`land_hard` après une grosse chute).
+
+Un comportement contagieux (`contagious`, de 0 à 1) se propage : chaque
+voisin de la même famille (`category`), à moins de quatre largeurs et à la
+même hauteur, qui a un comportement du même nom l'imite avec cette chance,
+dans les cinq secondes s'il est debout, à marcher, à brouter ou à regarder
+autour de lui, sinon à la fin de ce qu'il fait (un animal en images ne coupe
+pas sa séquence ; il attend au plus huit secondes). Il part alors du même
+côté : un mouton qui part entraîne les autres, un bâillement en appelle un
+autre, l'alerte gagne le troupeau. Celui qui vient d'imiter n'imite plus
+pendant 25 secondes, et ce qu'il imite ne se propage pas plus loin. Les
+animaux desktopPet, dont les scènes s'enchaînent d'elles-mêmes, n'imitent
+pas.
 
 Les poids sont relatifs : `weight = 4` contre `weight = 1` donne quatre
 chances sur cinq. Une transition dont la condition est fausse est ignorée.
 
 Conditions (`when`, une seule ou une liste) : `on_window`, `on_floor`,
-`night` (22 h – 6 h), `day`, `cursor_near:220`, `cursor_far:220` (rayon en points).
+`night` (22 h – 6 h), `day`, `morning` (6 h – 11 h), `evening` (18 h – 22 h),
+`cursor_near:220`, `cursor_far:220` (rayon en points), `typing` (l'utilisateur
+tape au clavier : une touche il y a moins de 3 s), `away` (personne au clavier,
+à la souris ni au trackpad depuis 3 minutes), `present` (le contraire),
+`into_wind` (un coup de vent lui souffle dans le museau), et le tempérament
+de l'animal, réglé dans les réglages : `calm`, `lively` (actif), `rowdy`
+(énervé), `even` (tel que son auteur l'a fait).
+
+```toml
+next = [
+    { to = "walk", weight = 6 },
+    { to = "paw", weight = 4, when = "rowdy" },      # un énervé gratte le sol avant de foncer
+    { to = "pronk", weight = 3, when = "lively" },   # un actif saute comme un agneau
+    { to = "ruminate", weight = 3, when = "calm" },  # un calme se couche pour ruminer
+]
+```
+
+Le tempérament change aussi, de lui-même, ce que l'animal choisit le plus
+volontiers (le repos pour un calme, l'élan pour un actif ou un énervé) et
+combien de temps il y reste ; il change sa posture (oreilles dressées et
+tête basse d'un énervé, oreilles pendantes d'un calme) et le rythme de ses
+oreilles et de sa queue.
+Mouflon sait *quand* une touche est frappée, jamais *laquelle* : le système le
+dit à tous les programmes, sans autorisation.
+
+Un comportement où l'animal dort (ou s'endort) le dit avec `sleep = true`
+(implicite pour `motion = "sleep"`) : l'utilisateur qui revient le réveille, et
+un pointeur qui file ne le fait pas sursauter.
 
 ## Réflexes
 
@@ -90,7 +222,18 @@ meet = "greet"                # rencontre un autre animal en chemin (hors mode c
 window_side = "turn"          # le côté d'une fenêtre lui barre le chemin
 leave = "wave"                # au revoir (« Tout retirer ») : il le joue, puis s'efface
 together = "hop"              # « Tous ensemble » : tous les animaux le jouent en même temps
+startle = "surprise"          # le pointeur file tout près de lui (plus de 1 400 pt/s)
+sleepy = "yawn"               # l'utilisateur est parti : il s'installe pour dormir
+wake = "wake_up"              # l'utilisateur revient pendant qu'il dort (sinon : la suite de son sommeil)
+wind = "look"                 # un coup de vent se lève (une surprise)
 ```
+
+Un mouton tourne le dos au vent : `wind = [{ to = "turn_away", weight = 4,
+when = "into_wind" }, { to = "brace", weight = 1 }]`.
+
+Les animaux s'endorment l'un après l'autre (dans les 40 s) quand
+l'utilisateur part, se rendorment s'ils se réveillent avant son retour, et
+se réveillent dans les deux secondes quand il revient.
 
 Sans `meet`, deux animaux qui se croisent passent l'un devant l'autre ;
 sans `window_side`, l'animal passe devant la fenêtre ; sans `leave`, il
@@ -112,7 +255,54 @@ dans desktopPet :
 
 Un animal en chemin prend le réflexe `meet` ; au repos (assis, endormi…),
 il ne réagit que si son comportement a un `on_meet`. Après une rencontre,
-chacun attend un peu avant la suivante.
+chacun attend un peu avant la suivante, sauf s'il entre dans un
+comportement qui a son propre `on_meet` : son auteur a prévu la rencontre.
+Un animal qui fonce (`charge`) et réagit en atteignant l'autre le cogne :
+le choc les tasse tous les deux. C'est ainsi que deux agneaux jouent à se
+cogner le front (voir `play_back`, `play_lunge` et `play_butt` dans
+`pets/mannequin/pet.toml`) :
+
+```toml
+[reflexes]
+meet = [{ to = "sniff", weight = 4 }, { to = "play_back", weight = 4, when = "lively" }]
+
+[[behavior]]
+name = "play_back"            # tous deux reculent, aussi longtemps l'un que l'autre
+motion = "back"
+duration = 1.1
+next = "play_lunge"
+
+[[behavior]]
+name = "play_lunge"           # s'élancent…
+motion = "charge"
+speed = 110.0
+duration = 0.8
+on_meet = "play_butt"         # … et se cognent
+```
+
+### Invitations à jouer
+
+Un animal qui a les comportements `play_invite` (le geste `invite`) et
+`play_lunge` (un `charge` dont l'`on_meet` mène au coup de front) invite de
+lui-même un voisin à jouer, toutes les 20 à 60 secondes s'il en a envie
+(toujours s'il est actif, une fois sur trois tel quel, rarement énervé,
+jamais calme) : un voisin de sa famille, libre, sur le même rebord, à une ou
+trois longueurs. Il se tourne vers lui et joue `play_invite` ; une seconde
+plus tard, l'autre accepte (le plus souvent s'il est actif, rarement s'il
+est calme) : tous deux se font face et jouent `play_lunge`. Sinon,
+l'invitation finit comme son comportement le prévoit.
+
+### Regroupements
+
+De temps en temps (toutes les cinq à douze minutes), le troupeau se
+regroupe, comme les moutons au pré : sur un même rebord ou sur le sol, au
+moins trois animaux d'une même famille, libres (debout, à brouter, à
+marcher…) et bien dispersés, se rapprochent de leur milieu en ordre serré,
+sans changer d'ordre. Le plus loin de sa place part le premier, les autres
+suivent comme une vague. Chacun y va avec son comportement `walk` ou
+`marche` (`trot` s'il est loin), puis s'arrête (le comportement au sol par
+défaut) ; en chemin, il n'imite personne. Les animaux desktopPet ne se
+regroupent pas.
 
 ## Listes de suites nommées
 
@@ -143,7 +333,6 @@ strips_right = "planches/droite/{name}.png"   # facultatif : sinon, miroir des i
 frame = [256, 256]            # taille d'une image dans les bandes (pixels)
 scale = 0.375                 # points par pixel : 256 px font 96 points
 anchor = [128, 226]           # milieu des pattes, posé sur le sol (pixels)
-hold = [163, 102]             # point par lequel on l'attrape (image tournée à gauche)
 drawn = ["shadow", "dust", "squash"]   # effets déjà dessinés : Mouflon ne les ajoute pas
 
 [physics]
@@ -187,7 +376,8 @@ duration = "forever"
 Sans `motion`, un comportement avance image par image ; avec `motion =
 "fall"` ou `"held"`, ses images tournent en boucle pendant la chute ou
 pendant qu'on le tient. La séquence dure ses images fois ses passages, puis
-l'animal passe à la suite. `loop_from = 3` fait reprendre les passages
+l'animal passe à la suite. `fps = [20, 8]` change de rythme le long de la
+séquence : un atterrissage vif au début, plus posé à la fin. `loop_from = 3` fait reprendre les passages
 suivants à la quatrième image (une entrée, puis une boucle).
 
 Un animal en images vérifie à chaque pas qu'il a encore un appui (sinon il
@@ -203,6 +393,88 @@ dessine la sienne seulement en l'air, sur ce qui est en dessous), `dust`
 Une planche unique marche aussi : `sprites = "planche.png"`, `tiles =
 [colonnes, lignes]`, `facing = "right"` si les images regardent vers la
 droite, et `frames = [numéros des cases]` dans chaque comportement.
+
+## Images intermédiaires
+
+Pour un mouvement plus fluide, un animal en images peut avoir des images
+intermédiaires entre deux images qui se suivent. Vers la fin de chaque pas,
+Mouflon montre celles qui mènent à l'image suivante : une pose longue reste
+tenue, puis l'animal change de pose en douceur (80 ms au plus par image
+intermédiaire). Elles sont décrites par un fichier à part :
+
+```toml
+[appearance]
+inbetweens = "entre-deux.toml"
+```
+
+L'outil `tools/inbetween` les calcule et écrit ce fichier (avec le réseau
+RIFE, qui estime le mouvement entre deux images ; il laisse sans image
+intermédiaire les paires trop différentes, comme un demi-tour de profil à
+face). Pour des bandes, chaque bande a la sienne, avec `count` images après
+chacune de ses images (après la dernière, vers la première) :
+
+```toml
+count = 1
+strips_left = "entre-deux/gauche/{name}.png"
+strips_right = "entre-deux/droite/{name}.png"
+
+[counts]
+tombe = 3                     # une chute rapide : trois images après chaque image
+
+[skip]
+demi_tour = [0, 1, 2]         # pas d'image intermédiaire après ces images
+```
+
+Pour une planche unique (un animal desktopPet redessiné, par exemple), une
+planche à part, de mêmes cases, et la liste des paires d'images :
+
+```toml
+sprites = "entre-deux.png"
+tiles = [12, 23]
+# [image de départ, image d'arrivée, première case, nombre de cases]
+pairs = [
+    [1, 0, 0, 3],
+    [0, 1, 3, 3],
+]
+```
+
+Une bande sans la sienne, ou une paire absente de la liste, reste telle
+qu'elle est dessinée.
+
+## Sons
+
+Les sons d'un animal ont un nom ; chacun est un fichier audio (MP3, AAC, WAV),
+ou plusieurs prises dont l'une est tirée au hasard à chaque fois, avec un
+volume de 0 à 1. Un comportement fait entendre un son au début, ou sur une
+image de sa séquence à chaque passage, selon une chance de 0 à 1 :
+
+```toml
+[sounds]
+bele = { files = ["sons/agneau-1.mp3", "sons/agneau-2.mp3"], volume = 0.8 }
+clochette = { files = ["sons/clochette-1.mp3", "sons/clochette-2.mp3"], volume = 0.5 }
+broute = "sons/broute.mp3"
+
+[[behavior]]
+name = "bele"
+sound = "bele"                # au début du comportement
+fps = 10
+
+[[behavior]]
+name = "course"
+sound = [{ name = "clochette", frame = 2, chance = 0.15 }]   # sur la troisième image, une fois sur sept environ
+fps = 14
+```
+
+Un son qui est la voix de l'animal le dit avec `mouth = true` : il ouvre la
+bouche en le faisant entendre (s'il a une mâchoire, voir rig.md et
+squelette.md).
+
+```toml
+[sounds]
+bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3"], volume = 0.7, mouth = true }
+```
+
+Les sons se coupent dans le menu (« Sons »).
 
 ## Animaux desktopPet
 
@@ -232,8 +504,10 @@ Ce que Mouflon fait mieux :
 - une fenêtre fermée sous un animal le fait tomber tout de suite ;
 - il se promène d'un écran à l'autre.
 
-Pas encore repris : les sons. En mode collisions, Mouflon fait culbuter les
-animaux qui se rentrent dedans au lieu de jouer leurs rencontres `petSide`.
+Les sons (`<sounds>`, en MP3) sont joués au début de leur animation, selon
+leur probabilité ; la répétition (`<loop>`) n'est pas encore reprise. En
+mode collisions, Mouflon fait culbuter les animaux qui se rentrent dedans
+au lieu de jouer leurs rencontres `petSide`.
 
 ### Redessiner un animal desktopPet
 
@@ -276,3 +550,31 @@ tile = [40, 40]               # pixels d'une case de la planche d'origine
 
 C'est le cas de Pelote (`pets/pelote`, réglé pour des cases de 80 pixels) et
 de Poete, la mascotte (réglé pour les cases de 40 pixels d'eSheep 64).
+
+Le `pet.toml` peut ajouter des sons aux animations du fichier, par leur
+nom, et des images intermédiaires (`inbetweens` dans `[appearance]`) :
+
+```toml
+[sounds]
+bele = { files = ["sons/mouton-1.mp3", "sons/mouton-2.mp3"], volume = 0.7 }
+broute = "sons/broute.mp3"
+
+[desktoppet.sounds]
+eat = "broute"
+drag = { name = "bele", chance = 0.5 }
+```
+
+Il peut aussi donner aux animations du fichier les réactions de Mouflon
+que desktopPet ne connaît pas (`startle`, `sleepy`, `wake`, `wind`, `poke`,
+voir les réflexes) :
+
+```toml
+[desktoppet.reactions]
+startle = "jump"              # le pointeur file tout près : il bondit
+sleepy = "sleep1a"            # l'utilisateur est parti : il s'endort
+# Une liste, comme ailleurs : le vent dans le museau, il lui tourne le dos.
+wind = [{ to = "rotate1a", weight = 4, when = "into_wind" }, { to = "look_down", weight = 1 }]
+```
+
+Sans `sleepy`, un animal desktopPet s'endort avec sa première animation de
+sommeil (`sleep1a`) ; réveillé, il passe à la suite (`sleep1b`).

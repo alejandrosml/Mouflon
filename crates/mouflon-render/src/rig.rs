@@ -6,9 +6,14 @@
 //! - Le personnage regarde vers la **droite**.
 //! - Chaque partie animée est un groupe `<g>` dont l'`id` est l'un des noms
 //!   de [`Part`] : `body`, `head`, `ear-near`, `ear-far`, `eyes`, `pupils`,
-//!   `tail`, `leg-front-near`, `leg-front-far`, `leg-back-near`, `leg-back-far`.
-//!   Toutes sont facultatives ; une partie peut en contenir d'autres
-//!   (`eyes` dans `head`, `pupils` dans `eyes`).
+//!   `tail`, `leg-front-near`, `leg-front-far`, `leg-back-near`, `leg-back-far`,
+//!   `jaw`, `tail-mid`, `tail-tip`, et les articulations : `neck` (l'encolure,
+//!   qui porte `head`), `lip` (la lèvre supérieure, dans `head`),
+//!   `leg-front-near-lower` et les trois autres bas de pattes (chacun dans sa
+//!   patte), `sway-1`, `sway-2`, `sway-3` (des mèches de la toison, dans
+//!   `body`). Toutes sont facultatives ; une partie peut en contenir
+//!   d'autres (`eyes` dans `head`, `pupils` dans `eyes`, `tail-mid` dans
+//!   `tail`, `tail-tip` dans `tail-mid`, `head` dans `neck`).
 //! - Le pivot de chaque partie (épaule, hanche, cou, base d'oreille…) est un
 //!   petit cercle d'`id` `pivot-<partie>`, par exemple `pivot-head`. Le point
 //!   d'appui au sol est `pivot-ground`. Les pivots ne sont jamais dessinés.
@@ -17,8 +22,8 @@
 
 use std::collections::HashMap;
 
-use vello::kurbo::{Affine, BezPath, Point, Rect};
-use vello::peniko::{Color, Extend, Fill};
+use peniko::kurbo::{Affine, BezPath, Point, Rect};
+use peniko::{Color, Extend, Fill};
 
 use crate::display::{LineCap, LineJoin, Paint, Stop, StrokeStyle};
 
@@ -36,10 +41,36 @@ pub enum Part {
     LegFrontFar,
     LegBackNear,
     LegBackFar,
+    /// La mâchoire du bas (facultative), portée par la tête : elle s'ouvre
+    /// autour de son articulation, près de la joue.
+    Jaw,
+    /// Une queue en plusieurs morceaux (facultatifs) : le milieu, dans
+    /// `tail`, et le bout, dans `tail-mid`. Chacun suit le précédent avec un
+    /// temps de retard.
+    TailMid,
+    TailTip,
+    /// L'encolure (facultative), entre le corps et la tête : elle porte la
+    /// tête et tourne autour de sa base, devant le garrot.
+    Neck,
+    /// La lèvre supérieure (facultative), dans la tête : elle se retrousse
+    /// pour le flehmen.
+    Lip,
+    /// Le bas de chaque patte (facultatif), dans sa patte : le canon et le
+    /// sabot, qui plient au carpe (devant) ou au jarret (derrière).
+    LegFrontNearLower,
+    LegFrontFarLower,
+    LegBackNearLower,
+    LegBackFarLower,
+    /// Des mèches de la toison (facultatives), dans le corps : elles suivent
+    /// le corps avec un ressort amorti, traînent quand il court, se
+    /// balancent quand il s'ébroue.
+    Sway1,
+    Sway2,
+    Sway3,
 }
 
 impl Part {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 23] = [
         Self::Body,
         Self::Head,
         Self::EarNear,
@@ -51,7 +82,28 @@ impl Part {
         Self::LegFrontFar,
         Self::LegBackNear,
         Self::LegBackFar,
+        Self::Jaw,
+        Self::TailMid,
+        Self::TailTip,
+        Self::Neck,
+        Self::Lip,
+        Self::LegFrontNearLower,
+        Self::LegFrontFarLower,
+        Self::LegBackNearLower,
+        Self::LegBackFarLower,
+        Self::Sway1,
+        Self::Sway2,
+        Self::Sway3,
     ];
+
+    /// Les quatre pattes, puis leurs bas, dans le même ordre.
+    pub const LEGS: [Self; 4] = [
+        Self::LegFrontNear,
+        Self::LegFrontFar,
+        Self::LegBackNear,
+        Self::LegBackFar,
+    ];
+    pub const SWAYS: [Self; 3] = [Self::Sway1, Self::Sway2, Self::Sway3];
 
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -67,6 +119,18 @@ impl Part {
             Self::LegFrontFar => "leg-front-far",
             Self::LegBackNear => "leg-back-near",
             Self::LegBackFar => "leg-back-far",
+            Self::Jaw => "jaw",
+            Self::TailMid => "tail-mid",
+            Self::TailTip => "tail-tip",
+            Self::Neck => "neck",
+            Self::Lip => "lip",
+            Self::LegFrontNearLower => "leg-front-near-lower",
+            Self::LegFrontFarLower => "leg-front-far-lower",
+            Self::LegBackNearLower => "leg-back-near-lower",
+            Self::LegBackFarLower => "leg-back-far-lower",
+            Self::Sway1 => "sway-1",
+            Self::Sway2 => "sway-2",
+            Self::Sway3 => "sway-3",
         }
     }
 
@@ -87,6 +151,59 @@ impl Part {
             self,
             Self::LegFrontNear | Self::LegFrontFar | Self::LegBackNear | Self::LegBackFar
         )
+    }
+
+    /// La toison : le corps, l'encolure et les mèches (éclairés ensemble).
+    #[must_use]
+    pub fn is_fleece(self) -> bool {
+        matches!(
+            self,
+            Self::Body | Self::Neck | Self::Sway1 | Self::Sway2 | Self::Sway3
+        )
+    }
+
+    /// Le bas d'une patte.
+    #[must_use]
+    pub fn lower(self) -> Option<Self> {
+        Some(match self {
+            Self::LegFrontNear => Self::LegFrontNearLower,
+            Self::LegFrontFar => Self::LegFrontFarLower,
+            Self::LegBackNear => Self::LegBackNearLower,
+            Self::LegBackFar => Self::LegBackFarLower,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn is_lower_leg(self) -> bool {
+        matches!(
+            self,
+            Self::LegFrontNearLower
+                | Self::LegFrontFarLower
+                | Self::LegBackNearLower
+                | Self::LegBackFarLower
+        )
+    }
+
+    /// La partie qui la contient d'après le contrat (et que le moteur
+    /// suppose) : la tête dans l'encolure s'il y en a une, les yeux, les
+    /// oreilles, la mâchoire et la lèvre dans la tête, chaque bas de patte
+    /// dans sa patte, les mèches dans le corps… Le reste est à la racine.
+    #[must_use]
+    pub fn contract_parent(self, has_neck: bool) -> Option<Self> {
+        Some(match self {
+            Self::Head if has_neck => Self::Neck,
+            Self::EarNear | Self::EarFar | Self::Eyes | Self::Jaw | Self::Lip => Self::Head,
+            Self::Pupils => Self::Eyes,
+            Self::TailMid => Self::Tail,
+            Self::TailTip => Self::TailMid,
+            Self::LegFrontNearLower => Self::LegFrontNear,
+            Self::LegFrontFarLower => Self::LegFrontFar,
+            Self::LegBackNearLower => Self::LegBackNear,
+            Self::LegBackFarLower => Self::LegBackFar,
+            Self::Sway1 | Self::Sway2 | Self::Sway3 => Self::Body,
+            _ => return None,
+        })
     }
 }
 
@@ -123,8 +240,23 @@ pub struct Rig {
     pub bounds: Rect,
     /// Point d'appui au sol, dans le repère du document.
     pub ground: Point,
-    pivots: HashMap<Part, Point>,
-    part_bounds: HashMap<Part, Rect>,
+    /// Le pivot de chaque partie (donné, ou deviné d'après sa forme) et sa
+    /// boîte, rangés par [`Part::index`] : le moteur les lit à chaque image.
+    pivots: [Point; Part::ALL.len()],
+    part_bounds: [Option<Rect>; Part::ALL.len()],
+    /// La partie qui contient chaque partie dans le document (`None` : à
+    /// la racine), pour les parties du dessin.
+    parents: [Option<Part>; Part::ALL.len()],
+    /// Les parties rangées autrement que le dit le contrat (voir
+    /// [`Part::contract_parent`]) : le moteur les ramène à leur vrai parent.
+    pub(crate) unusual: Vec<Part>,
+    /// Les articulations, préparées une fois : l'encolure, les pattes en
+    /// deux segments.
+    pub(crate) joints: crate::animate::RigJoints,
+    /// L'étendue de la toison (voir [`Rig::body_extent`]).
+    body_extent: Rect,
+    /// Ce qui touche l'herbe quand il broute (`pivot-muzzle`), s'il est donné.
+    pub muzzle: Option<Point>,
     /// Silhouette du corps, pour l'éclairage dynamique.
     pub body_silhouette: Option<(BezPath, Affine)>,
     pub items: Vec<Item>,
@@ -150,51 +282,121 @@ impl Rig {
             .get("ground")
             .copied()
             .unwrap_or_else(|| Point::new(bounds.center().x, bounds.max_y()));
-        let mut pivots = HashMap::new();
-        for part in Part::ALL {
-            if let Some(p) = builder.named_pivots.get(part.name()) {
-                pivots.insert(part, *p);
-            }
-        }
         let size = tree.size();
-        Ok(Self {
+        let muzzle = builder.named_pivots.get("muzzle").copied();
+        let mut part_bounds = [None; Part::ALL.len()];
+        let mut parents = [None; Part::ALL.len()];
+        for part in Part::ALL {
+            part_bounds[part.index()] = builder.part_bounds.get(&part).copied();
+            parents[part.index()] = builder.parents.get(&part).copied().flatten();
+        }
+        let mut rig = Self {
             size: (f64::from(size.width()), f64::from(size.height())),
             bounds,
             ground,
-            pivots,
-            part_bounds: builder.part_bounds,
+            pivots: [Point::ZERO; Part::ALL.len()],
+            part_bounds,
+            parents,
+            unusual: Vec::new(),
+            joints: crate::animate::RigJoints::default(),
+            body_extent: bounds,
+            muzzle,
             body_silhouette: builder.body_silhouette,
             items: builder.items,
-        })
+        };
+        for part in Part::ALL {
+            rig.pivots[part.index()] = builder
+                .named_pivots
+                .get(part.name())
+                .copied()
+                .unwrap_or_else(|| rig.guess_pivot(part));
+        }
+        // La toison : le corps, ses mèches et ce que l'encolure dessine
+        // elle-même (sans la tête), où qu'elle soit posée dans le document.
+        let mut extent = rig.part_bounds(Part::Body);
+        if rig.has_part(Part::Body) {
+            for part in Part::SWAYS {
+                if let Some(r) = rig.part_bounds[part.index()] {
+                    extent = extent.union(r);
+                }
+            }
+            if let Some(r) = builder.own_bounds.get(&Part::Neck) {
+                extent = extent.union(*r);
+            }
+        }
+        rig.body_extent = extent;
+        let neck = rig.has_part(Part::Neck);
+        rig.unusual = Part::ALL
+            .into_iter()
+            .filter(|&p| rig.has_part(p) && rig.parent(p) != p.contract_parent(neck))
+            .collect();
+        rig.joints = crate::animate::RigJoints::of(&rig);
+        Ok(rig)
     }
 
     #[must_use]
     pub fn has_part(&self, part: Part) -> bool {
-        self.part_bounds.contains_key(&part)
+        self.part_bounds[part.index()].is_some()
+    }
+
+    /// La partie qui contient `part` dans le document (`None` : à la racine).
+    #[must_use]
+    pub fn parent(&self, part: Part) -> Option<Part> {
+        self.parents[part.index()]
+    }
+
+    /// Les parties sont rangées comme le dit le contrat (voir
+    /// [`Part::contract_parent`]).
+    #[must_use]
+    pub fn follows_contract(&self) -> bool {
+        self.unusual.is_empty()
     }
 
     /// Pivot d'une partie : celui fourni par l'artiste, sinon une valeur
     /// raisonnable déduite de la forme (haut des pattes, base de la tête…).
     #[must_use]
     pub fn pivot(&self, part: Part) -> Point {
-        if let Some(p) = self.pivots.get(&part) {
-            return *p;
-        }
-        let b = self.part_bounds.get(&part).copied().unwrap_or(self.bounds);
+        self.pivots[part.index()]
+    }
+
+    fn guess_pivot(&self, part: Part) -> Point {
+        let b = self.part_bounds(part);
         match part {
             p if p.is_leg() => Point::new(b.center().x, b.min_y() + b.height() * 0.15),
             Part::Head => Point::new(b.min_x() + b.width() * 0.3, b.max_y() - b.height() * 0.2),
             Part::EarNear | Part::EarFar => Point::new(b.center().x, b.max_y()),
             Part::Tail => Point::new(b.max_x(), b.center().y),
+            // Un morceau de queue pend de son attache, en haut.
+            Part::TailMid | Part::TailTip => Point::new(b.center().x, b.min_y()),
             Part::Body => Point::new(b.center().x, b.max_y()),
+            // La charnière : l'arrière de la mâchoire, vers la joue.
+            Part::Jaw => Point::new(b.min_x(), b.min_y() + b.height() * 0.3),
+            // Le carpe ou le jarret : le haut du bas de la patte.
+            p if p.is_lower_leg() => Point::new(b.center().x, b.min_y() + b.height() * 0.08),
+            // La base de l'encolure, devant le garrot.
+            Part::Neck => Point::new(b.min_x() + b.width() * 0.15, b.max_y() - b.height() * 0.3),
+            // L'arrière de la lèvre, sous le naseau.
+            Part::Lip => Point::new(b.min_x(), b.center().y),
+            // Une mèche pend de son attache.
+            Part::Sway1 | Part::Sway2 | Part::Sway3 => Point::new(b.center().x, b.min_y()),
             _ => b.center(),
         }
+    }
+
+    /// L'étendue de la toison : la boîte du corps, de ses mèches (`sway-*`)
+    /// et de l'encolure (sans la tête qu'elle porte). Le moteur s'en sert
+    /// pour coucher l'animal (jusqu'où descend le corps) et l'incliner :
+    /// découper la toison en morceaux ne la change pas, ni l'endroit où
+    /// l'encolure est posée dans le document.
+    #[must_use]
+    pub fn body_extent(&self) -> Rect {
+        self.body_extent
     }
 
     /// Boîte d'une partie (ou du dessin entier si elle est absente).
     #[must_use]
     pub fn part_bounds(&self, part: Part) -> Rect {
-        self.part_bounds.get(&part).copied().unwrap_or(self.bounds)
+        self.part_bounds[part.index()].unwrap_or(self.bounds)
     }
 }
 
@@ -205,6 +407,9 @@ struct Builder {
     named_pivots: HashMap<String, Point>,
     part_bounds: HashMap<Part, Rect>,
     open_parts: Vec<Part>,
+    parents: HashMap<Part, Option<Part>>,
+    /// Ce que dessine chaque partie elle-même (sans les parties qu'elle porte).
+    own_bounds: HashMap<Part, Rect>,
     body_silhouette: Option<(BezPath, Affine)>,
 }
 
@@ -221,6 +426,9 @@ impl Builder {
                     }
                     let part = Part::from_id(g.id());
                     if let Some(part) = part {
+                        self.parents
+                            .entry(part)
+                            .or_insert(self.open_parts.last().copied());
                         self.items.push(Item::BeginPart(part));
                         self.open_parts.push(part);
                     }
@@ -280,8 +488,16 @@ impl Builder {
                 .and_modify(|r| *r = r.union(rect))
                 .or_insert(rect);
         }
+        if let Some(part) = self.open_parts.last() {
+            self.own_bounds
+                .entry(*part)
+                .and_modify(|r| *r = r.union(rect))
+                .or_insert(rect);
+        }
 
-        let in_body = self.open_parts.last() == Some(&Part::Body);
+        // L'encolure et les mèches sont de la toison, comme le corps : même
+        // silhouette, même lumière.
+        let in_body = self.open_parts.last().is_some_and(|p| p.is_fleece());
         if let Some(fill) = path.fill() {
             if in_body {
                 let (sil, t) = self

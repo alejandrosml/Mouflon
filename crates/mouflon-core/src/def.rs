@@ -15,6 +15,174 @@ pub struct PetMeta {
     pub description: Option<String>,
     pub version: Option<String>,
     pub license: Option<String>,
+    /// Sa famille (`category = "sheep"` dans `pet.toml`) : voir
+    /// [`PetMeta::category`].
+    pub category: Option<String>,
+}
+
+/// Les familles d'animaux, pour ranger les menus et la galerie quand il y en
+/// a beaucoup : tous les moutons ensemble, les chats ensemble… Un `pet.toml`
+/// peut en donner une autre, montrée telle quelle.
+pub const CATEGORIES: [&str; 8] = [
+    "sheep", "farm", "cats", "dogs", "birds", "wild", "fantasy", "others",
+];
+
+/// Des mots qui trahissent une famille, dans les langues de Mouflon (le nom
+/// et la description d'un animal qui ne dit pas la sienne).
+const CATEGORY_WORDS: [(&str, &[&str]); 7] = [
+    (
+        "sheep",
+        &[
+            "sheep",
+            "mouton",
+            "brebis",
+            "agneau",
+            "bélier",
+            "lamb",
+            "ewe",
+            "oveja",
+            "cordero",
+            "carnero",
+            "schaf",
+            "lamm",
+            "widder",
+            "pecora",
+            "agnello",
+            "montone",
+            "schaap",
+            "ovelha",
+            "cordeiro",
+            "carneiro",
+            "овц",
+            "овеч",
+            "барашек",
+            "ягн",
+            "баран",
+            "羊",
+            "양",
+        ],
+    ),
+    (
+        "cats",
+        &[
+            "cat",
+            "chat",
+            "chaton",
+            "gato",
+            "katze",
+            "gatto",
+            "kat",
+            "кот",
+            "кошк",
+            "猫",
+            "고양이",
+            "neko",
+        ],
+    ),
+    (
+        "dogs",
+        &[
+            "dog",
+            "chien",
+            "chiot",
+            "perro",
+            "hund",
+            "cane",
+            "hond",
+            "cão",
+            "cachorro",
+            "собак",
+            "пёс",
+            "犬",
+            "狗",
+            "개",
+            "puppy",
+        ],
+    ),
+    (
+        "birds",
+        &[
+            "bird", "oiseau", "pájaro", "ave", "vogel", "uccello", "pássaro", "птиц", "鳥", "鸟",
+            "새", "duck", "canard", "pingouin", "penguin", "owl", "hibou", "chouette",
+        ],
+    ),
+    (
+        "farm",
+        &[
+            "cow", "vache", "pig", "cochon", "goat", "chèvre", "horse", "cheval", "chicken",
+            "poule", "donkey", "âne", "rabbit", "lapin", "vaca", "cerdo", "cabra", "kuh",
+            "schwein", "ziege",
+        ],
+    ),
+    (
+        "wild",
+        &[
+            "fox",
+            "renard",
+            "bear",
+            "ours",
+            "wolf",
+            "loup",
+            "deer",
+            "cerf",
+            "squirrel",
+            "écureuil",
+            "hedgehog",
+            "hérisson",
+            "panda",
+            "tiger",
+            "tigre",
+            "lion",
+            "zorro",
+            "fuchs",
+            "volpe",
+        ],
+    ),
+    (
+        "fantasy",
+        &[
+            "dragon", "unicorn", "licorne", "ghost", "fantôme", "alien", "monster", "monstre",
+            "robot", "fairy", "fée", "slime",
+        ],
+    ),
+];
+
+impl PetMeta {
+    /// Sa famille : celle que dit son `pet.toml`, sinon celle que trahissent
+    /// son nom et sa description (un mouton desktopPet se reconnaît), sinon
+    /// `others`.
+    #[must_use]
+    pub fn category(&self) -> &str {
+        if let Some(category) = self.category.as_deref().map(str::trim)
+            && !category.is_empty()
+        {
+            return category;
+        }
+        let text = format!(
+            "{} {} {}",
+            self.id,
+            self.name,
+            self.description.as_deref().unwrap_or_default()
+        )
+        .to_lowercase();
+        // Un mot entier pour les mots courts en lettres latines (« cat »
+        // n'est pas dans « catapulte ») ; partout ailleurs (« eSheep »).
+        let words: Vec<&str> = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let has = |needle: &str| {
+            if needle.is_ascii() && needle.len() <= 4 {
+                words.contains(&needle)
+            } else {
+                text.contains(needle)
+            }
+        };
+        CATEGORY_WORDS
+            .iter()
+            .find(|(_, needles)| needles.iter().any(|n| has(n)))
+            .map_or("others", |(category, _)| category)
+    }
 }
 
 /// Apparence de l'animal.
@@ -24,6 +192,12 @@ pub enum Appearance {
     Rig { svg: Arc<[u8]>, height: f32 },
     /// Planche de sprites (format desktopPet).
     Sprites(SpriteSheet),
+    /// Morceaux d'images posés sur un squelette (voir [`crate::skeleton`]),
+    /// affiché à `height` points de haut.
+    Skeleton {
+        skeleton: Arc<crate::skeleton::Skeleton>,
+        height: f32,
+    },
 }
 
 /// Sens dans lequel les images d'une planche sont dessinées.
@@ -56,9 +230,69 @@ pub struct Drawn {
 /// Une image PNG découpée en cases de même taille.
 #[derive(Clone, Debug)]
 pub struct SpritePage {
-    pub png: Arc<[u8]>,
+    pub png: PngData,
     pub tiles_x: u32,
     pub tiles_y: u32,
+}
+
+/// Octets d'une planche PNG : en mémoire (image intégrée à un fichier
+/// desktopPet, essais), ou dans un fichier relu à chaque décodage. Une
+/// planche pèse souvent des mégaoctets : un animal qui ne sert pas n'en
+/// coûte ainsi rien, et un animal à l'écran ne garde que ses images décodées.
+#[derive(Clone, Debug)]
+pub enum PngData {
+    Bytes(Arc<[u8]>),
+    File {
+        path: Arc<std::path::Path>,
+        /// Largeur et hauteur, lues dans l'en-tête au chargement.
+        size: (u32, u32),
+    },
+}
+
+impl PngData {
+    /// Largeur et hauteur de l'image.
+    #[must_use]
+    pub fn size(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Bytes(bytes) => png_size(bytes),
+            Self::File { size, .. } => Some(*size),
+        }
+    }
+
+    /// Le fichier PNG entier (lu sur le disque s'il n'est pas en mémoire).
+    pub fn bytes(&self) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+        match self {
+            Self::Bytes(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
+            Self::File { path, .. } => std::fs::read(path).map(std::borrow::Cow::Owned),
+        }
+    }
+}
+
+impl From<Vec<u8>> for PngData {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Bytes(Arc::from(bytes))
+    }
+}
+
+/// Images intermédiaires entre deux images d'une animation, pour un
+/// mouvement plus fluide (calculées par `tools/inbetween`).
+#[derive(Clone, Debug, Default)]
+pub struct Inbetweens {
+    /// Leurs planches, de mêmes cases que la planche principale : dans le
+    /// premier sens, puis dans l'autre si les images existent dans les deux.
+    pub pages: Vec<SpritePage>,
+    /// (image de départ, image d'arrivée) → (première image intermédiaire,
+    /// nombre d'images). Numéros du premier sens ; ceux des images
+    /// intermédiaires suivent toutes les cases de la planche principale.
+    pub pairs: HashMap<(u32, u32), (u32, u32)>,
+}
+
+impl Inbetweens {
+    /// Nombre total de cases de leurs planches.
+    #[must_use]
+    pub fn tile_count(&self) -> u32 {
+        self.pages.iter().map(|p| p.tiles_x * p.tiles_y).sum()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -78,12 +312,14 @@ pub struct SpriteSheet {
     /// tournée vers la gauche ; sans valeur, le milieu du bas de la case.
     pub anchor: Option<[f32; 2]>,
     pub drawn: Drawn,
+    /// Images intermédiaires, s'il y en a.
+    pub inbetweens: Option<Arc<Inbetweens>>,
 }
 
 impl SpriteSheet {
     /// Planche unique façon desktopPet.
     #[must_use]
-    pub fn single(png: Arc<[u8]>, tiles_x: u32, tiles_y: u32) -> Self {
+    pub fn single(png: PngData, tiles_x: u32, tiles_y: u32) -> Self {
         Self {
             pages: vec![SpritePage {
                 png,
@@ -96,7 +332,20 @@ impl SpriteSheet {
             facings: Facings::Left,
             anchor: None,
             drawn: Drawn::default(),
+            inbetweens: None,
         }
+    }
+
+    /// Images intermédiaires pour aller de l'image `from` à l'image `to`
+    /// (numéros du premier sens) : première image et nombre d'images.
+    #[must_use]
+    pub fn inbetween(&self, from: u32, to: u32) -> Option<(u32, u32)> {
+        self.inbetweens
+            .as_ref()?
+            .pairs
+            .get(&(from, to))
+            .copied()
+            .filter(|&(_, count)| count > 0)
     }
 
     /// Nombre total de cases.
@@ -109,7 +358,7 @@ impl SpriteSheet {
     #[must_use]
     pub fn tile_size(&self) -> Option<(u32, u32)> {
         let page = self.pages.first()?;
-        let (w, h) = png_size(&page.png)?;
+        let (w, h) = page.png.size()?;
         Some((w / page.tiles_x.max(1), h / page.tiles_y.max(1)))
     }
 
@@ -160,16 +409,13 @@ pub struct Physics {
     /// Au-delà de cette vitesse d'impact, l'atterrissage est « dur ».
     pub hard_landing_speed: f32,
     pub max_throw_speed: f32,
-    /// Raideur du lien avec le curseur quand on tient l'animal (Hz).
-    pub hold_frequency: f32,
-    pub hold_damping: f32,
     /// Boîte de l'animal : largeur et hauteur en points.
     pub width: f32,
     pub height: f32,
-    /// Point par lequel on le tient (laine du dos…), par rapport au point
-    /// d'appui, animal tourné vers la gauche (points). Sans valeur, il pend
-    /// sous le curseur par le haut du corps.
-    pub hold: Option<Vec2>,
+    /// Distance parcourue pendant un cycle de marche (points) ; 0 : 0,9 fois
+    /// la hauteur. Pour qu'un dessin vectoriel ne glisse pas, environ 1,6 fois
+    /// la longueur de ses pattes.
+    pub stride: f32,
 }
 
 impl Default for Physics {
@@ -184,11 +430,9 @@ impl Default for Physics {
             bounce_min_speed: 520.0,
             hard_landing_speed: 1150.0,
             max_throw_speed: 2600.0,
-            hold_frequency: 5.5,
-            hold_damping: 0.55,
             width: 76.0,
             height: 64.0,
-            hold: None,
+            stride: 0.0,
         }
     }
 }
@@ -209,6 +453,8 @@ pub enum Motion {
     Sleep,
     /// Regarde autour de lui (ou le curseur).
     Look,
+    /// Broute : la tête au sol, qui grignote.
+    Graze,
     /// Saut : vitesse horizontale vers l'avant et verticale vers le haut.
     Jump {
         vx: f32,
@@ -221,6 +467,104 @@ pub enum Motion {
     Held,
     /// Déplacement image par image façon desktopPet (voir [`Script`]).
     Script(Arc<Script>),
+    /// Fonce au galop, tête baissée et oreilles couchées : l'élan d'un
+    /// animal énervé, qui bouscule celui qu'il atteint.
+    Charge {
+        speed: f32,
+    },
+    /// Saute sur place, pattes raides, en secouant la tête : le jeu des
+    /// agneaux (vitesses comme pour [`Motion::Jump`]).
+    Pronk {
+        vx: f32,
+        vy: f32,
+    },
+    /// Un geste sur place, que le moteur anime de lui-même (voir [`Gesture`]).
+    Gesture(Gesture),
+    /// Recule, sans se retourner (le bélier qui prend son élan avant de
+    /// charger) ; il s'arrête au bord plutôt que de tomber à reculons.
+    Back {
+        speed: f32,
+    },
+}
+
+/// Un geste sur place, animé par le moteur pour les animaux dessinés en
+/// vecteurs ou en squelette (voir `docs/animation-animale.md` pour ce qu'en
+/// disent les études sur les moutons).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Gesture {
+    /// S'ébroue : une secousse qui part de la tête et file jusqu'à la queue.
+    Shake,
+    /// S'étire en se levant : le cou tendu, puis une patte arrière.
+    Stretch,
+    /// Gratte le sol d'un sabot de devant.
+    Paw,
+    /// Tape du pied, tête haute : l'alarme des moutons.
+    Stamp,
+    /// Renifle, le museau tendu.
+    Sniff,
+    /// Sonné : la tête tourne, les yeux mi-clos.
+    Daze,
+    /// Se protège (du vent) : tête basse, oreilles couchées.
+    Brace,
+    /// Bâille, tête levée, la bouche grande ouverte.
+    Yawn,
+    /// Bêle, tête levée, la bouche ouverte.
+    Bleat,
+    /// Se gratte d'un sabot arrière, à petits coups rapides.
+    Scratch,
+    /// Se cabre : l'avant se dresse sur les pattes de derrière, celles de
+    /// devant repliées, puis retombe (le bélier, avant de charger).
+    Rear,
+    /// Invite un autre à jouer : tête et avant baissés, il le fixe en
+    /// sautillant sur place.
+    Invite,
+    /// Le flehmen du bélier : l'encolure tendue, la tête relevée, la lèvre
+    /// supérieure retroussée, il hume quelques secondes (après avoir flairé
+    /// une brebis).
+    Flehmen,
+}
+
+impl Gesture {
+    pub const ALL: [Self; 13] = [
+        Self::Shake,
+        Self::Stretch,
+        Self::Paw,
+        Self::Stamp,
+        Self::Sniff,
+        Self::Daze,
+        Self::Brace,
+        Self::Yawn,
+        Self::Bleat,
+        Self::Scratch,
+        Self::Rear,
+        Self::Invite,
+        Self::Flehmen,
+    ];
+
+    /// Son nom dans un `pet.toml` (`motion = "shake"`…).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Shake => "shake",
+            Self::Stretch => "stretch",
+            Self::Paw => "paw",
+            Self::Stamp => "stamp",
+            Self::Sniff => "sniff",
+            Self::Daze => "daze",
+            Self::Brace => "brace",
+            Self::Yawn => "yawn",
+            Self::Bleat => "bleat",
+            Self::Scratch => "scratch",
+            Self::Rear => "rear",
+            Self::Invite => "invite",
+            Self::Flehmen => "flehmen",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|g| g.name() == name)
+    }
 }
 
 /// Animation desktopPet : à chaque pas de la séquence, le corps avance de
@@ -261,18 +605,32 @@ impl Motion {
     /// Le comportement se déroule dans les airs.
     #[must_use]
     pub fn is_airborne(&self) -> bool {
-        matches!(self, Self::Fall | Self::Jump { .. })
+        matches!(self, Self::Fall | Self::Jump { .. } | Self::Pronk { .. })
+    }
+
+    /// Sa vitesse au sol, s'il avance de lui-même.
+    #[must_use]
+    pub fn speed(&self) -> Option<f32> {
+        match *self {
+            Self::Walk { speed }
+            | Self::Run { speed }
+            | Self::Charge { speed }
+            | Self::Back { speed } => Some(speed),
+            _ => None,
+        }
     }
 
     #[must_use]
     pub fn pose(&self) -> Pose {
         match self {
             Self::Stand | Self::Turn | Self::Look => Pose::Stand,
+            Self::Graze => Pose::Graze,
             Self::Walk { .. } => Pose::Walk,
-            Self::Run { .. } => Pose::Run,
+            Self::Run { .. } | Self::Charge { .. } => Pose::Run,
+            Self::Gesture(_) | Self::Back { .. } => Pose::Stand,
             Self::Sit => Pose::Sit,
             Self::Sleep => Pose::Sleep,
-            Self::Jump { .. } | Self::Fall => Pose::Air,
+            Self::Jump { .. } | Self::Pronk { .. } | Self::Fall => Pose::Air,
             Self::Land => Pose::Land,
             Self::Held => Pose::Dangle,
             // Les animaux desktopPet portent leurs poses dans leurs images.
@@ -288,6 +646,7 @@ pub enum Pose {
     Run,
     Sit,
     Sleep,
+    Graze,
     Air,
     Land,
     Dangle,
@@ -315,6 +674,24 @@ pub enum Condition {
     CursorFar(f32),
     /// Au sol (sur une fenêtre ou en bas de l'écran).
     Grounded,
+    /// L'animal a cette humeur (`calm`, `lively`, `rowdy` ou `even`) : il a
+    /// ses gestes à lui quand il est énervé ou calme.
+    Temper(crate::temper::Temper),
+    /// Un coup de vent lui souffle au visage (`into_wind`) : il peut se
+    /// retourner, dos au vent, comme le font les moutons.
+    IntoWind,
+    /// L'utilisateur tape au clavier : une touche il y a moins de
+    /// [`crate::TYPING_WINDOW`] secondes (Mouflon sait quand, jamais laquelle).
+    Typing,
+    /// Personne n'a touché au clavier, à la souris ni au trackpad depuis
+    /// [`crate::AWAY_AFTER`] secondes.
+    Away,
+    /// L'utilisateur est là (le contraire de [`Condition::Away`]).
+    Present,
+    /// De 6 h à 11 h, heure locale.
+    Morning,
+    /// De 18 h à 22 h, heure locale.
+    Evening,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -396,6 +773,31 @@ impl SpriteClip {
     }
 }
 
+/// Un son de l'animal : une ou plusieurs prises (fichiers audio : MP3, AAC,
+/// WAV…), l'une tirée au hasard à chaque fois.
+#[derive(Clone, Debug)]
+pub struct Sound {
+    pub name: String,
+    pub clips: Vec<Arc<[u8]>>,
+    /// Volume, de 0 à 1.
+    pub volume: f32,
+    /// C'est sa voix : il ouvre la bouche en le faisant entendre (un
+    /// bêlement, pas une clochette).
+    pub mouth: bool,
+}
+
+/// Un son qu'un comportement fait entendre.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundCue {
+    /// Rang dans [`PetDef::sounds`].
+    pub sound: usize,
+    /// Chance de l'entendre à chaque occasion (de 0 à 1).
+    pub chance: f32,
+    /// Image de la séquence (rang dans ses images) qui le déclenche, à chaque
+    /// passage ; sans valeur, au début du comportement.
+    pub frame: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Behavior {
     pub name: String,
@@ -431,6 +833,28 @@ pub struct Behavior {
     /// Personnages secondaires qui apparaissent avec ce comportement
     /// (la fleur que le mouton mange, le mouton noir…).
     pub children: Vec<ChildSpawn>,
+    /// Sons qu'il fait entendre.
+    pub sounds: Vec<SoundCue>,
+    /// Il dort (ou s'endort) : l'utilisateur qui revient le réveille
+    /// (réflexe `wake`), un pointeur qui file ne le fait pas sursauter.
+    pub sleeping: bool,
+    /// Il mâche pendant ce comportement (un ruminant couché qui rumine) :
+    /// sa mâchoire, s'il en a une, va et vient.
+    pub chew: bool,
+    /// Penché en avant (radians ; négatif : en arrière) pendant ce
+    /// comportement, en plus de ce que lui donne son élan : un animal en
+    /// images qui fonce tête la première.
+    pub tilt: f32,
+    /// En sautant, le corps se tord et les pattes de derrière ruent : le
+    /// saut d'un agneau qui joue (avec [`Motion::Pronk`] ou [`Motion::Jump`]).
+    pub twist: bool,
+    /// Il se retourne en l'air : le petit saut d'un agneau qui pivote.
+    pub spin: bool,
+    /// Contagieux (0–1) : la chance qu'un voisin de la même famille l'imite,
+    /// un peu plus tard (un mouton qui part entraîne les autres, un
+    /// bâillement en appelle d'autres). Le voisin doit avoir un comportement
+    /// du même nom.
+    pub contagious: f32,
 }
 
 /// Personnage secondaire (élément `child` de desktopPet). Il joue ses propres
@@ -481,6 +905,16 @@ pub struct Reflexes {
     /// Tous ensemble : tous les animaux jouent ce comportement en même temps
     /// (`sync` de desktopPet).
     pub together: Vec<Transition>,
+    /// Le pointeur file tout près de lui : il sursaute.
+    pub startle: Vec<Transition>,
+    /// L'utilisateur est parti (voir [`Condition::Away`]) : il s'installe
+    /// pour dormir.
+    pub sleepy: Vec<Transition>,
+    /// L'utilisateur revient pendant qu'il dort : il se réveille. Sans
+    /// réaction prévue, il passe à la suite de son sommeil.
+    pub wake: Vec<Transition>,
+    /// Un coup de vent se lève (voir [`crate::surprise::Gust`]).
+    pub wind: Vec<Transition>,
 }
 
 /// Règles du moteur pour ce qui n'est pas prévu par l'animal.
@@ -507,7 +941,16 @@ pub struct PetDef {
     /// Points d'apparition ; vide : l'animal tombe du haut de l'écran.
     pub spawns: Vec<SpawnPoint>,
     pub rules: Rules,
+    /// Points par pixel du fichier d'origine. Les expressions desktopPet
+    /// (positions, nombres de pas) sont écrites pour des images affichées à
+    /// leur taille d'origine : elles se calculent dans cette unité, puis se
+    /// mettent à la taille d'affichage. 1 pour un animal Mouflon.
+    pub unit: f32,
+    /// Sons de l'animal (voir [`Behavior::sounds`]).
+    pub sounds: Vec<Sound>,
     by_name: HashMap<String, usize>,
+    /// L'allure de chaque comportement (voir [`PetDef::energy`]).
+    energies: Vec<crate::temper::Energy>,
     default_ground: usize,
     default_air: Option<usize>,
 }
@@ -570,6 +1013,12 @@ impl PetDef {
                     to: format!("#{}", c.next),
                 });
             }
+            if let Some(cue) = b.sounds.iter().find(|c| !(0.0..=1.0).contains(&c.chance)) {
+                return Err(DefError::Invalid(format!(
+                    "« {} » : chance de son {} (attendu entre 0 et 1)",
+                    b.name, cue.chance
+                )));
+            }
         }
         for (name, list) in [
             ("spawn", &reflexes.spawn),
@@ -599,6 +1048,7 @@ impl PetDef {
             })
             .ok_or(DefError::NoGroundBehavior)?;
         let default_air = behaviors.iter().position(|b| b.motion == Motion::Fall);
+        let energies = behaviors.iter().map(crate::temper::Energy::of).collect();
         if !(physics.width > 0.0 && physics.height > 0.0) {
             return Err(DefError::Invalid(
                 "la taille de l'animal doit être positive".into(),
@@ -612,10 +1062,44 @@ impl PetDef {
             reflexes,
             spawns: Vec::new(),
             rules: Rules::Mouflon,
+            unit: 1.0,
+            sounds: Vec::new(),
             by_name,
+            energies,
             default_ground,
             default_air,
         })
+    }
+
+    /// L'allure du comportement `index` : ce que le tempérament de l'animal
+    /// lui fait choisir plus ou moins volontiers (voir [`crate::Temper`]).
+    #[must_use]
+    pub fn energy(&self, index: usize) -> crate::temper::Energy {
+        self.energies.get(index).copied().unwrap_or_else(|| {
+            self.behaviors
+                .get(index)
+                .map_or(crate::temper::Energy::Neutral, crate::temper::Energy::of)
+        })
+    }
+
+    /// Donne ses sons à l'animal ; chaque son désigné par un comportement doit exister.
+    pub fn set_sounds(&mut self, sounds: Vec<Sound>) -> Result<(), DefError> {
+        for b in &self.behaviors {
+            if let Some(cue) = b.sounds.iter().find(|c| c.sound >= sounds.len()) {
+                return Err(DefError::Invalid(format!(
+                    "« {} » : son #{} inconnu",
+                    b.name, cue.sound
+                )));
+            }
+        }
+        if let Some(sound) = sounds.iter().find(|s| s.clips.is_empty()) {
+            return Err(DefError::Invalid(format!(
+                "le son « {} » n'a aucun fichier",
+                sound.name
+            )));
+        }
+        self.sounds = sounds;
+        Ok(())
     }
 
     /// Images de l'animal, s'il est fait de sprites.
@@ -623,7 +1107,7 @@ impl PetDef {
     pub fn sprites(&self) -> Option<&SpriteSheet> {
         match &self.appearance {
             Appearance::Sprites(sheet) => Some(sheet),
-            Appearance::Rig { .. } => None,
+            Appearance::Rig { .. } | Appearance::Skeleton { .. } => None,
         }
     }
 
@@ -650,6 +1134,17 @@ impl PetDef {
         self.by_name.get(name).copied()
     }
 
+    /// Distance parcourue pendant un cycle de marche (points) : celle du
+    /// fichier, ou 0,9 fois la hauteur. Au galop, la foulée s'allonge.
+    #[must_use]
+    pub fn stride(&self) -> f32 {
+        if self.physics.stride > 0.0 {
+            self.physics.stride
+        } else {
+            self.physics.height * 0.9
+        }
+    }
+
     /// Le même animal, `k` fois plus grand : dessin, corps, vitesses et
     /// pesanteur suivent, pour que tout bouge comme à sa taille d'origine,
     /// en plus grand. Les comportements gardent leur rang.
@@ -661,9 +1156,10 @@ impl PetDef {
             return def;
         }
         match &mut def.appearance {
-            Appearance::Rig { height, .. } => *height *= k,
+            Appearance::Rig { height, .. } | Appearance::Skeleton { height, .. } => *height *= k,
             Appearance::Sprites(sheet) => sheet.scale *= k,
         }
+        def.unit *= k;
         let p = &mut def.physics;
         for length in [
             &mut p.gravity,
@@ -675,14 +1171,19 @@ impl PetDef {
             &mut p.max_throw_speed,
             &mut p.width,
             &mut p.height,
+            &mut p.stride,
         ] {
             *length *= k;
         }
-        p.hold = p.hold.map(|h| h * k);
         for b in &mut def.behaviors {
             match &mut b.motion {
-                Motion::Walk { speed } | Motion::Run { speed } => *speed *= k,
-                Motion::Jump { vx, vy } => {
+                Motion::Walk { speed }
+                | Motion::Run { speed }
+                | Motion::Charge { speed }
+                | Motion::Back { speed } => {
+                    *speed *= k;
+                }
+                Motion::Jump { vx, vy } | Motion::Pronk { vx, vy } => {
                     *vx *= k;
                     *vy *= k;
                 }
@@ -716,6 +1217,40 @@ impl PetDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta(name: &str, description: &str, category: Option<&str>) -> PetMeta {
+        PetMeta {
+            id: name.to_lowercase(),
+            name: name.to_owned(),
+            author: None,
+            description: Some(description.to_owned()),
+            version: None,
+            license: None,
+            category: category.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_pet_belongs_to_the_family_it_says_or_that_shows() {
+        // Ce que dit son pet.toml d'abord, même une famille inconnue.
+        assert_eq!(meta("Pelote", "", Some("sheep")).category(), "sheep");
+        assert_eq!(meta("Bulle", "", Some("poissons")).category(), "poissons");
+        // Sinon, son nom et sa description, dans plusieurs langues.
+        assert_eq!(
+            meta("Poete", "Poe, le mouton égaré", None).category(),
+            "sheep"
+        );
+        assert_eq!(meta("eSheep", "", None).category(), "sheep");
+        assert_eq!(meta("Mimi", "Un petit chat roux", None).category(), "cats");
+        assert_eq!(meta("Pochi", "子犬", None).category(), "dogs");
+        assert_eq!(
+            meta("Kiki", "Une chouette qui vole", None).category(),
+            "birds"
+        );
+        // Un mot court ne se trouve pas au milieu d'un autre.
+        assert_eq!(meta("Boum", "Une catapulte", None).category(), "others");
+        assert_eq!(meta("Truc", "", None).category(), "others");
+    }
 
     fn clip(frames: &[u32], repeat: u32, from: usize) -> SpriteClip {
         SpriteClip {

@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use mouflon_core::Mood;
 use serde::{Deserialize, Serialize};
 
 /// Tailles proposées dans le menu (petite, normale, grande, très grande) :
@@ -21,8 +22,72 @@ pub struct Settings {
     pub frontmost_only: bool,
     /// Mode collisions : deux animaux qui se rentrent dedans partent à la renverse.
     pub collisions: bool,
+    /// Physique réaliste (voir `mouflon_core::physics`) : les fenêtres
+    /// emportent les animaux et peuvent les faire tomber, lancés ils tournent
+    /// et rebondissent. Sans elle, celle d'eSheep et de desktopPet.
+    pub realistic_physics: bool,
     /// Taille des animaux, par rapport à celle prévue par chacun.
     pub size: f32,
+    /// Marcher sous le Dock : les animaux descendent jusqu'en bas de l'écran,
+    /// passent derrière le Dock et peuvent sauter dessus (il faut
+    /// l'autorisation d'Accessibilité pour savoir où il est). Sans cela, ils
+    /// marchent sur le Dock.
+    #[serde(alias = "walk_on_dock")]
+    pub walk_under_dock: bool,
+    /// Les animaux font entendre leurs sons (bêlements, clochette…).
+    pub sounds: bool,
+    /// De temps en temps, un coup de vent ou une soucoupe volante (voir
+    /// `mouflon_core::surprise`).
+    pub surprises: bool,
+    /// Le tempérament des animaux (voir [`MOODS`]).
+    #[serde(with = "mood_name")]
+    pub mood: Mood,
+    /// Les raccourcis clavier de Mouflon, dans toutes les apps (voir
+    /// `crate::keys`).
+    pub shortcuts: bool,
+    /// Échap deux fois de suite, ou tenue, fait quitter Mouflon (il faut
+    /// l'autorisation d'Accessibilité pour l'entendre dans les autres apps).
+    pub escape_quits: bool,
+}
+
+/// Les tempéraments proposés, dans l'ordre de la fenêtre des réglages : au
+/// hasard (chacun le sien), calmes, actifs, énervés.
+pub const MOODS: [Mood; 4] = [Mood::Mixed, Mood::Calm, Mood::Lively, Mood::Rowdy];
+
+/// Le tempérament s'écrit par son nom dans le fichier des réglages ; un nom
+/// inconnu (ou autre chose qu'un nom) donne celui par défaut, sans perdre
+/// les autres réglages.
+mod mood_name {
+    use mouflon_core::Mood;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const NAMES: [(Mood, &str); 5] = [
+        (Mood::Mixed, "mixed"),
+        (Mood::Calm, "calm"),
+        (Mood::Lively, "lively"),
+        (Mood::Rowdy, "rowdy"),
+        (Mood::Even, "even"),
+    ];
+
+    pub fn serialize<S: Serializer>(mood: &Mood, serializer: S) -> Result<S::Ok, S::Error> {
+        let name = NAMES
+            .iter()
+            .find(|(m, _)| m == mood)
+            .map_or("mixed", |(_, name)| name);
+        serializer.serialize_str(name)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Mood, D::Error> {
+        let value = toml::Value::deserialize(deserializer)?;
+        Ok(value
+            .as_str()
+            .and_then(|name| {
+                NAMES
+                    .iter()
+                    .find(|(_, n)| n.eq_ignore_ascii_case(name.trim()))
+            })
+            .map_or(super::MOODS[0], |(mood, _)| *mood))
+    }
 }
 
 impl Default for Settings {
@@ -32,26 +97,58 @@ impl Default for Settings {
             default_pet: None,
             frontmost_only: true,
             collisions: false,
+            realistic_physics: true,
             size: 1.0,
+            walk_under_dock: false,
+            sounds: true,
+            surprises: true,
+            mood: MOODS[0],
+            shortcuts: true,
+            escape_quits: false,
         }
     }
+}
+
+/// La taille qui va à l'écran principal, au premier lancement : grande sur
+/// un écran fin et vaste (Retina, au moins 1 600 points de large, où les
+/// animaux paraîtraient petits), normale ailleurs, où tout est déjà plus
+/// gros. `screens` : le premier est l'écran principal.
+#[must_use]
+pub fn default_size(screens: &[mouflon_platform::OsScreen]) -> f32 {
+    match screens.first() {
+        Some(main) if main.scale >= 1.5 && main.frame.w >= 1600.0 => SIZES[2],
+        _ => SIZES[1],
+    }
+}
+
+/// Rang dans [`SIZES`] de la taille la plus proche de `size`.
+#[must_use]
+pub fn size_index_of(size: f32) -> usize {
+    SIZES
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - size).abs().total_cmp(&(*b - size).abs()))
+        .map_or(1, |(i, _)| i)
 }
 
 impl Settings {
     /// Rang de la taille dans [`SIZES`] (la plus proche, pour une valeur écrite à la main).
     #[must_use]
     pub fn size_index(&self) -> usize {
-        SIZES
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| (*a - self.size).abs().total_cmp(&(*b - self.size).abs()))
-            .map_or(1, |(i, _)| i)
+        size_index_of(self.size)
     }
 
     /// Taille à appliquer : une valeur de [`SIZES`].
     #[must_use]
     pub fn size_factor(&self) -> f32 {
         SIZES[self.size_index()]
+    }
+
+    /// Rang du tempérament dans [`MOODS`] (« tels que faits », qu'on ne
+    /// choisit qu'à la main dans le fichier, se montre comme au hasard).
+    #[must_use]
+    pub fn mood_index(&self) -> usize {
+        MOODS.iter().position(|m| *m == self.mood).unwrap_or(0)
     }
 
     #[must_use]
@@ -89,6 +186,9 @@ impl Settings {
 pub struct Paths {
     pub settings: PathBuf,
     pub pets: PathBuf,
+    /// Images des animaux déjà prêtes (sur macOS : `~/Library/Caches/…`),
+    /// que le système peut effacer : elles seraient simplement refaites.
+    pub images: PathBuf,
 }
 
 impl Paths {
@@ -112,6 +212,7 @@ impl Paths {
         Self {
             settings: dirs.config_dir().join("settings.toml"),
             pets: dirs.data_dir().join("pets"),
+            images: dirs.cache_dir().join("images"),
         }
     }
 
@@ -158,16 +259,81 @@ mod tests {
     }
 
     #[test]
+    fn the_mood_is_kept_by_name_and_a_bad_one_spoils_nothing_else() {
+        let calm = Settings {
+            mood: Mood::Rowdy,
+            ..Settings::default()
+        };
+        let text = toml::to_string_pretty(&calm).unwrap();
+        assert!(text.contains("mood = \"rowdy\""), "{text}");
+        assert_eq!(toml::from_str::<Settings>(&text).unwrap(), calm);
+        // Les anciens réglages, sans tempérament : chacun le sien.
+        let old: Settings = toml::from_str("collisions = true").unwrap();
+        assert_eq!(old.mood, Mood::Mixed);
+        assert!(old.shortcuts && !old.escape_quits);
+        // Un nom inconnu, ou un nombre : le tempérament par défaut, et le
+        // reste est gardé.
+        for line in ["mood = \"furieux\"", "mood = 3"] {
+            let odd: Settings = toml::from_str(&format!("{line}\ncollisions = true")).unwrap();
+            assert_eq!(odd.mood, Mood::Mixed);
+            assert!(odd.collisions);
+        }
+        let even: Settings = toml::from_str("mood = \"Even\"").unwrap();
+        assert_eq!((even.mood, even.mood_index()), (Mood::Even, 0));
+    }
+
+    #[test]
+    fn the_first_size_suits_the_main_screen() {
+        let screen = |w: f64, h: f64, scale: f64| mouflon_platform::OsScreen {
+            frame: mouflon_platform::OsRect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            },
+            visible: mouflon_platform::OsRect {
+                x: 0.0,
+                y: 25.0,
+                w,
+                h: h - 25.0,
+            },
+            scale,
+        };
+        // Un MacBook Pro de 16 pouces réglé sur « plus d'espace » : grande.
+        assert_eq!(default_size(&[screen(2056.0, 1329.0, 2.0)]), 1.5);
+        assert_eq!(default_size(&[screen(1728.0, 1117.0, 2.0)]), 1.5);
+        // Un petit portable, ou un écran sans Retina : tout y est plus gros.
+        assert_eq!(default_size(&[screen(1470.0, 956.0, 2.0)]), 1.0);
+        assert_eq!(default_size(&[screen(1920.0, 1080.0, 1.0)]), 1.0);
+        // L'écran principal compte, pas les autres.
+        assert_eq!(
+            default_size(&[screen(1920.0, 1080.0, 1.0), screen(2056.0, 1329.0, 2.0)]),
+            1.0
+        );
+        assert_eq!(default_size(&[]), 1.0);
+    }
+
+    #[test]
+    fn keeps_the_dock_choice_made_under_its_old_name() {
+        let old: Settings = toml::from_str("walk_on_dock = true").unwrap();
+        assert!(old.walk_under_dock);
+        let saved = toml::to_string(&old).unwrap();
+        assert!(saved.contains("walk_under_dock = true"), "{saved}");
+    }
+
+    #[test]
     fn takes_over_the_old_pets_and_settings_once() {
         let root = std::env::temp_dir().join(format!("mouflon-migration-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let old = Paths {
             settings: root.join("ancien/settings.toml"),
             pets: root.join("ancien/pets"),
+            images: root.join("ancien/images"),
         };
         let new = Paths {
             settings: root.join("nouveau/settings.toml"),
             pets: root.join("nouveau/pets"),
+            images: root.join("nouveau/images"),
         };
         std::fs::create_dir_all(old.pets.join("esheep")).unwrap();
         std::fs::write(old.pets.join("esheep/animations.xml"), "<animations/>").unwrap();
@@ -176,7 +342,14 @@ mod tests {
             default_pet: Some("esheep".into()),
             frontmost_only: false,
             collisions: true,
+            realistic_physics: false,
             size: 1.0,
+            walk_under_dock: false,
+            sounds: true,
+            surprises: false,
+            mood: Mood::Calm,
+            shortcuts: false,
+            escape_quits: true,
         }
         .save(&old.settings);
 

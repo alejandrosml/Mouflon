@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{Input, LANDING_REACH, Pet, PetEvent, Support};
 use crate::def::{Motion, Rules, Transition};
-use crate::math::Vec2;
+use crate::math::{Vec2, approach};
 use crate::world::{Surface, SurfaceKind, World};
 
 /// Sous cet écart avec le sol, l'animal s'y pose au lieu de tomber (desktopPet : 3 pixels).
@@ -81,7 +81,7 @@ impl Pet {
             };
             if (front + dx - wall) * dir > 0.0 {
                 if let Some(next) = self.pick(&behavior.on_wall, &def.reflexes.wall, world, input) {
-                    self.pos.x = wall - dir * half;
+                    self.snap_x(wall - dir * half);
                     self.enter(next);
                     return;
                 }
@@ -94,21 +94,27 @@ impl Pet {
             } else if let Some((next, x)) = self.window_side(dx, world, input, support.is_some()) {
                 // Le côté d'une fenêtre lui barre le chemin (avant le bout du
                 // rebord : une fenêtre posée devant est un mur, pas un vide).
-                self.pos.x = x;
+                self.snap_x(x);
                 self.enter(next);
                 return;
             } else if let Some(s) = support.filter(|s| s.kind == SurfaceKind::Window) {
                 let edge = if dir < 0.0 { s.x0 } else { s.x1 };
                 if !self.walking_off && (front + dx - edge) * dir > 0.0 {
+                    // Il s'arrête l'avant au bout du rebord ; sur un rebord
+                    // plus étroit que lui (le dos d'un autre animal), au
+                    // milieu, au lieu d'être renvoyé d'un bout à l'autre.
+                    let middle = (s.x0 + s.x1) * 0.5;
+                    let stop = (edge - dir * half)
+                        .clamp((s.x0 + half).min(middle), (s.x1 - half).max(middle));
                     if let Some(next) =
                         self.pick(&behavior.on_edge, &def.reflexes.edge, world, input)
                     {
-                        self.pos.x = edge - dir * half;
+                        self.snap_x(stop);
                         self.enter(next);
                         return;
                     }
                     if native && !behavior.walk_off_edges {
-                        self.stop_at(edge - dir * half, dir);
+                        self.stop_at(stop, dir);
                         return;
                     }
                     // Il continue tout droit et tombera quand son centre aura dépassé le bord.
@@ -136,7 +142,7 @@ impl Pet {
             } else {
                 if support.is_some() {
                     // Il descend du rebord : il le traverse.
-                    self.detach();
+                    self.detach_by_script();
                     support = None;
                 }
                 if let Some(w) = self.ledge_crossed(world, dy)
@@ -147,7 +153,7 @@ impl Pet {
             }
         } else if dy < 0.0 {
             if support.is_some() {
-                self.detach();
+                self.detach_by_script();
                 support = None;
             }
             let head = self.pos.y - p.height;
@@ -189,6 +195,9 @@ impl Pet {
         }
 
         self.pos += Vec2::new(dx, dy);
+        if let Some(s) = support {
+            self.glide(dt, world, &s);
+        }
 
         // Son centre a dépassé le bout de la surface : il quitte un rebord ;
         // au sol, il passe sur l'écran voisin (et en descend s'il est plus bas).
@@ -213,12 +222,23 @@ impl Pet {
                 }
             }
         }
+        if matches!(self.support, Support::Ground { .. }) {
+            self.reach_goal();
+        }
+    }
+
+    /// Son animation le fait quitter le sol (il grimpe, saute, descend du
+    /// rebord) : elle continue de le mener, il ne tombe pas sous la
+    /// pesanteur comme un animal que plus rien ne porte.
+    fn detach_by_script(&mut self) {
+        self.detach();
+        self.free_fall = false;
     }
 
     /// Arrêté contre un bord en allant dans le sens `dir` : il se retourne
     /// s'il y allait de face (pas s'il reculait).
     fn stop_at(&mut self, x: f32, dir: f32) {
-        self.pos.x = x;
+        self.snap_x(x);
         self.vel.x = 0.0;
         if dir * self.facing > 0.0 {
             self.facing = -self.facing;
@@ -259,13 +279,53 @@ impl Pet {
     /// Arrivée sur une surface en descendant : la réaction vient de `on_land`
     /// (le sol et les fenêtres peuvent avoir des suites différentes). Renvoie
     /// `true` si l'animal a changé d'animation.
-    fn land_script(&mut self, surface: &Surface, speed: f32, world: &World, input: &Input) -> bool {
-        let before = (self.support, self.ground_ref, self.walking_off);
+    /// L'élan d'un atterrissage s'épuise sur le sol : il glisse un peu, sans
+    /// quitter l'écran ni le rebord où il s'est posé.
+    fn glide(&mut self, dt: f32, world: &World, surface: &Surface) {
+        if self.slide == 0.0 {
+            return;
+        }
+        let half = self.def.physics.width * 0.5;
+        let arena = world.arena();
+        let (mut lo, mut hi) = (arena.left() + half, arena.right() - half);
+        if surface.kind == SurfaceKind::Window {
+            (lo, hi) = (lo.max(surface.x0), hi.min(surface.x1));
+        }
+        let x = self.pos.x + self.slide * dt;
+        let held = x.clamp(lo.min(self.pos.x), hi.max(self.pos.x));
+        self.pos.x = held;
+        self.slide = if held == x {
+            approach(self.slide, 0.0, self.def.physics.ground_friction * dt)
+        } else {
+            0.0
+        };
+    }
+
+    pub(super) fn land_script(
+        &mut self,
+        surface: &Surface,
+        speed: f32,
+        world: &World,
+        input: &Input,
+    ) -> bool {
+        let before = (
+            self.support,
+            self.ground_ref,
+            self.walking_off,
+            self.ghost,
+            self.ground_lift,
+        );
         // Les conditions « sur le sol » ou « sur une fenêtre » portent sur la surface d'arrivée.
         self.set_ground(surface);
         let def = Arc::clone(&self.def);
         let Some(next) = self.choose(&def.behaviors[self.behavior].on_land, world, input) else {
-            (self.support, self.ground_ref, self.walking_off) = before;
+            (
+                self.support,
+                self.ground_ref,
+                self.walking_off,
+                self.ghost,
+                self.ground_lift,
+            ) = before;
             return false;
         };
         self.pos.y = surface.y;
@@ -306,6 +366,7 @@ mod tests {
         let input = Input {
             cursor: None,
             local_hour: 14.0,
+            ..Input::default()
         };
         for _ in 0..(seconds / TICK).round() as usize {
             pet.step(TICK, world, &input);
@@ -541,6 +602,7 @@ mod tests {
                 &Input {
                     cursor: None,
                     local_hour: 15.0,
+                    ..Input::default()
                 },
             );
             max_pets = max_pets.max(flock.pets().len());

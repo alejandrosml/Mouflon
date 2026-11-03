@@ -1,11 +1,11 @@
 //! Traduction de la liste d'affichage en SVG, pour l'outil d'aperçu et les tests.
-//! Le résultat est rendu par resvg à l'identique de ce que Vello affiche.
+//! Le résultat, rendu par resvg, est ce que montre l'écran.
 
 use std::fmt::Write as _;
 
 use base64::Engine as _;
-use vello::kurbo::{Affine, BezPath, Rect};
-use vello::peniko::{Color, Extend, Fill, Mix};
+use peniko::kurbo::{Affine, BezPath, Rect};
+use peniko::{Color, Extend, Fill, Mix};
 
 use crate::display::{Command, DisplayList, LineCap, LineJoin, Paint, Stop};
 use crate::sprites::encode_png_rgba;
@@ -243,6 +243,21 @@ impl Writer {
                     r#"<image width="{}" height="{}" preserveAspectRatio="none" image-rendering="{rendering}" opacity="{alpha:.4}" transform="{}" href="data:image/png;base64,{png}"/>"#,
                     bitmap.width,
                     bitmap.height,
+                    matrix(*transform)
+                );
+            }
+            Command::Disc {
+                center,
+                radius,
+                paint,
+                transform,
+            } => {
+                let (fill, opacity) = self.paint(paint, None);
+                let _ = write!(
+                    self.body,
+                    r#"<circle cx="{:.4}" cy="{:.4}" r="{radius:.4}" transform="{}" fill="{fill}" fill-opacity="{opacity:.4}"/>"#,
+                    center.x,
+                    center.y,
                     matrix(*transform)
                 );
             }

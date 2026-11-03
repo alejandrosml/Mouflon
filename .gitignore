@@ -5,3 +5,6 @@
 # Animaux d'essai, et animaux livrés dans tes builds : jamais publiés dans le dépôt
 /essais
 /animaux
+__pycache__/
+# L'aperçu d'Aquarelle, écrit par le peintre : jamais livré
+/pets/aquarelle/morceaux/apercu.png

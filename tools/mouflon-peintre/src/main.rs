@@ -1,0 +1,1240 @@
+//! Peint les morceaux de l'animal d'exemple à squelette (`pets/aquarelle`) :
+//! une brebis à l'aquarelle, sans pinceau ni logiciel de dessin.
+//!
+//! Chaque morceau est un lavis (une forme remplie de pigment) : la lumière
+//! vient d'en haut à gauche, le pigment s'accumule sur les bords en séchant
+//! (ils sont plus sombres), sa densité varie doucement (le lavis n'est jamais
+//! uni) et le grain du papier le pique ; un trait de crayon léger cerne la
+//! forme. Les morceaux sont exportés à la taille de toute la toile, comme
+//! le ferait Blender (Grease Pencil) ou un logiciel de dessin : Mouflon les
+//! recadre et les réduit lui-même.
+//!
+//! `cargo run --release -p mouflon-peintre -- pets/aquarelle` repeint les
+//! morceaux (et un aperçu de l'ensemble, `apercu.png`, qui n'est pas livré).
+
+use std::path::{Path, PathBuf};
+
+use tiny_skia::{
+    FillRule, LineCap, LineJoin, Paint, Path as SkPath, PathBuilder, Pixmap, Stroke, Transform,
+};
+
+/// Taille de la toile (pixels).
+const W: usize = 1200;
+const H: usize = 900;
+
+type Rgb = [f32; 3];
+
+fn hex(v: u32) -> Rgb {
+    [
+        ((v >> 16) & 0xff) as f32 / 255.0,
+        ((v >> 8) & 0xff) as f32 / 255.0,
+        (v & 0xff) as f32 / 255.0,
+    ]
+}
+
+fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// ------------------------------------------------------------------ bruit
+
+/// Bruit de valeurs lissé, de -1 à 1, et sa somme sur plusieurs octaves.
+#[derive(Clone, Copy, Debug)]
+struct Noise {
+    seed: u32,
+}
+
+impl Noise {
+    fn hash(&self, x: i32, y: i32) -> f32 {
+        let mut h = (x as u32)
+            .wrapping_mul(0x8da6_b343)
+            .wrapping_add((y as u32).wrapping_mul(0xd816_3841))
+            .wrapping_add(self.seed.wrapping_mul(0xcb1a_b31f));
+        h ^= h >> 13;
+        h = h.wrapping_mul(0x5bd1_e995);
+        h ^= h >> 15;
+        (h & 0xffff) as f32 / 32767.5 - 1.0
+    }
+
+    fn value(&self, x: f32, y: f32) -> f32 {
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+        let (ix, iy) = (x0 as i32, y0 as i32);
+        let a = self.hash(ix, iy);
+        let b = self.hash(ix + 1, iy);
+        let c = self.hash(ix, iy + 1);
+        let d = self.hash(ix + 1, iy + 1);
+        let top = a + (b - a) * sx;
+        let bottom = c + (d - c) * sx;
+        top + (bottom - top) * sy
+    }
+
+    /// Plusieurs octaves, la première de `scale` pixels.
+    fn fbm(&self, x: f32, y: f32, scale: f32, octaves: u32) -> f32 {
+        let (mut sum, mut amp, mut norm, mut f) = (0.0, 1.0, 0.0, 1.0 / scale);
+        for o in 0..octaves {
+            let shifted = Noise {
+                seed: self.seed.wrapping_add(o * 1013),
+            };
+            sum += shifted.value(x * f, y * f) * amp;
+            norm += amp;
+            amp *= 0.5;
+            f *= 2.0;
+        }
+        sum / norm
+    }
+}
+
+// ----------------------------------------------------------------- masques
+
+/// Ce que couvre un chemin, de 0 à 1 par pixel (antialiasé).
+fn mask_of(path: &SkPath) -> Vec<f32> {
+    let mut pixmap = Pixmap::new(W as u32, H as u32).expect("toile");
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    paint.anti_alias = true;
+    pixmap.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap
+        .data()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| f32::from(p[3]) / 255.0)
+        .collect()
+}
+
+/// Ce que couvre un trait le long d'un chemin.
+fn stroke_mask(path: &SkPath, width: f32) -> Vec<f32> {
+    let mut pixmap = Pixmap::new(W as u32, H as u32).expect("toile");
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Stroke::default()
+    };
+    pixmap.stroke_path(path, &paint, &stroke, Transform::identity(), None);
+    pixmap
+        .data()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| f32::from(p[3]) / 255.0)
+        .collect()
+}
+
+/// Flou : trois passes de moyenne glissante, horizontales puis verticales
+/// (presque une gaussienne).
+fn blur(src: &[f32], radius: usize) -> Vec<f32> {
+    if radius == 0 {
+        return src.to_vec();
+    }
+    let mut a = src.to_vec();
+    let mut b = vec![0.0; src.len()];
+    let window = (2 * radius + 1) as f32;
+    for _ in 0..3 {
+        for y in 0..H {
+            let row = &a[y * W..(y + 1) * W];
+            let mut acc: f32 =
+                row[..=radius.min(W - 1)].iter().sum::<f32>() + row[0] * radius as f32;
+            for x in 0..W {
+                b[y * W + x] = acc / window;
+                let add = row[(x + radius + 1).min(W - 1)];
+                let sub = row[x.saturating_sub(radius)];
+                acc += add - sub;
+            }
+        }
+        for x in 0..W {
+            let mut acc: f32 =
+                (0..=radius.min(H - 1)).map(|y| b[y * W + x]).sum::<f32>() + b[x] * radius as f32;
+            for y in 0..H {
+                a[y * W + x] = acc / window;
+                let add = b[(y + radius + 1).min(H - 1) * W + x];
+                let sub = b[y.saturating_sub(radius) * W + x];
+                acc += add - sub;
+            }
+        }
+    }
+    a
+}
+
+// ------------------------------------------------------------------ calques
+
+/// Un morceau en train d'être peint : couleurs prémultipliées.
+struct Layer {
+    px: Vec<[f32; 4]>,
+}
+
+impl Layer {
+    fn new() -> Self {
+        Self {
+            px: vec![[0.0; 4]; W * H],
+        }
+    }
+
+    /// Pose `color` avec l'opacité `alpha` sur le pixel `i`.
+    fn over(&mut self, i: usize, color: Rgb, alpha: f32) {
+        let a = alpha.clamp(0.0, 1.0);
+        if a <= 0.0 {
+            return;
+        }
+        let p = &mut self.px[i];
+        let keep = 1.0 - a;
+        p[0] = color[0] * a + p[0] * keep;
+        p[1] = color[1] * a + p[1] * keep;
+        p[2] = color[2] * a + p[2] * keep;
+        p[3] = a + p[3] * keep;
+    }
+
+    /// Assombrit (multiplie) ce qui est déjà peint, sans rien ajouter
+    /// ailleurs : une ombre posée par-dessus.
+    fn multiply(&mut self, i: usize, color: Rgb, amount: f32) {
+        let k = amount.clamp(0.0, 1.0);
+        let p = &mut self.px[i];
+        for c in 0..3 {
+            p[c] *= 1.0 - k + k * color[c];
+        }
+    }
+
+    /// Ce calque, seulement là où est `mask` (son opacité multipliée).
+    fn masked(&self, mask: &[f32]) -> Layer {
+        Layer {
+            px: self
+                .px
+                .iter()
+                .zip(mask)
+                .map(|(p, m)| [p[0] * m, p[1] * m, p[2] * m, p[3] * m])
+                .collect(),
+        }
+    }
+
+    /// Ajoute un autre calque par-dessus.
+    fn stack(&mut self, other: &Layer) {
+        for (p, q) in self.px.iter_mut().zip(&other.px) {
+            let keep = 1.0 - q[3];
+            for c in 0..4 {
+                p[c] = q[c] + p[c] * keep;
+            }
+        }
+    }
+
+    fn save(&self, path: &Path) {
+        let mut rgba = Vec::with_capacity(W * H * 4);
+        for p in &self.px {
+            let a = p[3].clamp(0.0, 1.0);
+            if a <= 1.0 / 512.0 {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+            let c = |v: f32| ((v / a).clamp(0.0, 1.0) * 255.0).round() as u8;
+            rgba.extend_from_slice(&[c(p[0]), c(p[1]), c(p[2]), (a * 255.0).round() as u8]);
+        }
+        let file = std::fs::File::create(path).expect("fichier");
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), W as u32, H as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::High);
+        let mut writer = encoder.write_header().expect("en-tête PNG");
+        writer.write_image_data(&rgba).expect("PNG");
+    }
+}
+
+// ------------------------------------------------------------ articulations
+
+/// Coupe un morceau à une articulation (le carpe, le jarret) : le haut garde
+/// ce qui est au-dessus de `joint` et le disque de rayon `radius` autour de
+/// lui, et se pose par-dessus ; le bas garde le reste, et, sous le disque
+/// (caché au repos), ce qui y est opaque. En tournant autour de `joint`, le
+/// bas reste sous le disque du haut : rien ne s'ouvre au genou.
+fn split_joint(layer: &Layer, joint: (f32, f32), radius: f32) -> (Layer, Layer) {
+    let mut upper = vec![0.0; W * H];
+    let mut lower = vec![0.0; W * H];
+    for y in 0..H {
+        for x in 0..W {
+            let i = y * W + x;
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let d = ((px - joint.0).powi(2) + (py - joint.1).powi(2)).sqrt();
+            let disc = smoothstep(radius + 0.75, radius - 0.75, d);
+            let above = smoothstep(joint.1 + 0.75, joint.1 - 0.75, py);
+            let up = above.max(disc);
+            upper[i] = up;
+            // Sous le disque, un peu au-delà de son bord : pas de jointure.
+            let under = if layer.px[i][3] > 0.98 {
+                smoothstep(radius + 3.0, radius + 1.5, d)
+            } else {
+                0.0
+            };
+            lower[i] = (1.0 - up).max(under);
+        }
+    }
+    (layer.masked(&upper), layer.masked(&lower))
+}
+
+// ------------------------------------------------------------------- lavis
+
+/// Un lavis : une forme remplie de pigment.
+#[derive(Clone, Copy, Debug)]
+struct Wash {
+    /// Teintes au soleil, au milieu, à l'ombre.
+    light: Rgb,
+    base: Rgb,
+    shadow: Rgb,
+    /// D'où vient la lumière (vers où va l'ombre), dans la toile.
+    toward_shadow: (f32, f32),
+    /// Pigment accumulé sur les bords en séchant : sa teinte, sa force, sa
+    /// largeur (pixels).
+    pigment: Rgb,
+    edge: f32,
+    edge_width: usize,
+    /// Le lavis n'est jamais uni : variations douces de densité.
+    mottling: f32,
+    /// Grain du papier.
+    grain: f32,
+    /// Trait de crayon autour : teinte, opacité, largeur (pixels).
+    pencil: Option<(Rgb, f32, usize)>,
+    seed: u32,
+}
+
+impl Wash {
+    /// Peint la forme `mask` dans `layer`.
+    fn paint(&self, mask: &[f32], layer: &mut Layer) {
+        // La boîte de la forme : la lumière la traverse d'un bord à l'autre.
+        let (mut x0, mut y0, mut x1, mut y1) = (W, H, 0, 0);
+        for (i, m) in mask.iter().enumerate() {
+            if *m > 0.0 {
+                let (x, y) = (i % W, i / W);
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+        if x0 > x1 {
+            return;
+        }
+        let (cx, cy) = ((x0 + x1) as f32 * 0.5, (y0 + y1) as f32 * 0.5);
+        let (dx, dy) = self.toward_shadow;
+        let norm = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let (dx, dy) = (dx / norm, dy / norm);
+        let extent = ((x1 - x0) as f32 * dx.abs() + (y1 - y0) as f32 * dy.abs()).max(1.0) * 0.5;
+        // Bords : où le pigment s'accumule, et le volume qui s'arrondit.
+        let soft = blur(mask, self.edge_width);
+        let deep = blur(mask, self.edge_width * 4);
+        let pencil = self.pencil.map(|(color, alpha, width)| {
+            let inner = blur(mask, width);
+            (color, alpha, inner)
+        });
+        let noise = Noise { seed: self.seed };
+        let grain = Noise {
+            seed: self.seed.wrapping_add(77),
+        };
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let i = y * W + x;
+                let m = mask[i];
+                if m <= 0.0 {
+                    continue;
+                }
+                let (fx, fy) = (x as f32, y as f32);
+                let t = (((fx - cx) * dx + (fy - cy) * dy) / extent).clamp(-1.0, 1.0);
+                let mut color = if t < 0.0 {
+                    mix(self.base, self.light, -t)
+                } else {
+                    mix(self.base, self.shadow, t)
+                };
+                // Le volume : les bords tournent vers l'ombre.
+                let round = (1.0 - deep[i]).clamp(0.0, 1.0);
+                color = mix(color, self.shadow, round * 0.55);
+                // Densité du lavis.
+                let wash = noise.fbm(fx, fy, 110.0, 4);
+                let k = 1.0 + self.mottling * wash;
+                color = [color[0] * k, color[1] * k, color[2] * k];
+                // Le pigment des bords.
+                let rim = ((m - soft[i]) * 2.0).clamp(0.0, 1.0);
+                color = mix(color, self.pigment, rim * self.edge);
+                // Le grain du papier creuse le lavis par endroits.
+                let g = grain.fbm(fx, fy, 5.0, 2).max(0.0);
+                let k = 1.0 - self.grain * g;
+                color = [color[0] * k, color[1] * k, color[2] * k];
+                layer.over(i, color, m);
+                if let Some((ink, alpha, inner)) = &pencil {
+                    let band = (m * (1.0 - smoothstep(0.55, 0.98, inner[i]))).clamp(0.0, 1.0);
+                    if band > 0.0 {
+                        let line = noise.fbm(fx + 400.0, fy, 9.0, 2);
+                        layer.over(i, *ink, band * alpha * (0.78 + 0.22 * line));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Pose `color` là où est `mask`, avec l'opacité `alpha`, seulement sur ce
+/// que `clip` couvre déjà (un détail peint dans une forme).
+fn dab(layer: &mut Layer, mask: &[f32], clip: Option<&[f32]>, color: Rgb, alpha: f32) {
+    for (i, m) in mask.iter().enumerate() {
+        let c = clip.map_or(1.0, |c| c[i]);
+        let a = m * c * alpha;
+        if a > 0.0 {
+            layer.over(i, color, a);
+        }
+    }
+}
+
+// ------------------------------------------------------------------ formes
+
+/// Une forme fermée passant par `points`, lissée (Catmull-Rom).
+fn smooth_closed(points: &[(f32, f32)]) -> SkPath {
+    let n = points.len();
+    let mut pb = PathBuilder::new();
+    pb.move_to(points[0].0, points[0].1);
+    for i in 0..n {
+        let p0 = points[(i + n - 1) % n];
+        let p1 = points[i];
+        let p2 = points[(i + 1) % n];
+        let p3 = points[(i + 2) % n];
+        let c1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
+        let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        pb.cubic_to(c1.0, c1.1, c2.0, c2.1, p2.0, p2.1);
+    }
+    pb.close();
+    pb.finish().expect("forme")
+}
+
+/// Une courbe ouverte passant par `points`, lissée.
+fn smooth_open(points: &[(f32, f32)]) -> SkPath {
+    let n = points.len();
+    let mut pb = PathBuilder::new();
+    pb.move_to(points[0].0, points[0].1);
+    for i in 0..n - 1 {
+        let p0 = points[i.saturating_sub(1)];
+        let p1 = points[i];
+        let p2 = points[i + 1];
+        let p3 = points[(i + 2).min(n - 1)];
+        let c1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
+        let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        pb.cubic_to(c1.0, c1.1, c2.0, c2.1, p2.0, p2.1);
+    }
+    pb.finish().expect("courbe")
+}
+
+/// Une forme fermée aux coins vifs.
+fn polygon(points: &[(f32, f32)]) -> SkPath {
+    let mut pb = PathBuilder::new();
+    pb.move_to(points[0].0, points[0].1);
+    for &(x, y) in &points[1..] {
+        pb.line_to(x, y);
+    }
+    pb.close();
+    pb.finish().expect("polygone")
+}
+
+/// Ce qui est à `r` pixels au moins du bord de `mask` (la forme rentrée).
+fn inset(mask: &[f32], r: usize) -> Vec<f32> {
+    blur(mask, r)
+        .iter()
+        .map(|&v| smoothstep(0.9, 0.99, v))
+        .collect()
+}
+
+/// Le produit de deux masques (ce que couvrent l'un et l'autre).
+fn both(a: &[f32], b: &[f32]) -> Vec<f32> {
+    a.iter().zip(b).map(|(a, b)| a * b).collect()
+}
+
+/// Des cercles qui se fondent en une seule forme (une toison).
+fn cloud(circles: &[(f32, f32, f32)]) -> SkPath {
+    let mut pb = PathBuilder::new();
+    for &(x, y, r) in circles {
+        pb.push_circle(x, y, r);
+    }
+    pb.finish().expect("nuage")
+}
+
+fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32) -> SkPath {
+    let rect = tiny_skia::Rect::from_xywh(cx - rx, cy - ry, 2.0 * rx, 2.0 * ry).expect("ellipse");
+    PathBuilder::from_oval(rect).expect("ellipse")
+}
+
+/// Une feuille (une oreille) de `base` à `tip`, de largeur `width`.
+fn leaf(base: (f32, f32), tip: (f32, f32), width: f32, bulge: f32) -> SkPath {
+    let (dx, dy) = (tip.0 - base.0, tip.1 - base.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    let (nx, ny) = (-dy / len, dx / len);
+    let at = |t: f32, side: f32| {
+        let w = width * 0.5 * (std::f32::consts::PI * t.powf(0.8)).sin().max(0.0) * side;
+        (
+            base.0 + dx * t + nx * (w + bulge * t * (1.0 - t) * 4.0),
+            base.1 + dy * t + ny * (w + bulge * t * (1.0 - t) * 4.0),
+        )
+    };
+    let mut points = Vec::new();
+    for k in 0..=8 {
+        points.push(at(k as f32 / 8.0, 1.0));
+    }
+    for k in (1..8).rev() {
+        points.push(at(k as f32 / 8.0, -1.0));
+    }
+    smooth_closed(&points)
+}
+
+// ---------------------------------------------------------------- la brebis
+
+/// Palette : une laine crème aux ombres lavande, un visage cacao.
+struct Palette {
+    wool: Wash,
+    face: Wash,
+    leg: Wash,
+    far_leg: Wash,
+}
+
+fn palette() -> Palette {
+    let shadow_dir = (0.45, 1.0);
+    let wool = Wash {
+        light: hex(0xFFFDF7),
+        base: hex(0xF3EDE2),
+        shadow: hex(0xCFC6C9),
+        toward_shadow: shadow_dir,
+        pigment: hex(0x9E95B4),
+        edge: 0.7,
+        edge_width: 6,
+        mottling: 0.05,
+        grain: 0.06,
+        pencil: Some((hex(0x5F5672), 0.75, 4)),
+        seed: 11,
+    };
+    let face = Wash {
+        light: hex(0xC09E8E),
+        base: hex(0xA27E6E),
+        shadow: hex(0x765A4F),
+        toward_shadow: shadow_dir,
+        pigment: hex(0x5E423B),
+        edge: 0.55,
+        edge_width: 5,
+        mottling: 0.08,
+        grain: 0.08,
+        pencil: Some((hex(0x3F2A26), 0.8, 3)),
+        seed: 23,
+    };
+    let leg = Wash {
+        light: hex(0x8F7268),
+        base: hex(0x7A5F56),
+        shadow: hex(0x57423C),
+        toward_shadow: (1.0, 0.25),
+        pigment: hex(0x45322E),
+        edge: 0.5,
+        edge_width: 4,
+        mottling: 0.07,
+        grain: 0.08,
+        pencil: Some((hex(0x33241F), 0.75, 3)),
+        seed: 31,
+    };
+    let far_leg = Wash {
+        light: hex(0x6F5852),
+        base: hex(0x5F4A44),
+        shadow: hex(0x46352F),
+        seed: 37,
+        ..leg
+    };
+    Palette {
+        wool,
+        face,
+        leg,
+        far_leg,
+    }
+}
+
+/// Une patte, de la hanche (cachée dans la toison) au sabot posé au sol.
+fn paint_leg(hip: (f32, f32), hoof_x: f32, wash: &Wash, hoof: Rgb) -> Layer {
+    let ground = GROUND.1;
+    let (top_w, ankle_w) = (40.0, 29.0);
+    let ankle_y = ground - 34.0;
+    let knee = (
+        hip.0 + (hoof_x - hip.0) * 0.55 + 4.0,
+        hip.1 + (ankle_y - hip.1) * 0.55,
+    );
+    let points = [
+        (hip.0 - top_w * 0.5, hip.1 - 30.0),
+        (hip.0 + top_w * 0.5, hip.1 - 30.0),
+        (knee.0 + top_w * 0.42, knee.1),
+        (hoof_x + ankle_w * 0.5, ankle_y),
+        (hoof_x + ankle_w * 0.5, ground - 18.0),
+        (hoof_x - ankle_w * 0.5, ground - 18.0),
+        (hoof_x - ankle_w * 0.5, ankle_y),
+        (knee.0 - top_w * 0.4, knee.1),
+    ];
+    let mut layer = Layer::new();
+    let mask = mask_of(&smooth_closed(&points));
+    wash.paint(&mask, &mut layer);
+    // Le sabot : sombre, luisant sur le devant, fendu.
+    let hoof_shape = smooth_closed(&[
+        (hoof_x - 21.0, ground),
+        (hoof_x - 19.0, ground - 22.0),
+        (hoof_x - 8.0, ground - 28.0),
+        (hoof_x + 10.0, ground - 28.0),
+        (hoof_x + 22.0, ground - 18.0),
+        (hoof_x + 24.0, ground),
+    ]);
+    let hoof_wash = Wash {
+        light: mix(hoof, hex(0xFFFFFF), 0.18),
+        base: hoof,
+        shadow: mix(hoof, hex(0x000000), 0.35),
+        toward_shadow: (1.0, 0.4),
+        pigment: mix(hoof, hex(0x000000), 0.5),
+        edge: 0.4,
+        edge_width: 3,
+        mottling: 0.04,
+        grain: 0.05,
+        pencil: Some((mix(hoof, hex(0x000000), 0.6), 0.6, 2)),
+        seed: wash.seed + 5,
+    };
+    let hoof_mask = mask_of(&hoof_shape);
+    hoof_wash.paint(&hoof_mask, &mut layer);
+    let cleft = stroke_mask(
+        &smooth_open(&[(hoof_x + 3.0, ground - 1.0), (hoof_x + 4.0, ground - 14.0)]),
+        2.5,
+    );
+    dab(
+        &mut layer,
+        &cleft,
+        Some(&hoof_mask),
+        mix(hoof, hex(0x000000), 0.5),
+        0.8,
+    );
+    let shine = mask_of(&ellipse(hoof_x + 12.0, ground - 17.0, 6.0, 3.5));
+    dab(
+        &mut layer,
+        &blur(&shine, 2),
+        Some(&hoof_mask),
+        hex(0xFFFFFF),
+        0.35,
+    );
+    layer
+}
+
+/// Le point d'appui (milieu des sabots au sol).
+const GROUND: (f32, f32) = (560.0, 820.0);
+
+/// Les hanches et les sabots : (hanche, x du sabot).
+const LEGS: [((f32, f32), f32); 4] = [
+    // Arrière loin, avant loin, arrière près, avant près.
+    ((418.0, 650.0), 402.0),
+    ((706.0, 655.0), 716.0),
+    ((452.0, 665.0), 452.0),
+    ((742.0, 668.0), 750.0),
+];
+
+fn body_circles() -> Vec<(f32, f32, f32)> {
+    let noise = Noise { seed: 5 };
+    let (cx, cy, rx, ry) = (560.0, 560.0, 205.0, 108.0);
+    let mut circles = vec![(cx, cy, 0.0)];
+    // Le cœur de la toison, puis ses boucles tout autour.
+    circles[0] = (cx, cy + 6.0, 1.0);
+    let count = 17;
+    for k in 0..count {
+        let a = k as f32 / count as f32 * std::f32::consts::TAU + 0.2;
+        let wobble = noise.value(k as f32 * 1.7, 0.5);
+        let (x, y) = (cx + rx * a.cos(), cy + ry * a.sin());
+        // Les boucles du dessous sont plus petites (le ventre).
+        let below = a.sin().max(0.0);
+        let r = 64.0 + 10.0 * wobble - 16.0 * below;
+        circles.push((x, y, r));
+    }
+    circles
+}
+
+/// Les boucles de la toison qui font l'encolure : celles de l'avant, en
+/// haut, où la tête entre dans la laine.
+fn is_neck_curl(&(x, y, _): &(f32, f32, f32)) -> bool {
+    x > 720.0 && y < 560.0
+}
+
+/// La toison du corps : toutes ses boucles, sauf celles de l'encolure.
+fn paint_body(p: &Palette) -> Layer {
+    let mut circles = body_circles();
+    circles.remove(0);
+    circles.retain(|c| !is_neck_curl(c));
+    paint_fleece(p, &circles, true)
+}
+
+/// L'encolure : les boucles de l'avant de la toison, peintes à part (sous
+/// le corps), et une de plus, cachée sous la tête, qui la prolonge quand
+/// elle s'avance.
+fn paint_neck(p: &Palette) -> Layer {
+    let mut circles: Vec<(f32, f32, f32)> = body_circles()
+        .into_iter()
+        .skip(1)
+        .filter(is_neck_curl)
+        .collect();
+    circles.push((800.0, 500.0, 46.0));
+    paint_fleece(p, &circles, false)
+}
+
+/// Une toison : des boucles (et, pour le corps, son cœur ovale), chacune
+/// éclairée en haut à gauche et dans l'ombre en bas à droite.
+fn paint_fleece(p: &Palette, circles: &[(f32, f32, f32)], core: bool) -> Layer {
+    let mut pb = PathBuilder::new();
+    for &(x, y, r) in circles {
+        pb.push_circle(x, y, r);
+    }
+    if core {
+        let rect =
+            tiny_skia::Rect::from_xywh(560.0 - 222.0, 560.0 - 120.0, 444.0, 252.0).expect("corps");
+        pb.push_oval(rect);
+    }
+    let shape = pb.finish().expect("toison");
+    let mask = mask_of(&shape);
+    let mut layer = Layer::new();
+    p.wool.paint(&mask, &mut layer);
+    let inner = blur(&mask, 6);
+    let clip: Vec<f32> = inner.iter().map(|v| smoothstep(0.55, 1.0, *v)).collect();
+    // Le bord de la toison : seules ses boucles y sont ombrées.
+    let rim: Vec<f32> = blur(&mask, 34)
+        .iter()
+        .map(|v| 1.0 - smoothstep(0.72, 0.97, *v))
+        .collect();
+    // Chaque boucle de la toison est un petit nuage : éclairée en haut à
+    // gauche, dans l'ombre en bas à droite.
+    for &(x, y, r) in circles {
+        let lit = blur(
+            &mask_of(&ellipse(x - r * 0.25, y - r * 0.3, r * 0.55, r * 0.42)),
+            10,
+        );
+        dab(&mut layer, &lit, Some(&clip), hex(0xFFFFFF), 0.42);
+        let crescent = mask_of(&ellipse(x + r * 0.12, y + r * 0.2, r * 0.9, r * 0.8));
+        let cut = mask_of(&ellipse(x - r * 0.05, y - r * 0.05, r * 0.86, r * 0.78));
+        let shade: Vec<f32> = crescent
+            .iter()
+            .zip(&cut)
+            .map(|(a, b)| (a - b).max(0.0))
+            .collect();
+        let shade = blur(&shade, 5);
+        for (i, v) in shade.iter().enumerate() {
+            if *v > 0.0 && mask[i] > 0.0 {
+                layer.multiply(i, hex(0xC2B8CC), v * clip[i] * rim[i] * 0.7);
+            }
+        }
+    }
+    // Quelques boucles plus petites au milieu.
+    let noise = Noise { seed: 9 };
+    for k in 0..14 {
+        let u = noise.hash(k, 1) * 0.5 + 0.5;
+        let v = noise.hash(k, 2) * 0.5 + 0.5;
+        let (x, y) = (400.0 + u * 330.0, 490.0 + v * 150.0);
+        let r = 24.0 + 10.0 * (noise.hash(k, 3) * 0.5 + 0.5);
+        let lit = blur(
+            &mask_of(&ellipse(x - r * 0.2, y - r * 0.25, r * 0.55, r * 0.4)),
+            8,
+        );
+        dab(&mut layer, &lit, Some(&clip), hex(0xFFFFFF), 0.3);
+        let arc = stroke_mask(
+            &smooth_open(&[
+                (x - r * 0.8, y + r * 0.1),
+                (x - r * 0.2, y + r * 0.75),
+                (x + r * 0.7, y + r * 0.35),
+            ]),
+            4.0,
+        );
+        dab(&mut layer, &blur(&arc, 2), Some(&clip), hex(0xB7ACC0), 0.35);
+    }
+    // La lumière accroche le haut de la toison.
+    let light = mask_of(&cloud(&[
+        (470.0, 470.0, 46.0),
+        (540.0, 452.0, 50.0),
+        (615.0, 462.0, 40.0),
+    ]));
+    dab(
+        &mut layer,
+        &blur(&light, 26),
+        Some(&clip),
+        hex(0xFFFFFF),
+        0.4,
+    );
+    // Le dessous, dans l'ombre.
+    let belly = mask_of(&ellipse(575.0, 690.0, 230.0, 60.0));
+    let belly = blur(&belly, 26);
+    for (i, b) in belly.iter().enumerate() {
+        if mask[i] > 0.0 && *b > 0.0 {
+            layer.multiply(i, hex(0xB4A9BD), b * mask[i] * 0.55);
+        }
+    }
+    layer
+}
+
+fn paint_tail(p: &Palette) -> Layer {
+    let shape = cloud(&[
+        (292.0, 528.0, 30.0),
+        (276.0, 552.0, 26.0),
+        (288.0, 576.0, 21.0),
+    ]);
+    let mut layer = Layer::new();
+    p.wool.paint(&mask_of(&shape), &mut layer);
+    layer
+}
+
+/// Décalage de la tête et de tout ce qu'elle porte (dessinés autour de
+/// (900, 450)) : posée en avant et en haut de la toison.
+const HO: (f32, f32) = (-40.0, 40.0);
+
+/// Un point de la tête, décalé avec elle.
+fn hp(x: f32, y: f32) -> (f32, f32) {
+    (x + HO.0, y + HO.1)
+}
+
+fn shifted(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    points.iter().map(|&(x, y)| hp(x, y)).collect()
+}
+
+/// La tête de profil, tournée vers la droite.
+const HEAD: [(f32, f32); 12] = [
+    (800.0, 400.0),
+    (846.0, 372.0),
+    (902.0, 368.0),
+    (946.0, 388.0),
+    (974.0, 426.0),
+    (986.0, 468.0),
+    (978.0, 503.0),
+    (950.0, 524.0),
+    (906.0, 530.0),
+    (858.0, 518.0),
+    (818.0, 492.0),
+    (797.0, 450.0),
+];
+
+/// La tête entière, mâchoire comprise.
+fn paint_whole_head(p: &Palette) -> Layer {
+    let mut layer = Layer::new();
+    let head = mask_of(&smooth_closed(&shifted(&HEAD)));
+    p.face.paint(&head, &mut layer);
+    // Le front, éclairé ; le dessous de la mâchoire, dans l'ombre.
+    let (fx, fy) = hp(885.0, 405.0);
+    let brow = blur(&mask_of(&ellipse(fx, fy, 46.0, 26.0)), 16);
+    dab(&mut layer, &brow, Some(&head), hex(0xC9A898), 0.45);
+    // Le museau, plus clair.
+    let (mx, my) = hp(948.0, 484.0);
+    let muzzle = blur(&mask_of(&ellipse(mx, my, 40.0, 33.0)), 9);
+    dab(&mut layer, &muzzle, Some(&head), hex(0xD2B6A7), 0.8);
+    // Les joues roses.
+    let (bx, by) = hp(915.0, 476.0);
+    let blush = blur(&mask_of(&ellipse(bx, by, 22.0, 14.0)), 8);
+    dab(&mut layer, &blush, Some(&head), hex(0xF2A09B), 0.55);
+    // La truffe et la bouche.
+    let nose = mask_of(&smooth_closed(&shifted(&[
+        (966.0, 461.0),
+        (981.0, 457.0),
+        (985.0, 468.0),
+        (977.0, 476.0),
+    ])));
+    dab(&mut layer, &blur(&nose, 1), Some(&head), hex(0x553734), 0.9);
+    let mouth = stroke_mask(
+        &smooth_open(&shifted(&[(978.0, 489.0), (969.0, 499.0), (955.0, 502.0)])),
+        3.0,
+    );
+    dab(&mut layer, &mouth, Some(&head), hex(0x4A302D), 0.8);
+    layer
+}
+
+/// La mâchoire : le bas du museau, sous la bouche, jusqu'au menton. Elle
+/// s'ouvre autour de sa charnière, sous la joue, à hauteur de la bouche :
+/// le menton descend, la bouche s'ouvre de la commissure jusqu'au bout du
+/// museau.
+const JAW: [(f32, f32); 9] = [
+    (1000.0, 482.0),
+    (983.0, 487.0),
+    (978.0, 489.0),
+    (969.0, 499.0),
+    (955.0, 502.0),
+    (930.0, 508.0),
+    (905.0, 513.0),
+    (905.0, 560.0),
+    (1000.0, 560.0),
+];
+
+fn jaw_mask() -> Vec<f32> {
+    mask_of(&polygon(&shifted(&JAW)))
+}
+
+/// La tête, sans sa mâchoire (posée derrière elle). La tête la recouvre
+/// d'un rien sur ses bords : aucune jointure ne laisse passer le jour.
+fn paint_head(p: &Palette) -> Layer {
+    let away: Vec<f32> = inset(&jaw_mask(), 2).iter().map(|m| 1.0 - m).collect();
+    paint_whole_head(p).masked(&away)
+}
+
+/// La mâchoire, posée derrière la tête : le bas du museau, peint comme la
+/// tête l'aurait peint ; et au-dessus, cachés tant que la bouche est
+/// fermée, la joue qui s'étire et l'intérieur de la bouche, langue en bas.
+fn paint_jaw(p: &Palette) -> Layer {
+    let whole = paint_whole_head(p);
+    let head = mask_of(&smooth_closed(&shifted(&HEAD)));
+    // Rien ne doit dépasser de la tête bouche fermée.
+    let inside = inset(&head, 6);
+    let mut layer = Layer::new();
+    let cheek = mask_of(&polygon(&shifted(&[
+        (958.0, 493.0),
+        (905.0, 503.0),
+        (893.0, 511.0),
+        (893.0, 545.0),
+        (916.0, 545.0),
+        (916.0, 521.0),
+        (958.0, 513.0),
+    ])));
+    // (La joue n'a que les couleurs de la tête : elle peut aller jusqu'au
+    // bord, où elle comble la jointure.)
+    layer.stack(&whole.masked(&cheek));
+    let mouth = mask_of(&polygon(&shifted(&[
+        (986.0, 489.0),
+        (964.0, 457.0),
+        (944.0, 466.0),
+        (929.0, 487.0),
+        (937.0, 509.0),
+        (960.0, 510.0),
+        (977.0, 502.0),
+        (992.0, 494.0),
+    ])));
+    let mouth = both(&blur(&mouth, 2), &inside);
+    dab(&mut layer, &mouth, None, hex(0x4D2C2B), 1.0);
+    let (dx, dy) = hp(957.0, 470.0);
+    let deep = blur(&mask_of(&ellipse(dx, dy, 24.0, 18.0)), 8);
+    dab(&mut layer, &deep, Some(&mouth), hex(0x2C1918), 0.7);
+    let (tx, ty) = hp(967.0, 497.0);
+    let tongue = blur(&mask_of(&ellipse(tx, ty, 15.0, 5.5)), 2);
+    dab(&mut layer, &tongue, Some(&mouth), hex(0xC4797A), 0.95);
+    layer.stack(&whole.masked(&jaw_mask()));
+    layer
+}
+
+/// Le toupet de laine sur le front.
+fn paint_topknot(p: &Palette) -> Layer {
+    let circles: Vec<(f32, f32, f32)> = [
+        (826.0, 384.0, 22.0),
+        (850.0, 364.0, 26.0),
+        (880.0, 358.0, 23.0),
+        (904.0, 370.0, 17.0),
+        (858.0, 386.0, 20.0),
+    ]
+    .iter()
+    .map(|&(x, y, r)| {
+        let (x, y) = hp(x, y);
+        (x, y, r)
+    })
+    .collect();
+    let shape = cloud(&circles);
+    let mut layer = Layer::new();
+    let wash = Wash {
+        edge_width: 5,
+        seed: 41,
+        ..p.wool
+    };
+    wash.paint(&mask_of(&shape), &mut layer);
+    layer
+}
+
+/// Les oreilles : leur attache et leur pointe (tombantes, vers l'arrière).
+const EAR_FAR: ((f32, f32), (f32, f32)) =
+    ((834.0 + HO.0, 400.0 + HO.1), (760.0 + HO.0, 404.0 + HO.1));
+const EAR_NEAR: ((f32, f32), (f32, f32)) =
+    ((846.0 + HO.0, 414.0 + HO.1), (752.0 + HO.0, 446.0 + HO.1));
+
+fn paint_ear(p: &Palette, base: (f32, f32), tip: (f32, f32), far: bool) -> Layer {
+    let mut layer = Layer::new();
+    let shape = leaf(base, tip, if far { 46.0 } else { 56.0 }, -7.0);
+    let mask = mask_of(&shape);
+    let wash = if far {
+        Wash {
+            light: hex(0x8F7064),
+            base: hex(0x7C6055),
+            shadow: hex(0x5E463F),
+            seed: 51,
+            ..p.face
+        }
+    } else {
+        Wash { seed: 53, ..p.face }
+    };
+    wash.paint(&mask, &mut layer);
+    if !far {
+        // L'intérieur rose.
+        let inner = leaf(
+            (
+                base.0 + (tip.0 - base.0) * 0.12,
+                base.1 + (tip.1 - base.1) * 0.12 + 3.0,
+            ),
+            (
+                base.0 + (tip.0 - base.0) * 0.86,
+                base.1 + (tip.1 - base.1) * 0.86 + 2.0,
+            ),
+            26.0,
+            -3.0,
+        );
+        let inner = blur(&mask_of(&inner), 3);
+        dab(&mut layer, &inner, Some(&mask), hex(0xE7A9A3), 0.8);
+    }
+    layer
+}
+
+const EYE: (f32, f32) = (918.0 + HO.0, 440.0 + HO.1);
+
+/// L'œil ouvert : un iris ambré, cerclé de sombre (la pupille et les
+/// reflets sont des morceaux à part, posés par-dessus).
+fn paint_eye() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let eye = mask_of(&ellipse(x, y, 15.0, 19.0));
+    dab(&mut layer, &eye, None, hex(0x2A2125), 1.0);
+    let iris = mask_of(&ellipse(x + 1.0, y + 1.0, 12.0, 15.5));
+    dab(&mut layer, &iris, Some(&eye), hex(0x9C6624), 1.0);
+    // Plus clair au milieu, plus sombre au bord : un lavis doré.
+    let warm = blur(&mask_of(&ellipse(x + 1.5, y + 2.0, 8.5, 11.0)), 3);
+    dab(&mut layer, &warm, Some(&iris), hex(0xD9A445), 0.85);
+    let glow = blur(&mask_of(&ellipse(x + 2.0, y + 4.0, 5.0, 6.0)), 3);
+    dab(&mut layer, &glow, Some(&iris), hex(0xEBC46B), 0.6);
+    layer
+}
+
+/// La pupille : une fente horizontale, que le moteur garde à l'horizontale
+/// quand la tête penche.
+fn paint_pupil() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let slit = blur(
+        &stroke_mask(&smooth_open(&[(x - 7.5, y + 1.5), (x + 9.5, y + 1.5)]), 6.5),
+        1,
+    );
+    dab(&mut layer, &slit, None, hex(0x1A1416), 0.97);
+    layer
+}
+
+/// Les reflets de la cornée, qui ne tournent pas avec la pupille.
+fn paint_glint() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let big = mask_of(&ellipse(x + 5.0, y - 7.0, 4.6, 5.0));
+    dab(&mut layer, &big, None, hex(0xFFFFFF), 0.92);
+    let small = mask_of(&ellipse(x - 5.0, y + 9.0, 2.2, 2.2));
+    dab(&mut layer, &small, None, hex(0xFFFFFF), 0.7);
+    layer
+}
+
+/// L'œil fermé : une paupière en arc, deux cils.
+fn paint_closed_eye() -> Layer {
+    let mut layer = Layer::new();
+    let (x, y) = EYE;
+    let lid = stroke_mask(
+        &smooth_open(&[(x - 16.0, y + 2.0), (x, y + 10.0), (x + 16.0, y + 1.0)]),
+        5.0,
+    );
+    dab(&mut layer, &lid, None, hex(0x2A2125), 0.95);
+    for (dx, len) in [(-8.0, 7.0), (2.0, 8.0)] {
+        let lash = stroke_mask(
+            &smooth_open(&[(x + dx, y + 8.0), (x + dx - 2.0, y + 8.0 + len)]),
+            3.0,
+        );
+        dab(&mut layer, &lash, None, hex(0x2A2125), 0.8);
+    }
+    layer
+}
+
+/// La lèvre supérieure, sous le naseau, jusqu'à la bouche (dans la toile) :
+/// elle se retrousse autour de son arrière pour le flehmen.
+const LIP: [(f32, f32); 9] = [
+    (906.0, 518.0),
+    (924.0, 514.0),
+    (942.0, 513.0),
+    (952.0, 521.0),
+    (950.0, 533.0),
+    (938.0, 532.0),
+    (928.0, 541.0),
+    (913.0, 545.0),
+    (902.0, 532.0),
+];
+
+/// La lèvre : ce que la tête peint à cet endroit.
+fn paint_lip(head: &Layer) -> Layer {
+    head.masked(&mask_of(&polygon(&LIP)))
+}
+
+/// La gencive (le bourrelet du haut : le mouton n'a pas d'incisives en
+/// haut), cachée sous la lèvre tant qu'elle est baissée.
+fn paint_gum() -> Layer {
+    let head = mask_of(&smooth_closed(&shifted(&HEAD)));
+    let lip = blur(&mask_of(&polygon(&LIP)), 2);
+    let inside = inset(&head, 3);
+    let pad: Vec<f32> = lip.iter().zip(&inside).map(|(a, b)| a * b).collect();
+    let mut layer = Layer::new();
+    dab(&mut layer, &pad, None, hex(0xC97F8F), 0.95);
+    let ridge = stroke_mask(
+        &smooth_open(&[(912.0, 538.0), (928.0, 536.0), (944.0, 529.0)]),
+        3.0,
+    );
+    dab(&mut layer, &blur(&ridge, 1), Some(&pad), hex(0xA0566A), 0.7);
+    let shade = stroke_mask(
+        &smooth_open(&[(910.0, 521.0), (928.0, 518.0), (945.0, 518.0)]),
+        4.0,
+    );
+    dab(&mut layer, &blur(&shade, 2), Some(&pad), hex(0x8A4658), 0.6);
+    layer
+}
+
+/// Les mèches de la toison : deux festons du ventre, entre les pattes, de
+/// l'avant vers l'arrière. Chacun va d'un creux du contour au suivant
+/// (cherchés près de ces abscisses, voir [`valley`]) : la corde entre les
+/// deux creux est son attache, son milieu le pivot de son os.
+const LOCKS: [(f32, f32); 2] = [(656.0, 576.0), (576.0, 496.0)];
+
+/// Le creux du bas de la toison le plus proche de `x`, à 12 pixels près : le
+/// point où son bord du bas (là où l'opacité passe un demi) remonte le plus
+/// haut ; au milieu, s'il est plat sur quelques colonnes.
+fn valley(layer: &Layer, x: f32) -> (f32, f32) {
+    let bottom = |col: usize| (0..H).rev().find(|&y| layer.px[y * W + col][3] > 0.5);
+    let guess = x.round() as usize;
+    let cols: Vec<(usize, usize)> = (guess - 12..=guess + 12)
+        .filter_map(|c| bottom(c).map(|y| (c, y)))
+        .collect();
+    let top = cols
+        .iter()
+        .map(|&(_, y)| y)
+        .min()
+        .expect("le bas de la toison");
+    let at: Vec<usize> = cols
+        .iter()
+        .filter(|&&(_, y)| y == top)
+        .map(|&(c, _)| c)
+        .collect();
+    let mid = at.iter().sum::<usize>() as f32 / at.len() as f32;
+    (mid + 0.5, top as f32 + 1.0)
+}
+
+/// Détache de la toison ce qu'elle peint sous la corde `a`–`b` (deux creux
+/// du contour), entre les verticales de ses deux bouts : une mèche, peinte
+/// sous le corps. Au-dessus de la corde, la mèche déborde de `band` pixels
+/// sous le corps, qui s'y fond sur `band` pixels : en penchant, elle ne
+/// découvre rien. Sous la corde, ses côtés sont nets : il n'y passe que le
+/// vide entre deux festons, et la mèche n'emporte rien de ses voisines. Au
+/// repos, rien ne change.
+fn split_lock(layer: &Layer, a: (f32, f32), b: (f32, f32), band: f32) -> (Layer, Layer) {
+    let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+    let slope = (b.1 - a.1) / (b.0 - a.0);
+    let norm = (1.0 + slope * slope).sqrt();
+    let mut lock = vec![0.0; W * H];
+    let mut body = vec![0.0; W * H];
+    for y in 0..H {
+        for x in 0..W {
+            let i = y * W + x;
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            // Sous la corde (positif), et entre ses deux bouts (positif).
+            let below = (py - a.1 - slope * (px - a.0)) / norm;
+            let inside = (px - x0).min(x1 - px);
+            let within = if inside >= 0.0 { 1.0 } else { 0.0 };
+            lock[i] = if below >= 0.0 {
+                within
+            } else {
+                smoothstep(-2.0 * band, -band, below) * smoothstep(-2.0 * band, -band, inside)
+            };
+            body[i] = 1.0 - smoothstep(-band, 0.0, below) * within;
+        }
+    }
+    (layer.masked(&lock), layer.masked(&body))
+}
+
+/// Les articulations des pattes : le carpe (devant) et le jarret
+/// (derrière), et le rayon du disque qui les couvre.
+fn leg_joint(hip: (f32, f32), hoof_x: f32, front: bool) -> ((f32, f32), f32) {
+    let ground = GROUND.1;
+    let y = if front { ground - 76.0 } else { ground - 82.0 };
+    // Le milieu de la patte à cette hauteur (entre le genou et la cheville
+    // du tracé de `paint_leg`).
+    let ankle_y = ground - 34.0;
+    let knee = (
+        hip.0 + (hoof_x - hip.0) * 0.55 + 4.0,
+        hip.1 + (ankle_y - hip.1) * 0.55,
+    );
+    let t = ((y - knee.1) / (ankle_y - knee.1)).clamp(0.0, 1.0);
+    let x = knee.0 + (hoof_x - knee.0) * t;
+    ((x, y), 17.5)
+}
+
+fn main() {
+    let out: PathBuf = std::env::args()
+        .nth(1)
+        .map_or_else(|| PathBuf::from("pets/aquarelle"), PathBuf::from);
+    std::fs::create_dir_all(&out).expect("dossier");
+    let p = palette();
+    let hoof = hex(0x3B302E);
+    let far_hoof = hex(0x2F2725);
+    // Les pattes, coupées au carpe et au jarret : le bas d'abord (sous le haut).
+    let leg = |i: usize, wash: &Wash, hoof: Rgb| {
+        let (hip, hoof_x) = LEGS[i];
+        let front = i % 2 == 1;
+        let (joint, radius) = leg_joint(hip, hoof_x, front);
+        // Les articulations, à recopier dans `squelette.toml`.
+        println!("articulation {i} : [{:.0}, {:.0}]", joint.0, joint.1);
+        split_joint(&paint_leg(hip, hoof_x, wash, hoof), joint, radius)
+    };
+    let (arriere_loin, arriere_loin_bas) = leg(0, &p.far_leg, far_hoof);
+    let (avant_loin, avant_loin_bas) = leg(1, &p.far_leg, far_hoof);
+    let (arriere_pres, arriere_pres_bas) = leg(2, &p.leg, hoof);
+    let (avant_pres, avant_pres_bas) = leg(3, &p.leg, hoof);
+    // L'encolure (les boucles de l'avant de la toison) et deux mèches (des
+    // festons du ventre), peintes sous le corps.
+    let encolure = paint_neck(&p);
+    let corps = paint_body(&p);
+    let [(a1, b1), (a2, b2)] = LOCKS.map(|(a, b)| (valley(&corps, a), valley(&corps, b)));
+    for (i, (a, b)) in [(a1, b1), (a2, b2)].into_iter().enumerate() {
+        // Les attaches des mèches, à recopier dans `squelette.toml`.
+        let (x, y) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        println!("mèche {} : [{x:.0}, {y:.0}]", i + 1);
+    }
+    let (meche_1, corps) = split_lock(&corps, a1, b1, 8.0);
+    let (meche_2, corps) = split_lock(&corps, a2, b2, 8.0);
+    let tete = paint_head(&p);
+    let levre = paint_lip(&tete);
+    // Dans l'ordre où ils se posent, de l'arrière vers l'avant.
+    let parts: Vec<(&str, Layer)> = vec![
+        ("patte-arriere-loin-bas", arriere_loin_bas),
+        ("patte-arriere-loin", arriere_loin),
+        ("patte-avant-loin-bas", avant_loin_bas),
+        ("patte-avant-loin", avant_loin),
+        ("queue", paint_tail(&p)),
+        ("patte-arriere-pres-bas", arriere_pres_bas),
+        ("patte-arriere-pres", arriere_pres),
+        ("patte-avant-pres-bas", avant_pres_bas),
+        ("patte-avant-pres", avant_pres),
+        ("encolure", encolure),
+        ("meche-1", meche_1),
+        ("meche-2", meche_2),
+        ("corps", corps),
+        ("oreille-loin", paint_ear(&p, EAR_FAR.0, EAR_FAR.1, true)),
+        ("machoire", paint_jaw(&p)),
+        ("tete", tete),
+        ("gencive", paint_gum()),
+        ("levre", levre),
+        ("oreille-pres", paint_ear(&p, EAR_NEAR.0, EAR_NEAR.1, false)),
+        ("toupet", paint_topknot(&p)),
+        ("oeil", paint_eye()),
+        ("pupille", paint_pupil()),
+        ("reflet", paint_glint()),
+        ("oeil-ferme", paint_closed_eye()),
+    ];
+    let mut preview = Layer::new();
+    for (name, layer) in &parts {
+        layer.save(&out.join(format!("{name}.png")));
+        if !matches!(*name, "oeil-ferme" | "gencive") {
+            preview.stack(layer);
+        }
+        println!("{name}.png");
+    }
+    preview.save(&out.join("apercu.png"));
+    let _ = p.leg;
+}

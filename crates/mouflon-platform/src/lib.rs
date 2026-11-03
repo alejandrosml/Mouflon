@@ -86,20 +86,343 @@ pub fn current_pid() -> i32 {
     std::process::id() as i32
 }
 
+/// Rend au système la mémoire libérée que l'allocateur garde encore pour
+/// la réutiliser (sur Mac, des pages restées « sales » qui comptent dans
+/// l'empreinte de l'app pendant des minutes). Renvoie les octets rendus.
+/// À appeler hors du fil de l'affichage : le parcours prend quelques
+/// millisecondes.
+pub fn release_free_memory() -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            /// `<malloc/malloc.h>` (macOS 10.7) : `zone` nul = toutes les
+            /// zones, `goal` nul = tout ce qui peut l'être.
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: fonction de la bibliothèque C du système, sûre depuis
+        // n'importe quel fil ; un pointeur nul désigne toutes les zones.
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0
+    }
+}
+
+/// Fait passer le fil courant après tout le reste : un travail de fond (la
+/// compression des images) qui ne doit jamais retenir l'affichage. Sur Mac,
+/// la classe de service « utilitaire » : le système le place de préférence
+/// sur les cœurs économes, et le ralentit quand la batterie est basse.
+pub fn lower_thread_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: fonction de libpthread sans pointeur, qui ne change que la
+        // classe de service du fil qui l'appelle.
+        let status =
+            unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
+        if status != 0 {
+            log::debug!("classe de service du fil inchangée ({status})");
+        }
+    }
+}
+
+/// Fait passer le fil courant devant (classe « interactive ») : celui qui
+/// fait les images ne doit jamais attendre un cœur derrière du travail de fond.
+pub fn raise_thread_priority() {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: fonction de libpthread sans pointeur, qui ne change que la
+        // classe de service du fil qui l'appelle.
+        let status = unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+        };
+        if status != 0 {
+            log::debug!("classe de service du fil inchangée ({status})");
+        }
+    }
+}
+
+/// Fait `work` dans une réserve d'objets à libérer (« autorelease pool ») :
+/// sur un autre fil que le fil principal, les objets du système rendus
+/// ainsi pendant une image sont libérés à sa fin, au lieu de s'accumuler.
+pub fn with_release_pool<R>(work: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        objc2::rc::autoreleasepool(|_| work())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        work()
+    }
+}
+
+/// Une ligne des crédits de la fenêtre « À propos ».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AboutLine<'a> {
+    Text(&'a str),
+    /// Lien cliquable : texte affiché, adresse.
+    Link(&'a str, &'a str),
+}
+
+/// Contenu de la fenêtre « À propos ».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct About<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    /// Mention de copyright (« © 2026 … »).
+    pub copyright: &'a str,
+    /// Crédits, de haut en bas.
+    pub lines: &'a [AboutLine<'a>],
+}
+
+/// Ce que l'utilisateur fait dans les fenêtres et les menus propres à
+/// Mouflon (réglages, menu d'un animal). L'app les reçoit par
+/// [`set_ui_handler`] ; les identifiants sont ceux qu'elle a donnés.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiEvent {
+    /// Article choisi dans un menu surgissant ([`pop_up_menu`]).
+    Menu(u32),
+    /// Le menu surgissant s'est refermé (après l'article choisi, s'il y en a un).
+    MenuClosed,
+    /// Case des réglages cochée (`true`) ou décochée.
+    Check(u32, bool),
+    /// Cran choisi sur un curseur des réglages, ou choix dans une liste
+    /// ([`FormRow::Choice`]) : son rang.
+    Step(u32, usize),
+    /// Bouton des réglages.
+    Button(u32),
+    /// La fenêtre des réglages passe au premier plan : ce qu'elle montre de
+    /// l'état du système (autorisations…) est à relire, il a pu changer.
+    FormShown,
+    /// ⌘Q pendant que la fenêtre des réglages est au premier plan.
+    Quit,
+    /// « Ajouter » sur une carte de la galerie (son identifiant).
+    GalleryAdd(u32),
+    /// Un raccourci clavier de Mouflon ([`set_shortcuts`]), dans n'importe
+    /// quelle app (son identifiant).
+    Shortcut(u32),
+    /// La touche Échap, dans n'importe quelle app ([`listen_escape`]).
+    Escape(KeyMove),
+}
+
+/// Ce que fait une touche écoutée.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyMove {
+    /// Enfoncée.
+    Down,
+    /// Toujours enfoncée : la répétition automatique du clavier.
+    Repeat,
+    /// Relâchée.
+    Up,
+}
+
+/// Un raccourci clavier de Mouflon, valable dans toutes les apps : ⌃⌥⌘ et
+/// une lettre. La lettre compte, pas la place de la touche : sur un clavier
+/// AZERTY comme sur un QWERTY, ⌃⌥⌘Q est la touche marquée Q.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shortcut {
+    /// Rendu par [`UiEvent::Shortcut`].
+    pub id: u32,
+    /// La lettre, en minuscule (a à z).
+    pub key: char,
+}
+
+/// Une carte de la galerie des animaux ([`show_gallery`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GalleryCard {
+    /// Rendu par [`UiEvent::GalleryAdd`].
+    pub id: u32,
+    pub name: String,
+    /// Sa description et son auteur.
+    pub detail: String,
+    /// Le libellé du bouton (« Ajouter »).
+    pub button: String,
+    /// Le nom de sa famille (« Moutons ») : les cartes d'une même famille se
+    /// suivent, sous son nom quand il y a plusieurs familles.
+    pub family: String,
+}
+
+/// Une image de l'aperçu animé d'une carte : pixels RGBA prémultipliés, et
+/// combien de pixels par point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub scale: f64,
+}
+
+/// Un article de menu surgissant (le menu d'un animal, au clic droit).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PopupItem {
+    /// Titre de section, qu'on ne choisit pas (le nom de l'animal).
+    Header(String),
+    /// Article à choisir, coché ou non.
+    Item {
+        id: u32,
+        label: String,
+        checked: bool,
+        enabled: bool,
+    },
+    /// Sous-menu.
+    Submenu {
+        label: String,
+        items: Vec<PopupItem>,
+    },
+    Separator,
+}
+
+/// La fenêtre des réglages : des sections de lignes, de haut en bas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Form {
+    pub title: String,
+    pub sections: Vec<FormSection>,
+}
+
+/// Une section : un titre, puis ses lignes dans un cadre.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormSection {
+    pub title: String,
+    pub rows: Vec<FormRow>,
+}
+
+/// Une ligne des réglages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormRow {
+    /// Case à cocher, avec une explication dessous et, au besoin, un
+    /// complément qui n'apparaît que quand l'app le demande.
+    Check {
+        id: u32,
+        label: String,
+        help: Option<String>,
+        extra: Option<FormExtra>,
+    },
+    /// Curseur à crans : un libellé au-dessus, le nom de chaque cran
+    /// dessous, puis une explication s'il y en a une.
+    Steps {
+        id: u32,
+        label: String,
+        steps: Vec<String>,
+        help: Option<String>,
+    },
+    /// Un texte, et un bouton à sa droite.
+    Text {
+        text: String,
+        button: Option<FormButton>,
+    },
+    /// Un choix dans une liste : le libellé à gauche, la liste à droite,
+    /// une explication dessous. Montré et rendu par rang
+    /// ([`FormValue::Step`], [`UiEvent::Step`]).
+    Choice {
+        id: u32,
+        label: String,
+        choices: Vec<String>,
+        help: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormButton {
+    pub id: u32,
+    pub label: String,
+}
+
+/// Complément d'une case : une remarque et un bouton, montrés ou cachés
+/// ensemble ([`FormValue::Shown`], avec l'identifiant du bouton).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormExtra {
+    pub note: String,
+    pub button: FormButton,
+}
+
+/// Ce que la fenêtre des réglages montre : l'app les donne à chaque
+/// changement, d'où qu'il vienne.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormValue {
+    Check(u32, bool),
+    /// Le cran d'un curseur, ou le rang du choix d'une liste.
+    Step(u32, usize),
+    /// Montre ou cache un complément (identifiant de son bouton).
+    Shown(u32, bool),
+}
+
+/// Mouflon s'ouvre-t-il à l'ouverture de session ? C'est le système qui le
+/// sait : il le garde, et l'utilisateur peut le changer de son côté
+/// (Réglages Système → Général → Ouverture).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginItem {
+    /// Pas réglable d'ici : macOS 12 ou plus ancien, ou Mouflon lancé hors
+    /// de son app (`Mouflon.app`).
+    Unavailable,
+    Off,
+    On,
+    /// Demandé, mais en attente de l'accord de l'utilisateur dans Réglages
+    /// Système.
+    NeedsApproval,
+}
+
+impl LoginItem {
+    /// La case « Ouvrir à l'ouverture de session » est-elle cochée ?
+    #[must_use]
+    pub fn is_requested(self) -> bool {
+        matches!(self, Self::On | Self::NeedsApproval)
+    }
+}
+
+mod alloc;
+pub mod diag;
 #[cfg(target_os = "macos")]
 mod macos;
+mod mapped;
+mod usage;
+
+pub use alloc::{AllocCounts, CountingAlloc, alloc_counts, set_alloc_counting};
+pub use mapped::{SharedBytes, map_file};
+pub use usage::{ProcessUsage, process_usage};
+
+/// Un battement de l'horloge de l'écran, en secondes de l'horloge des
+/// médias ([`diag::media_time`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Beat {
+    /// Heure à laquelle l'image préparée maintenant sera affichée.
+    pub target: f64,
+    /// Heure du rafraîchissement qui vient d'avoir lieu (la synchronisation
+    /// verticale) : `target - vsync` est la durée d'une image de l'écran.
+    pub vsync: f64,
+    /// Heure à laquelle l'horloge nous a appelés.
+    pub called: f64,
+}
 
 #[cfg(target_os = "macos")]
+pub use macos::StatusItem;
+#[cfg(target_os = "macos")]
 pub use macos::{
-    cursor_position, frontmost_pid, open_folder, preferred_languages, prepare_pet_window, screens,
-    windows,
+    Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
+    attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
+    frontmost_pid, keep_pet_window, listen_escape, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, render_scene, request_accessibility, run_loop_for,
+    scene_transaction, screens, set_gallery_preview, set_login_item, set_shortcuts, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form, snapshot_gallery,
+    update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
+
+/// Ce que fait l'utilisateur, tous programmes confondus : quand, jamais quoi.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserActivity {
+    /// Secondes depuis la dernière touche frappée (laquelle, on ne le sait pas).
+    pub since_key: f64,
+    /// Secondes depuis son dernier geste : clavier, souris, trackpad.
+    pub idle: f64,
+}
 
 #[cfg(not(target_os = "macos"))]
 mod fallback {
     //! Repli pour les systèmes pas encore pris en charge : aucun rebord de
     //! fenêtre, l'animal marche sur le bas de l'écran.
-    use super::{OsScreen, OsWindow};
+    use super::{
+        About, AboutLine, Form, FormValue, LoginItem, OsScreen, OsWindow, PopupItem, UiEvent,
+    };
 
     #[must_use]
     pub fn screens() -> Vec<OsScreen> {
@@ -121,7 +444,69 @@ mod fallback {
         None
     }
 
+    #[must_use]
+    pub fn user_activity() -> Option<super::UserActivity> {
+        None
+    }
+
+    /// Pas de signal des fenêtres qui bougent ici : le relevé suffit.
+    pub fn set_window_moves_handler(_handler: impl Fn() + 'static) {}
+
+    /// Pas de galerie ici : les animaux s'ajoutent par le menu.
+    #[must_use]
+    pub fn show_gallery(_title: &str, _cards: &[super::GalleryCard]) -> bool {
+        false
+    }
+
+    /// Pas encore de raccourcis dans toutes les apps ici : aucun n'est pris.
+    #[must_use]
+    pub fn set_shortcuts(shortcuts: &[super::Shortcut]) -> Vec<u32> {
+        shortcuts.iter().map(|s| s.id).collect()
+    }
+
+    /// Pas d'écoute de la touche Échap ici.
+    pub fn listen_escape(_on: bool) -> bool {
+        false
+    }
+
+    pub fn set_gallery_preview(_id: u32, _frames: &[super::GalleryImage]) {}
+
+    #[must_use]
+    pub fn snapshot_gallery(_path: &std::path::Path, _dark: bool) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn follow_window_moves(_pids: &[i32]) -> usize {
+        0
+    }
+
     pub fn prepare_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
+
+    /// Les fenêtres d'animaux restent ici des fenêtres ordinaires : rien à garder.
+    pub fn keep_pet_window(_window: &impl raw_window_handle::HasWindowHandle) {}
+
+    /// Pas de fréquence d'écran connue ici (celle de winit sert).
+    #[must_use]
+    pub fn window_max_fps(_window: &impl raw_window_handle::HasWindowHandle) -> Option<f64> {
+        None
+    }
+
+    /// Pas d'autorisation d'Accessibilité à demander ici.
+    #[must_use]
+    pub fn accessibility_trusted() -> bool {
+        false
+    }
+
+    pub fn request_accessibility() -> bool {
+        false
+    }
+
+    /// Pas de Dock.
+    #[must_use]
+    pub fn dock_frame() -> Option<super::OsRect> {
+        None
+    }
 
     /// Langues de l'utilisateur, d'après les variables d'environnement POSIX
     /// (`LANGUAGE`, puis `LC_ALL`, `LC_MESSAGES` et `LANG`), en codes BCP 47.
@@ -144,6 +529,249 @@ mod fallback {
         tags
     }
 
+    /// Pas encore de fenêtre « À propos » ici : on ouvre le premier lien
+    /// des crédits (la page du projet) dans le navigateur.
+    pub fn show_about(about: &About<'_>) {
+        let link = about.lines.iter().find_map(|line| match line {
+            AboutLine::Link(_, url) => Some(*url),
+            AboutLine::Text(_) => None,
+        });
+        if let Some(url) = link {
+            open_folder(std::path::Path::new(url));
+        }
+    }
+
+    /// Pas encore de fenêtres ni de menus surgissants à Mouflon ici : rien
+    /// ne viendra par là.
+    pub fn set_ui_handler(_handler: impl Fn(UiEvent) + 'static) {}
+
+    pub fn pop_up_menu(_items: &[PopupItem]) {}
+
+    /// Pas de fenêtre des réglages ici : `false`, à l'app de proposer
+    /// autre chose (le fichier des réglages).
+    pub fn show_form(_form: &Form, _values: &[FormValue]) -> bool {
+        false
+    }
+
+    pub fn update_form(_values: &[FormValue]) {}
+
+    pub fn snapshot_form(_path: &std::path::Path, _dark: bool) -> bool {
+        false
+    }
+
+    /// Le clic droit suffit ici.
+    #[must_use]
+    pub fn control_key_down() -> bool {
+        false
+    }
+
+    pub fn open_accessibility_settings() -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn login_item_available() -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn login_item() -> LoginItem {
+        LoginItem::Unavailable
+    }
+
+    /// La boucle d'attente du relevé, sans boucle d'événements du système :
+    /// une simple attente qu'un [`LoopWaker`] interrompt.
+    static WAKE: (std::sync::Mutex<bool>, std::sync::Condvar) =
+        (std::sync::Mutex::new(false), std::sync::Condvar::new());
+
+    pub fn run_loop_for(timeout: std::time::Duration) {
+        let (lock, cvar) = &WAKE;
+        let Ok(woken) = lock.lock() else {
+            return;
+        };
+        if let Ok((mut woken, _)) = cvar.wait_timeout_while(woken, timeout, |woken| !*woken) {
+            *woken = false;
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct LoopWaker;
+
+    impl LoopWaker {
+        #[must_use]
+        pub fn current() -> Option<Self> {
+            Some(Self)
+        }
+
+        pub fn wake(&self) {
+            let (lock, cvar) = &WAKE;
+            if let Ok(mut woken) = lock.lock() {
+                *woken = true;
+                cvar.notify_all();
+            }
+        }
+    }
+
+    pub fn set_login_item(_on: bool) -> LoginItem {
+        LoginItem::Unavailable
+    }
+
+    pub fn open_login_items_settings() {}
+
+    /// Pas d'horloge d'écran ici : l'app se rythme avec une minuterie.
+    #[derive(Debug)]
+    pub enum FrameClock {}
+
+    impl FrameClock {
+        pub fn new(_tick: impl Fn(super::Beat) + 'static) -> Option<Self> {
+            None
+        }
+
+        #[must_use]
+        pub fn max_fps(&self) -> f32 {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn is_running(&self) -> bool {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn frame_duration(&self) -> f64 {
+            match *self {}
+        }
+
+        pub fn set_running(&self, _running: bool) {
+            match *self {}
+        }
+
+        pub fn set_rate(&self, _fps: f32) {
+            match *self {}
+        }
+    }
+
+    /// Pas de calques Core Animation ici : la scène passe par le GPU.
+    #[derive(Debug, Clone)]
+    pub struct SceneImage {
+        bytes: usize,
+    }
+
+    impl SceneImage {
+        #[must_use]
+        pub fn from_bgra(width: u32, height: u32, bgra: &[u8]) -> Option<Self> {
+            (bgra.len() == width as usize * height as usize * 4)
+                .then_some(Self { bytes: bgra.len() })
+        }
+
+        #[must_use]
+        pub fn byte_size(&self) -> usize {
+            self.bytes
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    pub struct SceneLayer;
+
+    impl SceneLayer {
+        #[must_use]
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn add(&self, _child: &Self) {}
+        pub fn insert(&self, _child: &Self, _index: u32) {}
+        pub fn remove(&self) {}
+        pub fn set_position(&self, _x: f64, _y: f64) {}
+        pub fn set_size(&self, _width: f64, _height: f64) {}
+        pub fn set_transform(&self, _transform: [f64; 6]) {}
+        pub fn set_opacity(&self, _opacity: f32) {}
+        pub fn set_hidden(&self, _hidden: bool) {}
+        pub fn set_image(&self, _image: Option<&SceneImage>) {}
+        pub fn set_smooth(&self, _smooth: bool) {}
+        pub fn set_group_opacity(&self, _group: bool) {}
+    }
+
+    pub fn scene_transaction<R>(change: impl FnOnce() -> R) -> R {
+        change()
+    }
+
+    #[must_use]
+    pub fn attach_scene(_window: &impl raw_window_handle::HasWindowHandle) -> Option<SceneLayer> {
+        None
+    }
+
+    #[must_use]
+    pub fn render_scene(
+        _root: &SceneLayer,
+        _width: u32,
+        _height: u32,
+        _scale: f64,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        None
+    }
+
+    /// Les battements d'une horloge d'écran sur un autre fil : jamais ici
+    /// (l'affichage se rythme avec une minuterie).
+    #[derive(Debug, Default)]
+    pub struct Beats {
+        _none: (),
+    }
+
+    impl Beats {
+        pub fn take(&self) -> Option<super::Beat> {
+            None
+        }
+
+        pub fn take_coalesced(&self) -> u32 {
+            0
+        }
+    }
+
+    /// Pas d'horloge d'écran sur un autre fil ici.
+    #[derive(Debug)]
+    pub enum ThreadClock {}
+
+    impl ThreadClock {
+        pub fn new(
+            _beats: std::sync::Arc<Beats>,
+            _wake: std::sync::Arc<LoopWaker>,
+        ) -> Option<Self> {
+            None
+        }
+
+        pub fn start_here(&self) {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn max_fps(&self) -> f32 {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn is_running(&self) -> bool {
+            match *self {}
+        }
+
+        #[must_use]
+        pub fn frame_duration(&self) -> f64 {
+            match *self {}
+        }
+
+        pub fn set_running(&self, _running: bool) {
+            match *self {}
+        }
+
+        pub fn set_rate(&self, _fps: f32) {
+            match *self {}
+        }
+    }
+
+    /// Pas encore de sons sur ce système.
+    pub fn play_sound(_data: &std::sync::Arc<[u8]>, _volume: f32) {}
+
+    pub fn warm_up_sounds(_sample: Option<&std::sync::Arc<[u8]>>) {}
+
     /// Ouvre un dossier dans le gestionnaire de fichiers du système.
     pub fn open_folder(path: &std::path::Path) -> bool {
         let opener = if cfg!(target_os = "windows") {
@@ -157,8 +785,14 @@ mod fallback {
 
 #[cfg(not(target_os = "macos"))]
 pub use fallback::{
-    cursor_position, frontmost_pid, open_folder, preferred_languages, prepare_pet_window, screens,
-    windows,
+    Beats, FrameClock, LoopWaker, SceneImage, SceneLayer, ThreadClock, accessibility_trusted,
+    attach_scene, control_key_down, cursor_position, dock_frame, follow_window_moves,
+    frontmost_pid, keep_pet_window, listen_escape, login_item, login_item_available,
+    open_accessibility_settings, open_folder, open_login_items_settings, play_sound, pop_up_menu,
+    preferred_languages, prepare_pet_window, render_scene, request_accessibility, run_loop_for,
+    scene_transaction, screens, set_gallery_preview, set_login_item, set_shortcuts, set_ui_handler,
+    set_window_moves_handler, show_about, show_form, show_gallery, snapshot_form, snapshot_gallery,
+    update_form, user_activity, warm_up_sounds, window_max_fps, windows,
 };
 
 #[cfg(test)]

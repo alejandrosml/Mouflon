@@ -5,7 +5,7 @@
 //! resvg. Sert à juger le rendu et la fluidité sans lancer l'app.
 //!
 //! ```text
-//! cargo run -p mouflon-preview --release -- <pet.toml|animations.xml> <dossier> [video|poses|all|icon]
+//! cargo run -p mouflon-preview --release -- <pet.toml|animations.xml> <dossier> [video|poses|gestes|all|icon]
 //! cargo run -p mouflon-preview --release -- <animal> <dossier> troupeau [secondes] [nombre]
 //! ```
 //!
@@ -21,6 +21,33 @@
 //! puis le premier est lancé sur le second. `planche` : toutes les images de
 //! chaque comportement, dessinées par Mouflon dans les deux sens, sur la
 //! ligne du sol (pour vérifier le point d'appui et le rognage).
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> physique
+//! ```
+//!
+//! `physique` : la physique réaliste. Une fenêtre emporte l'animal, file sous
+//! lui d'un coup sec, se dérobe, le lance en l'air ; puis la main le prend
+//! par l'arrière, le balance et le lance en tournant.
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> jeux
+//! ```
+//!
+//! `jeux` : les jeux d'agneaux d'un animal qui les connaît (le Mannequin,
+//! Aquarelle) : deux agneaux reculent, s'élancent et se cognent le front, un
+//! bélier recule avant de charger ; puis sauts tordus et demi-tours en l'air.
+//!
+//! `soucoupe` : une soucoupe emporte un animal ; on lui en lance un autre
+//! dessus : elle le lâche, fume, puis s'enfuit ou tombe.
+//!
+//! ```text
+//! cargo run -p mouflon-preview --release -- <animal> <dossier> toison
+//! ```
+//!
+//! `toison` : les mèches (`sway`) d'un mouton simulé, à dix instants : au
+//! repos, au galop, après un arrêt net, quand il s'ébroue, puis dans un coup
+//! de vent qui le prend de dos.
 #![forbid(unsafe_code)]
 
 use std::f32::consts::TAU;
@@ -28,15 +55,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mouflon_core::{
-    Flock, Input, LedgeOptions, Particle, ParticleKind, Pet, PetEvent, PetView, PoseSignals, Rect,
-    Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
+    Flock, Gesture, Input, LedgeOptions, Particle, ParticleKind, Pet, PetEvent, PetView,
+    PoseSignals, Rect, Screen, Shadow, Support, Vec2, WindowRect, World, load_pet,
 };
 use mouflon_render::display::{Command, DisplayList, Paint, Stop, rgba};
+use mouflon_render::kurbo::{Affine, BezPath, Circle, Point, Rect as KRect, RoundedRect, Shape};
+use mouflon_render::peniko::{Color, Extend};
 use mouflon_render::svg::to_svg;
-use mouflon_render::vello::kurbo::{
-    Affine, BezPath, Circle, Point, Rect as KRect, RoundedRect, Shape,
-};
-use mouflon_render::vello::peniko::{Color, Extend};
 use mouflon_render::{Frame, PetArt, Style, paint_pet};
 use resvg::{tiny_skia, usvg};
 
@@ -60,7 +85,9 @@ fn main() -> Result<(), Error> {
     std::fs::create_dir_all(&out_dir)?;
 
     let def = Arc::new(load_pet(&pet_path)?);
-    let art = PetArt::load(&def)?;
+    let mut art = PetArt::load(&def)?;
+    // L'aperçu (SVG) garde les tracés vectoriels plutôt que les images cuites.
+    art.baked = None;
     println!(
         "{} : {} comportements, {:.0}×{:.0} pt",
         def.meta.name,
@@ -73,6 +100,21 @@ fn main() -> Result<(), Error> {
         let path = out_dir.join("poses.png");
         render_poses(&art, &path)?;
         println!("planche de poses : {}", path.display());
+    }
+    if mode == "gestes" || mode == "all" {
+        let path = out_dir.join("gestes.png");
+        render_gestures(&art, &path)?;
+        println!("planche des allures et des gestes : {}", path.display());
+    }
+    if mode == "allures" || mode == "all" {
+        let path = out_dir.join("allures.png");
+        render_gaits(&art, &path)?;
+        println!("planche des allures, phase par phase : {}", path.display());
+    }
+    if mode == "toison" {
+        let path = out_dir.join("toison.png");
+        render_fleece(&def, &art, &path)?;
+        println!("planche de la toison : {}", path.display());
     }
     if mode == "video" || mode == "all" || mode == "troupeau" {
         let frames = out_dir.join("frames");
@@ -120,6 +162,49 @@ fn main() -> Result<(), Error> {
         let count = render_greeting(&def, &art, &frames)?;
         println!("{count} images dans {}", frames.display());
     }
+    if mode == "soucoupe" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_saucer_hit(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "jeux" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_play(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "physique" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_physics(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
+    if mode == "galerie" {
+        // L'aperçu de la galerie, tel que l'app le dessine (sur le
+        // processeur, images cuites comprises).
+        let mut art = PetArt::load(&def)?;
+        art.baked = art.baked.take();
+        let frames = mouflon_render::thumbnail::preview(&def, &art, 8, 10.0, 2.0);
+        for (k, thumb) in frames.iter().enumerate() {
+            let size =
+                tiny_skia::IntSize::from_wh(thumb.width, thumb.height).ok_or("aperçu vide")?;
+            let pixmap =
+                tiny_skia::Pixmap::from_vec(thumb.rgba.clone(), size).ok_or("aperçu invalide")?;
+            pixmap.save_png(out_dir.join(format!("galerie_{k}.png")))?;
+        }
+        println!(
+            "{} images d'aperçu dans {}",
+            frames.len(),
+            out_dir.display()
+        );
+    }
+    if mode == "surprises" {
+        let frames = out_dir.join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let count = render_surprises(&def, &art, &frames)?;
+        println!("{count} images dans {}", frames.display());
+    }
     if mode == "planche" {
         for (facing, name) in [(-1.0, "planche-gauche.png"), (1.0, "planche-droite.png")] {
             let path = out_dir.join(name);
@@ -131,6 +216,19 @@ fn main() -> Result<(), Error> {
 }
 
 // ---------------------------------------------------------------- rencontre
+
+/// Comme l'app : les animaux se touchent quand leurs dessins se touchent.
+fn give_reach(flock: &mut Flock, art: &PetArt) {
+    let tops = art.tops();
+    for pet in flock.pets_mut() {
+        if let Some((front, back)) = art.reach() {
+            pet.set_reach(front, back);
+        }
+        if let Some(tops) = &tops {
+            pet.set_tops(std::sync::Arc::clone(tops));
+        }
+    }
+}
 
 /// Deux animaux qui se rentrent dedans (mode collisions), puis un lancer.
 fn render_meeting(
@@ -146,6 +244,7 @@ fn render_meeting(
     flock.set_collisions(true);
     let a = flock.spawn(Arc::clone(def), 3, &world, Some(400.0));
     let b = flock.spawn(Arc::clone(def), 5, &world, Some(580.0));
+    give_reach(&mut flock, art);
     let duration = 11.0;
     let frames = (duration * RATE as f32) as u32;
     let mut grabbed_at: Option<Vec2> = None;
@@ -200,6 +299,7 @@ fn render_meeting(
         let input = Input {
             cursor,
             local_hour: 15.0,
+            ..Input::default()
         };
         let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
         let mut list = DisplayList::new(
@@ -247,6 +347,450 @@ fn render_meeting(
     Ok(frames)
 }
 
+// ---------------------------------------------------------------- jeux
+
+/// Les jeux d'agneaux : deux agneaux qui reculent, s'élancent et se cognent
+/// le front, un bélier qui recule avant de charger ; puis un saut tordu et
+/// un demi-tour en l'air.
+fn render_play(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&[], LedgeOptions::default());
+    let mut flock = Flock::new();
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    let b = flock.spawn(Arc::clone(def), 5, &world, Some(420.0));
+    let c = flock.spawn(Arc::clone(def), 7, &world, Some(780.0));
+    give_reach(&mut flock, art);
+    let duration = 8.0;
+    let frames = (duration * RATE as f32) as u32;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        let mut play = |id: u32, facing: f32, name: &str| {
+            if let Some(pet) = flock.get_mut(id) {
+                pet.face(facing);
+                if !pet.force(name) {
+                    eprintln!("{} ne sait pas « {name} »", def.meta.name);
+                }
+            }
+        };
+        if at(1.5) {
+            play(a, 1.0, "play_back");
+            play(b, -1.0, "play_back");
+            play(c, -1.0, "back_up");
+        }
+        if at(5.0) {
+            play(a, 1.0, "gambol");
+            play(b, -1.0, "pivot");
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[]);
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &Frame {
+                    origin: Vec2::ZERO,
+                    scale: SCALE,
+                },
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 5) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| format!("{}@{:.0}", p.behavior_name(), p.position().x))
+                .collect();
+            println!("{t:4.1} s : {}", states.join(", "));
+        }
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------- physique
+
+/// La fenêtre de la scène `physique` à l'instant `t` : posée, emportée vers
+/// la droite, tirée d'un coup sec vers la gauche, tirée vers le bas plus vite
+/// que la pesanteur, puis montée vite et arrêtée net.
+fn physics_window(t: f32) -> Rect {
+    let mut r = Rect::new(120.0, 300.0, 380.0, 190.0);
+    r.x += 140.0 * ease((t - 1.8) / 1.2);
+    r.x -= 150.0 * ((t - 3.4) / 0.15).clamp(0.0, 1.0);
+    r.y += 170.0 * ((t - 4.4) / 0.1).clamp(0.0, 1.0);
+    r.y -= 230.0 * ((t - 6.0) / 0.4).clamp(0.0, 1.0);
+    r
+}
+
+fn render_physics(def: &Arc<mouflon_core::PetDef>, art: &PetArt, dir: &Path) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let side = Rect::new(660.0, 170.0, 260.0, 330.0);
+    let windows = |t: f32| {
+        vec![
+            WindowRect { id: 2, frame: side },
+            WindowRect {
+                id: 1,
+                frame: physics_window(t),
+            },
+        ]
+    };
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&windows(0.0), LedgeOptions::default());
+    let mut flock = Flock::new();
+    flock.set_realistic(true);
+    flock.set_collisions(true);
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    let b = flock.spawn(Arc::clone(def), 5, &world, Some(580.0));
+    give_reach(&mut flock, art);
+    let duration = 14.0;
+    let frames = (duration * RATE as f32) as u32;
+    let mut grip: Option<Vec2> = None;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        world.set_windows(&windows(t), LedgeOptions::default());
+        // Arrêtés pour la démonstration des fenêtres.
+        if at(1.6) {
+            for id in [a, b] {
+                if let Some(pet) = flock.get_mut(id) {
+                    let stand = ["stand", "repos", "sit"]
+                        .into_iter()
+                        .find(|n| def.behavior_index(n).is_some());
+                    if let Some(stand) = stand {
+                        pet.force(stand);
+                    }
+                }
+            }
+        }
+        // La main le prend par l'arrière du dos, le balance, puis le lance.
+        let cursor = flock.pets().iter().find(|p| p.id() == a).and_then(|pet| {
+            let body = pet.body();
+            let back = body.center
+                + Vec2::new(
+                    -body.half.x * 0.6 * pet.view(1.0).facing.signum(),
+                    -body.half.y * 0.7,
+                );
+            match t {
+                t if (7.4..8.0).contains(&t) => {
+                    let from = Vec2::new(SCREEN_W - 80.0, 120.0);
+                    Some(from.lerp(back, ease((t - 7.4) / 0.6)))
+                }
+                t if (8.0..9.2).contains(&t) => {
+                    let start = *grip.get_or_insert(back);
+                    let u = t - 8.0;
+                    Some(start + Vec2::new(-90.0 * (u * 5.0).sin(), -60.0 * ease(u / 0.5)))
+                }
+                t if (9.2..9.45).contains(&t) => {
+                    let start = grip.unwrap_or(back) + Vec2::new(-90.0 * (6.0_f32).sin(), -60.0);
+                    let u = (t - 9.2) / 0.25;
+                    Some(start + Vec2::new(260.0 * u * u, -120.0 * u))
+                }
+                _ => None,
+            }
+        });
+        if let Some(pet) = flock.get_mut(a) {
+            if at(8.0)
+                && let Some(c) = cursor
+            {
+                pet.grab(c, &world);
+            }
+            if pet.is_held()
+                && let Some(c) = cursor
+            {
+                pet.drag_to(c);
+            }
+            if at(9.45) {
+                pet.release(&world);
+            }
+        }
+        if at(11.5)
+            && let Some(pet) = flock.get_mut(b)
+        {
+            for walk in ["walk", "marche"] {
+                if pet.force(walk) {
+                    break;
+                }
+            }
+        }
+        let input = Input {
+            cursor,
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[physics_window(t), side]);
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &Frame {
+                    origin: Vec2::ZERO,
+                    scale: SCALE,
+                },
+                &Style::default(),
+                &mut list,
+            );
+        }
+        if let Some(c) = cursor {
+            let held = flock.pets().iter().any(Pet::is_held);
+            paint_cursor(&mut list, c, held);
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 2) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0}) {:?} roll {:.2}",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y,
+                        p.support(),
+                        p.view(1.0).pose.roll
+                    )
+                })
+                .collect();
+            println!("{t:4.1} s : {}", states.join(", "));
+        }
+    }
+    Ok(frames)
+}
+
+// ---------------------------------------------------------------- surprises
+
+/// Un coup de vent, puis la visite d'une soucoupe.
+fn render_surprises(
+    def: &Arc<mouflon_core::PetDef>,
+    art: &PetArt,
+    dir: &Path,
+) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let shelf = Rect::new(140.0, 330.0, 420.0, 170.0);
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(
+        &[WindowRect {
+            id: 1,
+            frame: shelf,
+        }],
+        LedgeOptions::default(),
+    );
+    let mut flock = Flock::new();
+    flock.set_realistic(true);
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(300.0));
+    let _b = flock.spawn(Arc::clone(def), 8, &world, Some(760.0));
+    give_reach(&mut flock, art);
+    let duration = 22.0;
+    let frames = (duration * RATE as f32) as u32;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        if at(1.5) {
+            for pet in flock.pets_mut() {
+                pet.force("repos");
+            }
+            flock.blow(1.0, 6.0);
+        }
+        // Un des deux lâché de haut en plein vent, pour le voir dériver.
+        if at(2.6)
+            && let Some(pet) = flock.get_mut(a)
+        {
+            pet.grab(pet.position() - Vec2::new(0.0, 40.0), &world);
+            pet.drag_to(pet.position() - Vec2::new(0.0, 220.0));
+        }
+        if at(3.0)
+            && let Some(pet) = flock.get_mut(a)
+        {
+            pet.release(&world);
+        }
+        if at(8.5) {
+            for pet in flock.pets_mut() {
+                pet.force("repos");
+            }
+            flock.invite_saucer(&world, 11);
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[shelf]);
+        let frame_of_screen = Frame {
+            origin: Vec2::ZERO,
+            scale: SCALE,
+        };
+        for saucer in flock.saucers() {
+            mouflon_render::saucer::paint_saucer(
+                &saucer.view(),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % RATE == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0}) {:?}",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y,
+                        p.support()
+                    )
+                })
+                .collect();
+            println!(
+                "{t:4.1} s : {} ; soucoupes {}",
+                states.join(", "),
+                flock.saucers().len()
+            );
+        }
+    }
+    Ok(frames)
+}
+
+/// Une soucoupe emporte un animal ; la main en lance un autre dessus.
+fn render_saucer_hit(
+    def: &Arc<mouflon_core::PetDef>,
+    art: &PetArt,
+    dir: &Path,
+) -> Result<u32, Error> {
+    const RATE: u32 = 30;
+    let mut world = World::new(vec![screen()]);
+    world.set_windows(&[], LedgeOptions::default());
+    let mut flock = Flock::new();
+    let a = flock.spawn(Arc::clone(def), 3, &world, Some(330.0));
+    give_reach(&mut flock, art);
+    let mut thrower = None;
+    let duration = 14.0;
+    let frames = (duration * RATE as f32) as u32;
+    let mut grab_from = Vec2::ZERO;
+    for frame in 0..frames {
+        let t = frame as f32 / RATE as f32;
+        let at = |s: f32| (t - s).abs() < 0.5 / RATE as f32;
+        if at(1.2) {
+            if let Some(pet) = flock.get_mut(a) {
+                pet.force("sleep");
+            }
+            flock.invite_saucer(&world, 5);
+            thrower = Some(flock.spawn(Arc::clone(def), 8, &world, Some(760.0)));
+            give_reach(&mut flock, art);
+        }
+        // La main prend l'autre, recule, puis le lance sur la soucoupe.
+        let saucer = flock.saucers().first().map(|s| s.view().pos);
+        if let (Some(id), Some(target)) = (thrower, saucer) {
+            let aim = target + Vec2::new(-30.0, 0.0);
+            let back = target + Vec2::new(-260.0, 40.0);
+            if let Some(pet) = flock.get_mut(id) {
+                if at(6.6) {
+                    grab_from = pet.position() - Vec2::new(0.0, 30.0);
+                    pet.grab(grab_from, &world);
+                }
+                if pet.is_held() && t < 7.3 {
+                    let u = ((t - 6.6) / 0.7).clamp(0.0, 1.0);
+                    pet.drag_to(grab_from.lerp(back, ease(u)));
+                } else if pet.is_held() && t < 7.42 {
+                    let u = ((t - 7.3) / 0.12).clamp(0.0, 1.0);
+                    pet.drag_to(back.lerp(aim, u));
+                }
+                if at(7.42) {
+                    pet.release(&world);
+                }
+            }
+        }
+        let input = Input {
+            local_hour: 15.0,
+            ..Input::default()
+        };
+        let alpha = flock.advance(1.0 / RATE as f32, &world, &input);
+        let mut list = DisplayList::new(
+            (f64::from(SCREEN_W) * SCALE) as u32,
+            (f64::from(SCREEN_H) * SCALE) as u32,
+        );
+        paint_desktop_with(&mut list, &[]);
+        let frame_of_screen = Frame {
+            origin: Vec2::ZERO,
+            scale: SCALE,
+        };
+        for saucer in flock.saucers() {
+            mouflon_render::saucer::paint_saucer(
+                &saucer.view(),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        for pet in flock.pets() {
+            paint_pet(
+                art,
+                &pet.view(alpha),
+                &frame_of_screen,
+                &Style::default(),
+                &mut list,
+            );
+        }
+        rasterize(&list, &dir.join(format!("frame_{frame:05}.png")))?;
+        if frame % (RATE / 5) == 0 {
+            let states: Vec<String> = flock
+                .pets()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}@({:.0},{:.0})",
+                        p.behavior_name(),
+                        p.position().x,
+                        p.position().y
+                    )
+                })
+                .collect();
+            let saucers: Vec<String> = flock
+                .saucers()
+                .iter()
+                .map(|s| {
+                    let v = s.view();
+                    format!("({:.0},{:.0}) fumée {:.2}", v.pos.x, v.pos.y, v.smoke)
+                })
+                .collect();
+            println!(
+                "{t:4.1} s : {} ; soucoupe {}",
+                states.join(", "),
+                saucers.join(" ")
+            );
+        }
+    }
+    Ok(frames)
+}
+
 // ---------------------------------------------------------------- salut
 
 /// Sans mode collisions : deux animaux se rencontrent et réagissent, un
@@ -276,9 +820,11 @@ fn render_greeting(
     let a = flock.spawn(Arc::clone(def), 3, &world, Some(250.0));
     let b = flock.spawn(Arc::clone(def), 5, &world, Some(430.0));
     let c = flock.spawn(Arc::clone(def), 8, &world, Some(600.0));
+    give_reach(&mut flock, art);
     let input = Input {
         cursor: None,
         local_hour: 15.0,
+        ..Input::default()
     };
     // Une fois tout le monde posé (la chute d'un animal desktopPet est
     // lente), les deux premiers marchent l'un vers l'autre et le troisième
@@ -431,16 +977,14 @@ fn render_sheet(
                 ground,
                 facing,
                 pose: PoseSignals::default(),
-                shadow: Some(Shadow {
-                    y: ground.y,
-                    distance: 0.0,
-                }),
+                shadow: Some(Shadow::on(ground.y, 0.0)),
                 sprite_frame: Some(*frame),
                 sprite_offset_y: 0.0,
                 opacity: 1.0,
                 particles: &[],
                 support: Support::Ground { surface: 0 },
                 behavior: name,
+                grip: None,
             };
             paint_pet(
                 art,
@@ -529,16 +1073,14 @@ fn render_icon(art: &PetArt, path: &Path) -> Result<(), Error> {
             breath: 0.3,
             ..PoseSignals::default()
         },
-        shadow: Some(Shadow {
-            y: 0.0,
-            distance: 0.0,
-        }),
+        shadow: Some(Shadow::on(0.0, 0.0)),
         sprite_frame: Some(0),
         sprite_offset_y: 0.0,
         opacity: 1.0,
         particles: &[],
         support: Support::Air,
         behavior: "",
+        grip: None,
     };
     paint_pet(art, &view, &frame, &Style::default(), &mut list);
     rasterize(&list, path)
@@ -633,6 +1175,7 @@ fn render_video(
         let input = Input {
             cursor,
             local_hour: 15.0,
+            ..Input::default()
         };
 
         let alpha = flock.advance(1.0 / FPS as f32, &world, &input);
@@ -752,6 +1295,11 @@ fn world_to_px() -> Affine {
 }
 
 fn paint_desktop(list: &mut DisplayList, script: &Script, t: f32) {
+    paint_desktop_with(list, &[script.back_window(t), script.w2]);
+}
+
+/// Le bureau, avec ces fenêtres (de l'arrière vers l'avant).
+fn paint_desktop_with(list: &mut DisplayList, windows: &[Rect]) {
     let w = Affine::scale(SCALE);
     let screen = Rect::new(0.0, 0.0, SCREEN_W, SCREEN_H);
     list.fill(
@@ -805,8 +1353,9 @@ fn paint_desktop(list: &mut DisplayList, script: &Script, t: f32) {
         Paint::Solid(Color::WHITE.with_alpha(0.16)),
     );
 
-    paint_window(list, script.back_window(t));
-    paint_window(list, script.w2);
+    for window in windows {
+        paint_window(list, *window);
+    }
 
     // Dock.
     let dock = Rect::new(
@@ -969,10 +1518,13 @@ fn paint_cursor(list: &mut DisplayList, c: Vec2, grabbing: bool) {
 
 // ---------------------------------------------------------------- poses
 
-fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
+type PoseCase = (PoseSignals, f32, Option<f32>, Vec<Particle>);
+
+/// Une planche de poses, `cols` par rangée, sur un fond clair.
+fn draw_cases(art: &PetArt, path: &Path, cases: Vec<PoseCase>, cols: u32) -> Result<(), Error> {
     let cell_w = 420.0_f32;
     let cell_h = 380.0_f32;
-    let (cols, rows) = (3u32, 2u32);
+    let rows = (cases.len() as u32).div_ceil(cols);
     let zoom = 3.4_f64;
     let width = (cell_w * cols as f32) as u32;
     let height = (cell_h * rows as f32) as u32;
@@ -996,7 +1548,45 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             extend: Extend::Pad,
         },
     );
+    for (i, (pose, facing, shadow, particles)) in cases.into_iter().enumerate() {
+        let col = i as u32 % cols;
+        let row = i as u32 / cols;
+        let ground_px = Vec2::new(
+            col as f32 * cell_w + cell_w / 2.0,
+            row as f32 * cell_h + cell_h - 70.0,
+        );
+        let lift = shadow.unwrap_or(0.0);
+        let frame = Frame {
+            origin: Vec2::new(-ground_px.x / zoom as f32, -ground_px.y / zoom as f32),
+            scale: zoom,
+        };
+        let particles: Vec<Particle> = particles
+            .into_iter()
+            .map(|p| Particle {
+                pos: p.pos + Vec2::new(0.0, -lift),
+                ..p
+            })
+            .collect();
+        let view = PetView {
+            id: i as u32,
+            ground: Vec2::new(0.0, -lift),
+            facing,
+            pose,
+            shadow: shadow.map(|d| Shadow::on(0.0, d)),
+            sprite_frame: None,
+            sprite_offset_y: 0.0,
+            opacity: 1.0,
+            particles: &particles,
+            support: Support::Air,
+            behavior: "",
+            grip: None,
+        };
+        paint_pet(art, &view, &frame, &Style::default(), &mut list);
+    }
+    rasterize(&list, path)
+}
 
+fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
     let bubbles = [
         Particle {
             kind: ParticleKind::Bubble,
@@ -1032,7 +1622,6 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
         })
         .collect();
 
-    type PoseCase = (PoseSignals, f32, Option<f32>, Vec<Particle>);
     let base = PoseSignals {
         look: Vec2::new(0.35, 0.05),
         ..PoseSignals::default()
@@ -1071,6 +1660,7 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
         (
             PoseSignals {
                 air: 1.0,
+                rise: 0.9,
                 squash: -0.07,
                 lean: 0.22,
                 ear: -0.55,
@@ -1106,46 +1696,276 @@ fn render_poses(art: &PetArt, path: &Path) -> Result<(), Error> {
             Some(0.0),
             bubbles.to_vec(),
         ),
+        // Couché, éveillé.
+        (
+            PoseSignals {
+                sit: 1.0,
+                breath: 0.3,
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
+        ),
+        // Broute.
+        (
+            PoseSignals {
+                graze: 1.0,
+                nibble: 0.6,
+                look: Vec2::new(0.2, 0.3),
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
+        ),
+        // Galop, puis descente d'un saut (pattes tendues vers le sol).
+        (
+            PoseSignals {
+                run: 1.0,
+                walk: 1.0,
+                gait_phase: TAU * 0.35,
+                lean: 0.08,
+                ..base
+            },
+            1.0,
+            Some(0.0),
+            vec![],
+        ),
     ];
 
-    for (i, (pose, facing, shadow, particles)) in cases.into_iter().enumerate() {
-        let col = i as u32 % cols;
-        let row = i as u32 / cols;
-        let ground_px = Vec2::new(
-            col as f32 * cell_w + cell_w / 2.0,
-            row as f32 * cell_h + cell_h - 70.0,
-        );
-        let lift = shadow.unwrap_or(0.0);
-        let frame = Frame {
-            origin: Vec2::new(-ground_px.x / zoom as f32, -ground_px.y / zoom as f32),
-            scale: zoom,
-        };
-        let particles: Vec<Particle> = particles
-            .into_iter()
-            .map(|p| Particle {
-                pos: p.pos + Vec2::new(0.0, -lift),
-                ..p
-            })
-            .collect();
-        let view = PetView {
-            id: i as u32,
-            ground: Vec2::new(0.0, -lift),
-            facing,
-            pose,
-            shadow: shadow.map(|d| Shadow {
-                y: 0.0,
-                distance: d,
-            }),
-            sprite_frame: None,
-            sprite_offset_y: 0.0,
-            opacity: 1.0,
-            particles: &particles,
-            support: Support::Air,
-            behavior: "",
-        };
-        paint_pet(art, &view, &frame, &Style::default(), &mut list);
+    draw_cases(art, path, cases, 3)
+}
+
+/// Les allures et les gestes animés par le moteur : trot, élan d'un énervé,
+/// saut d'agneau, puis chaque geste à un moment parlant.
+fn render_gestures(art: &PetArt, path: &Path) -> Result<(), Error> {
+    let base = PoseSignals {
+        look: Vec2::new(0.35, 0.05),
+        breath: 0.2,
+        ..PoseSignals::default()
+    };
+    let gesture = |g: Gesture, time: f32| PoseSignals {
+        gesture: Some(g),
+        gesture_amount: 1.0,
+        gesture_time: time,
+        jaw: match g {
+            Gesture::Yawn => 1.0,
+            Gesture::Bleat => 0.65,
+            _ => 0.0,
+        },
+        ..base
+    };
+    let ground = |pose: PoseSignals| -> PoseCase { (pose, 1.0, Some(0.0), vec![]) };
+    let cases: Vec<PoseCase> = vec![
+        // Trot : une paire diagonale à l'appui, puis l'autre.
+        ground(PoseSignals {
+            walk: 1.0,
+            trot: 1.0,
+            stride_scale: 1.5,
+            gait_phase: TAU * 0.05,
+            ..base
+        }),
+        ground(PoseSignals {
+            walk: 1.0,
+            trot: 1.0,
+            stride_scale: 1.5,
+            gait_phase: TAU * 0.55,
+            ..base
+        }),
+        // Il fonce, tête basse, oreilles couchées.
+        ground(PoseSignals {
+            walk: 1.0,
+            run: 1.0,
+            stride_scale: 2.2,
+            gait_phase: TAU * 0.35,
+            lean: 0.08,
+            head_low: 1.0,
+            ears_back: 0.9,
+            ..base
+        }),
+        // Saut d'agneau : pattes raides.
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                stiff: 1.0,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
+        // Saut tordu : le corps se tord, la tête part de l'autre côté, les
+        // pattes de derrière ruent (deux moments de la torsion).
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                twist: 1.0,
+                clock: 0.139,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
+        (
+            PoseSignals {
+                air: 1.0,
+                rise: 0.6,
+                twist: 1.0,
+                clock: 0.417,
+                ..base
+            },
+            1.0,
+            Some(26.0),
+            vec![],
+        ),
+        ground(gesture(Gesture::Shake, 0.55)),
+        ground(gesture(Gesture::Shake, 0.61)),
+        ground(gesture(Gesture::Stretch, 0.75)),
+        ground(gesture(Gesture::Stretch, 1.65)),
+        ground(gesture(Gesture::Paw, 0.1)),
+        ground(gesture(Gesture::Paw, 0.45)),
+        ground(gesture(Gesture::Stamp, 0.25)),
+        ground(gesture(Gesture::Sniff, 0.6)),
+        ground(gesture(Gesture::Daze, 0.5)),
+        ground(gesture(Gesture::Brace, 0.8)),
+        ground(gesture(Gesture::Yawn, 0.9)),
+        ground(gesture(Gesture::Bleat, 0.4)),
+        ground(gesture(Gesture::Scratch, 0.8)),
+        ground(gesture(Gesture::Rear, 0.6)),
+        // Le flehmen : encolure tendue, tête relevée, lèvre retroussée.
+        ground(PoseSignals {
+            jaw: 0.14,
+            ..gesture(Gesture::Flehmen, 3.0)
+        }),
+        // Aux aguets (oreilles dressées), puis couché qui rumine (mâchoire).
+        ground(PoseSignals {
+            ears_back: -1.0,
+            look: Vec2::new(0.8, -0.3),
+            ..base
+        }),
+        ground(PoseSignals {
+            sit: 1.0,
+            jaw: 0.22,
+            ..base
+        }),
+        // Endormi la tête au sol, puis une patte qui tressaille.
+        ground(PoseSignals {
+            sit: 1.0,
+            sleep: 1.0,
+            blink: 1.0,
+            sleep_low: 1.0,
+            ..base
+        }),
+        ground(PoseSignals {
+            sit: 1.0,
+            sleep: 1.0,
+            blink: 1.0,
+            sleep_low: 1.0,
+            twitch: 1.0,
+            ..base
+        }),
+    ];
+    draw_cases(art, path, cases, 4)
+}
+
+/// Les allures phase par phase (le pas, le trot, le galop, huit instants
+/// de la foulée chacun), puis il se couche (l'avant d'abord) et saute (il
+/// replie les pattes, les tend vers le sol, atterrit).
+fn render_gaits(art: &PetArt, path: &Path) -> Result<(), Error> {
+    let base = PoseSignals {
+        look: Vec2::new(0.35, 0.05),
+        breath: 0.2,
+        ..PoseSignals::default()
+    };
+    let ground = |pose: PoseSignals| -> PoseCase { (pose, 1.0, Some(0.0), vec![]) };
+    let mut cases: Vec<PoseCase> = Vec::new();
+    for (trot, run, stride) in [(0.0, 0.0, 1.0), (1.0, 0.0, 1.15), (0.0, 1.0, 1.9)] {
+        for i in 0..8 {
+            cases.push(ground(PoseSignals {
+                walk: 1.0,
+                trot,
+                run,
+                stride_scale: stride,
+                gait_phase: TAU * i as f32 / 8.0,
+                lean: 0.08 * run,
+                ..base
+            }));
+        }
     }
-    rasterize(&list, path)
+    for sit in [0.25, 0.5, 0.75, 1.0] {
+        cases.push(ground(PoseSignals { sit, ..base }));
+    }
+    for (rise, squash, lift) in [(0.9, -0.07, 24.0), (0.0, 0.0, 30.0), (-0.8, 0.0, 14.0)] {
+        cases.push((
+            PoseSignals {
+                air: 1.0,
+                rise,
+                squash,
+                ..base
+            },
+            1.0,
+            Some(lift),
+            vec![],
+        ));
+    }
+    cases.push(ground(PoseSignals {
+        squash: 0.16,
+        ..base
+    }));
+    draw_cases(art, path, cases, 4)
+}
+
+/// La toison qui bouge, sur un vrai mouton simulé : au repos, au galop,
+/// juste après un arrêt net (les mèches partent vers l'avant, puis
+/// reviennent), pendant qu'il s'ébroue, puis un coup de vent dans le dos.
+fn render_fleece(def: &Arc<mouflon_core::PetDef>, art: &PetArt, path: &Path) -> Result<(), Error> {
+    const DT: f32 = 1.0 / 120.0;
+    let world = World::new(vec![screen()]);
+    let mut flock = Flock::new();
+    let id = flock.spawn(Arc::clone(def), 7, &world, Some(150.0));
+    let input = Input {
+        local_hour: 15.0,
+        ..Input::default()
+    };
+    let shots = [1.8, 2.6, 3.1, 3.25, 3.4, 3.6, 3.9, 4.8, 4.86, 7.0];
+    let mut cases: Vec<PoseCase> = Vec::new();
+    let mut t = 0.0;
+    let mut next = 0;
+    let mut blown = false;
+    while next < shots.len() {
+        let wanted = match t {
+            t if t < 2.0 => "stand",
+            t if t < 3.2 => "run",
+            t if t < 4.6 => "stand",
+            t if t < 5.5 => "shake",
+            _ => "stand",
+        };
+        if t >= 5.8 && !blown {
+            flock.blow(1.0, 4.0);
+            blown = true;
+        }
+        if let Some(pet) = flock.get_mut(id)
+            && pet.behavior_name() != wanted
+            && (wanted != "shake" || t < 4.62)
+        {
+            pet.face(1.0);
+            pet.force(wanted);
+        }
+        flock.advance(DT, &world, &input);
+        t += DT;
+        if t >= shots[next] {
+            if let Some(pet) = flock.pets().iter().find(|p| p.id() == id) {
+                let view = pet.view(1.0);
+                cases.push((view.pose, view.facing, Some(0.0), vec![]));
+            }
+            next += 1;
+        }
+    }
+    draw_cases(art, path, cases, 5)
 }
 
 // ---------------------------------------------------------------- export
